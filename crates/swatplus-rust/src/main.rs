@@ -6,8 +6,8 @@
 //! swatplus-rust compare <SWAT+ table> <our table> [--abs 0.001] [--rel 1e-4]
 //! ```
 //!
-//! `run` covers the daily weather so far and writes `hru_wb_day.txt` (precipitation) and
-//! `hru_pw_day.txt` (weather) with those columns only.
+//! `run` covers the daily weather and, for HRUs without plants or management, the water
+//! balance, and writes `hru_wb_day.txt` and `hru_pw_day.txt` with the columns it computes.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::unreachable)]
 
 mod compare;
@@ -99,9 +99,16 @@ fn run(dir: &str, out: &str) -> ExitCode {
     };
     let title = format!(" {:<24} swatplus-rust {}", project.cio.title.trim_end_matches(':'), env!("CARGO_PKG_VERSION"));
     let mut tables = output::TextTables::new(&title);
-    if let Err(e) = swat_engine::run::run(&project, &mut tables) {
-        eprintln!("error: {e}");
-        return ExitCode::FAILURE;
+    match swat_engine::run::run(&project, &mut tables) {
+        Ok(report) => {
+            if let Some(why) = report.hru_skipped {
+                eprintln!("note: HRU water balance not simulated ({why}); hru_wb_day.txt has precipitation only");
+            }
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        }
     }
     let out = std::path::Path::new(out);
     if let Err(e) = std::fs::create_dir_all(out) {

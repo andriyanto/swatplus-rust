@@ -53,6 +53,9 @@ pub struct Project {
     pub ovn_table: Option<Table>,
     pub cons_practice: Option<Table>,
     pub snow: Option<Table>,
+    pub tillage: Option<Table>,
+    /// `carbon.bsn`, one row.
+    pub carbon: Option<Table>,
 }
 
 impl Project {

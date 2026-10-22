@@ -8,6 +8,9 @@
 #   Ames_past  pasture (past_lum): a perennial plant community without management. Adds plant
 #              growth, canopy interception and transpiration.
 #
+# Both drop soil_lyr_depths.sol, so SWAT+ keeps the layers of soils.sol (plus its 10 mm top layer)
+# instead of re-layering every soil to custom depths; that path is validated later.
+#
 # usage: scripts/make-variants.sh <Ames_sub1 folder> <output folder>
 set -euo pipefail
 src=$1
@@ -24,6 +27,7 @@ variant() {
     NF >= 10 { $6 = lu; printf "%8s  %-22s%-18s%-18s%-17s%-16s%-18s%-16s%-14s%s\n", $1, $2, $3, $4, $5, $6, $7, $8, $9, $10; next }
     { print }
   ' "$src/hru-data.hru" > "$out/$name/hru-data.hru"
+  rm -f "$out/$name/soil_lyr_depths.sol"
 }
 
 variant Ames_bare bare_lum

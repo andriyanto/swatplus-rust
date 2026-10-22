@@ -46,6 +46,7 @@ pub fn load_project(src: &dyn FileSource) -> Result<(Project, LoadReport)> {
     if let Some((_, text)) = fetch("basin", "parms_bas")? {
         project.params = basin::read_params(&text)?;
     }
+    project.params.complete();
     if let Some((_, text)) = fetch("simulation", "time")? {
         project.time = time::read(&text)?;
     }
@@ -64,7 +65,7 @@ pub fn load_project(src: &dyn FileSource) -> Result<(Project, LoadReport)> {
         project.wgn = climate::read_wgn(&name, &text)?;
     }
     // HRUs and the databases they point to (`hru_read` and the readers before it).
-    let tables: [(&str, &str, &'static [swat_model::table::Field]); 8] = [
+    let tables: [(&str, &str, &'static [swat_model::table::Field]); 9] = [
         ("hydrology", "topogr_hyd", schema::TOPOGRAPHY),
         ("hydrology", "hydrol_hyd", schema::HYDROLOGY),
         ("hydrology", "field_fld", schema::FIELD),
@@ -73,6 +74,7 @@ pub fn load_project(src: &dyn FileSource) -> Result<(Project, LoadReport)> {
         ("lum", "ovn_lum", schema::OVN_TABLE),
         ("lum", "cons_prac_lum", schema::CONS_PRACTICE),
         ("hru_parm_db", "snow", schema::SNOW),
+        ("hru_parm_db", "till_til", schema::TILLAGE),
     ];
     let mut read = Vec::new();
     for (section, slot, fields) in tables {
@@ -90,6 +92,12 @@ pub fn load_project(src: &dyn FileSource) -> Result<(Project, LoadReport)> {
     project.ovn_table = it.next().flatten();
     project.cons_practice = it.next().flatten();
     project.snow = it.next().flatten();
+    project.tillage = it.next().flatten();
+    if project.codes.cswat == 2
+        && let Some((name, text)) = fetch("basin", "carbon_bsn")?
+    {
+        project.carbon = Some(table::read_record(&name, &text, schema::CARBON_BSN)?);
+    }
     if let Some((_, text)) = fetch("soils", "soils_sol")? {
         project.soils = hru::read_soils(&text)?;
     }

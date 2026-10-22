@@ -1,6 +1,6 @@
 //! The SWAT+ simulation, translated from the Fortran engine.
 //!
-//! So far: the clock and the daily weather. Each function names the Fortran routine it follows,
+//! So far: the clock, the daily weather and the water balance of bare HRUs. Each function names the Fortran routine it follows,
 //! and keeps its order of operations, so results can be compared with SWAT+ value by value.
 // Index loops and SWAT+'s own constants (3.1416, 6.283185) are kept as the Fortran writes them,
 // so the arithmetic is the same.
@@ -10,4 +10,5 @@
 pub mod climate;
 pub mod clock;
 pub mod fortran;
+pub mod hru;
 pub mod run;

@@ -193,6 +193,10 @@ pub struct WgnState {
     pub precip_sum: f32,
     pub pet_sum: f32,
     pub p_pet_rto: f32,
+    /// Annual precipitation, the sum of the monthly means (`pcp_an`).
+    pub pcp_an: f32,
+    /// Average annual air temperature (`tmp_an`), from the monthly mean maxima and minima.
+    pub tmp_an: f32,
     /// `rndseed(1:10, iwgn)`.
     pub seed: [i32; 10],
     pub rnd2: f32,
@@ -792,6 +796,8 @@ fn new_wgn_state(w: &Wgn) -> WgnState {
         precip_sum: 0.0,
         pet_sum: 0.0,
         p_pet_rto: 0.0,
+        pcp_an: 0.0,
+        tmp_an: 0.0,
         seed: [0; 10],
         rnd2: 0.0,
         rnd3: 0.0,
@@ -836,9 +842,13 @@ fn init_wgn(w: &mut WgnState, clock: &Clock, adj_pkr: f32, dorm_hr: f32, seed3_s
     rain_hhsm[11] = (rhmx[10] + rhmx[11] + rhmx[0]) / 3.0;
 
     let mut summm_p = 0.0_f32;
+    let mut summx_t = 0.0_f32;
+    let mut summn_t = 0.0_f32;
     for mon in 0..12 {
         let md = ndays[mon + 1] - ndays[mon];
         let m = &mut w.m[mon];
+        summx_t += m.tmp_max_ave;
+        summn_t += m.tmp_min_ave;
         let tav = (m.tmp_max_ave + m.tmp_min_ave) / 2.0;
         if tav > 0.0 {
             w.phutot += tav * md as f32;
@@ -870,7 +880,8 @@ fn init_wgn(w: &mut WgnState, clock: &Clock, adj_pkr: f32, dorm_hr: f32, seed3_s
         let aph = 1.28_f32;
         w.pet[mon] = aph * ho * gma * md as f32;
     }
-    let _ = summm_p;
+    w.pcp_an = summm_p;
+    w.tmp_an = (summx_t + summn_t) / 24.0;
 
     w.dew_is_rhum = !w.m.iter().any(|m| m.dew_ave > 1.0 || m.dew_ave < 0.0);
 

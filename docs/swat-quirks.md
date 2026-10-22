@@ -37,6 +37,11 @@ handles it.
 - **Soil texture is one word.** `soils.sol` texture strings with blanks (`L- L- L- L`) are read
   up to the first blank. A first layer thinner than 20 mm becomes 20 mm when the soil has one
   layer or its second is deeper than 20 mm. (`soil_db_read`; `swat-io/src/hru.rs`)
+- **Basin parameters below 1e-6 take defaults.** After `parameters.bsn` is read,
+  `basin_prm_default` replaces any value below 1e-6 (zero, or not read) with a default, which for
+  some isn't the variable's own initial value (`prf` 1 instead of 484, `cmn` 0.0003 instead of
+  0.003). Ames_sub1 writes `cn_froz` as 0; SWAT+ runs with 0.000862.
+  (`swat-model/src/basin.rs::BasinParams::complete`)
 - **Connection files** are read twice per row, the second time with as many outflows as
   `out_tot` says. (`hyd_read_connect`; `swat-io/src/con.rs`)
 
@@ -77,3 +82,37 @@ handles it.
   only) and shuffles which seed each draw uses (`idg`). `cli_initwgn` uses a copy of the
   precipitation seed for its 1000-value correction factors, so they don't move the seed itself.
 - **Missing values** are written -99 in the files.
+
+## HRU water balance
+
+- **A 10 mm top layer is added** to every soil whose first layer is deeper than 19.5 mm, with the
+  first layer's properties; layer j then takes the file's layer j − 1 (`soils_init`, when there is
+  no `soil_lyr_depths.sol`). (`swat-engine/src/hru.rs::soil_layers`)
+- **Initial soil temperature is December's maximum** averaged with itself:
+  `(tmpmx(12) + tmpmx(12)) / 2` (`hydro_init`). Every layer starts there.
+- **Initial soil water comes from `parameters.bsn`'s `sw_init`** (`ffcb`, a fraction of field
+  capacity), or from annual precipitation when it is 0. `soil_plant.ini`'s `sw_frac` is read but
+  not used.
+- **A curve number table name not found** points at element 0, which keeps the type's defaults
+  (30, 55, 70, 77). A hydrologic group other than A–D gives a curve number of 0.
+- **Overland n defaults to 0.05** when the land use's `ovn` name isn't in `ovn_table.lum`
+  (`plant_init`); the table's own default is 0.5.
+- **The snow temperature has no memory.** `sq_snom` resets its snowpack temperature to 0 on each
+  call before lagging it, so it is always `tave * timp`.
+- **Percolation runs every day**, even without rain: layers above field capacity drain whether or
+  not water arrives. A frozen layer (temperature ≤ 0) holds its water. Water above saturation
+  moves up layer by layer, and what the top layer can't hold joins surface runoff.
+- **Soil evaporation where the cap bites:** each layer gives at most 80 % of its water a day
+  (`etco`); a layer left with less than 1e-6 mm keeps 1e-6.
+- **Biological mixing moves water.** With carbon on (`cswat` 2), `mgt_biomix` runs every day: the
+  thawed layers above the mixing depth (`biomix` row of `tillage.til`; 0.2 and 50 mm when the file
+  has none, nothing without the file) exchange a share of their soil water, weighted by a
+  temperature factor from `carbon.bsn`. Two oddities: every layer's mass uses the first layer's
+  bulk density, and a layer only partly above the mixing depth uses the temperature of the layer
+  above it. The soil water total isn't summed again after mixing.
+- **`sw_init` moves only on printed days.** `hru_output` starts the next period from today's soil
+  water only when it prints the day, so with a print interval over 1 `sw_init` and `sw_ave` span
+  the whole interval. Skipped years (`nyskip`) don't print and start the balance in the first
+  printed year (`basin_sw_init`).
+- **Two values for one name.** `es_max` is changed before `ep_max` is computed from it when PET
+  limits both (`et_act`).

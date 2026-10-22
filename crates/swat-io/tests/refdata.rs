@@ -100,6 +100,17 @@ fn ames_hru_inputs() {
     assert_eq!(p.soils[0].layers.len(), 4);
     assert_eq!((p.soils[0].layers[0].z, p.soils[0].layers[0].k), (50.0, 33.01));
 
+    // parameters.bsn writes cn_froz as 0; basin_prm_default makes it 0.000862.
+    assert_eq!(p.params.get("cn_froz"), Some(0.000862));
+    assert_eq!(p.params.get("ffcb"), Some(0.5));
+    // Biological mixing: the biomix row of tillage.til and carbon.bsn's temperature factor.
+    let till = p.tillage.as_ref().unwrap();
+    let r = till.find("biomix").unwrap();
+    assert_eq!((till.real(r, "effmix"), till.real(r, "deptil")), (Some(0.01), Some(50.0)));
+    let c = p.carbon.as_ref().unwrap();
+    assert_eq!((c.int(0, "tmpf"), c.real(0, "tn"), c.real(0, "top"), c.real(0, "tx")), (Some(2), Some(-0.5), Some(30.0), Some(50.0)));
+    assert_eq!(c.int(0, "mathers_int"), Some(1));
+
     let topo = p.topography.as_ref().unwrap();
     let r = topo.find("topohru0001").unwrap();
     assert_eq!((topo.real(r, "slope"), topo.real(r, "slope_len")), (Some(0.025), Some(91.463)));

@@ -4,6 +4,7 @@ use swat_model::{ObjectKind, Project};
 
 use crate::climate::{Source, Weather};
 use crate::clock::Clock;
+use crate::hru::{Hru, HruBasin, HruWb, init_hrus};
 
 /// The weather an HRU sees on a day (`w` in `hru_control`): its station's, with the lapse-rate
 /// corrections for elevation when `codes.bsn` turns them on.
@@ -14,6 +15,7 @@ pub struct HruWeather {
     pub tmin: f32,
     pub tave: f32,
     pub solrad: f32,
+    pub solradmx: f32,
     pub windsp: f32,
     pub rhum: f32,
     pub phubase0: f32,
@@ -30,8 +32,9 @@ pub struct Day {
 
 /// Receives daily output, for the days SWAT+ prints.
 pub trait OutputSink {
-    /// One HRU's day: its 1-based number, the connection-file object and its weather.
-    fn hru_day(&mut self, day: Day, hru: usize, gis_id: i32, name: &str, w: &HruWeather);
+    /// One HRU's day: its 1-based number, the connection-file object, its weather and, when the
+    /// project's HRUs are within what the port simulates, its water balance.
+    fn hru_day(&mut self, day: Day, hru: usize, gis_id: i32, name: &str, w: &HruWeather, wb: Option<&HruWb>);
 }
 
 /// SWAT+'s daily print switches (`pco%day_print`, `day_print_over`, `int_day_cur`) and the print
@@ -91,10 +94,18 @@ impl PrintGate {
     }
 }
 
+/// What a run did besides its output.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RunReport {
+    /// Why the HRU water balance wasn't simulated, when it wasn't (weather only).
+    pub hru_skipped: Option<String>,
+}
+
 /// Runs the simulation over `time.sim`, handing each printed day to `out`.
-pub fn run(project: &Project, out: &mut dyn OutputSink) -> Result<(), String> {
+pub fn run(project: &Project, out: &mut dyn OutputSink) -> Result<RunReport, String> {
     let mut clock = Clock::new(&project.time);
     let mut weather = Weather::new(project, &mut clock);
+    let mut report = RunReport::default();
 
     // HRUs and their stations (`ob%wst`: 1 when the name isn't found), with lapse corrections
     // (`cli_lapse`).
@@ -109,47 +120,83 @@ pub fn run(project: &Project, out: &mut dyn OutputSink) -> Result<(), String> {
         })
         .collect();
 
+    // The HRUs' land phase, when everything they need is ported.
+    let wgn_of: Vec<usize> =
+        hrus.iter().map(|(ist, ..)| weather.stations.get(ist - 1).map(|s| s.wgn.saturating_sub(1)).unwrap_or(0)).collect();
+    let mut land: Option<Vec<Hru>> = match init_hrus(project, &wgn_of, &weather.wgn, clock.step) {
+        Ok(h) if h.len() == hrus.len() => Some(h),
+        Ok(h) => {
+            report.hru_skipped = Some(format!("{} HRUs in hru-data.hru, {} in hru.con", h.len(), hrus.len()));
+            None
+        }
+        Err(e) => {
+            report.hru_skipped = Some(e);
+            None
+        }
+    };
+    let basin = HruBasin::new(project);
+    let mut balance_started = false;
+
     clock.before_loop();
     weather.precip_control(0, &clock)?;
 
     let mut gate = PrintGate::new(&project.print, &clock);
+    let nyskip = project.print.nyskip;
     let nbyr = clock.nbyr;
     for curyr in 1..=nbyr {
         clock.start_year(curyr);
+        if !balance_started && clock.yrs > nyskip {
+            for h in land.iter_mut().flatten() {
+                h.start_balance();
+            }
+            balance_started = true;
+        }
         for jday in clock.day_start..=clock.day_end_yr {
             clock.set_day(jday);
             gate.update(&clock);
             weather.climate_control(&clock)?;
 
-            let printing = clock.yrs > project.print.nyskip && gate.prints();
-            if printing {
-                let day = Day { jday: clock.day, mon: clock.mo, day: clock.day_mo, yr: clock.yrc };
-                for (j, (ist, o, plaps, tlaps)) in hrus.iter().enumerate() {
-                    let Some(st) = weather.stations.get(ist - 1) else { continue };
-                    let s = &st.weat;
-                    let mut w = HruWeather {
-                        precip: s.precip,
-                        tmax: s.tmax,
-                        tmin: s.tmin,
-                        tave: s.tave,
-                        solrad: s.solrad,
-                        windsp: s.windsp,
-                        rhum: s.rhum,
-                        phubase0: s.phubase0,
-                    };
-                    if lapse {
-                        w.precip = (w.precip + plaps).max(0.0);
-                        w.tmax += tlaps;
-                        w.tmin += tlaps;
-                        w.tave += tlaps;
+            let output = clock.yrs > nyskip;
+            let printing = output && gate.prints();
+            let day = Day { jday: clock.day, mon: clock.mo, day: clock.day_mo, yr: clock.yrc };
+            for (j, (ist, o, plaps, tlaps)) in hrus.iter().enumerate() {
+                let Some(st) = weather.stations.get(ist - 1) else { continue };
+                let s = &st.weat;
+                let mut w = HruWeather {
+                    precip: s.precip,
+                    tmax: s.tmax,
+                    tmin: s.tmin,
+                    tave: s.tave,
+                    solrad: s.solrad,
+                    solradmx: s.solradmx,
+                    windsp: s.windsp,
+                    rhum: s.rhum,
+                    phubase0: s.phubase0,
+                };
+                if lapse {
+                    w.precip = (w.precip + plaps).max(0.0);
+                    w.tmax += tlaps;
+                    w.tmin += tlaps;
+                    w.tave += tlaps;
+                }
+                let mut wb = None;
+                if let Some(h) = land.as_mut().and_then(|l| l.get_mut(j)) {
+                    let g = weather.wgn.get(h.wgn);
+                    let (tmp_an, phutot) = g.map(|g| (g.tmp_an, g.phutot)).unwrap_or((0.0, 0.0));
+                    let mut d = h.day(&w, clock.day, tmp_an, phutot, &basin);
+                    if output {
+                        h.close_day(&mut d, printing);
                     }
-                    out.hru_day(day, j + 1, o.gis_id, &o.name, &w);
+                    wb = Some(d);
+                }
+                if printing {
+                    out.hru_day(day, j + 1, o.gis_id, &o.name, &w, wb.as_ref());
                 }
             }
         }
         clock.yrc += 1;
     }
-    Ok(())
+    Ok(report)
 }
 
 /// SWAT+ `cli_lapse` for one object at elevation `elev` using station `ist`.

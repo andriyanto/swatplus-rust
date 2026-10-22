@@ -33,6 +33,38 @@ pub fn read_table(file: &str, text: &str, fields: &'static [Field]) -> Result<Ta
     Ok(table)
 }
 
+/// Reads a file of one record after its two header lines, as `carbon_bsn_read` does: a table of
+/// one row. SWAT+ stops with an error when the record is missing or a value doesn't convert.
+pub fn read_record(file: &str, text: &str, fields: &'static [Field]) -> Result<Table> {
+    let mut table = Table::empty(file, fields);
+    let mut rec = Records::new(file, text);
+    rec.skip()?;
+    rec.skip()?;
+    let width: usize = fields.iter().map(|f| f.count).sum();
+    let items = rec.read(width)?;
+    let row = fill(fields, &items);
+    let kinds = fields.iter().flat_map(|f| std::iter::repeat_n(f.kind, f.count));
+    for (i, kind) in kinds.enumerate() {
+        let ok = match (kind, items.items.get(i)) {
+            (_, Some(None)) => true,
+            (Kind::Text, Some(Some(_))) => true,
+            (Kind::Int, Some(Some(t))) => parse_int(t).is_some(),
+            (Kind::Real, Some(Some(t))) => parse_real(t).is_some(),
+            (_, None) => false,
+        };
+        if !ok {
+            let name = fields.iter().flat_map(|f| std::iter::repeat_n(f.name, f.count)).nth(i).unwrap_or("?");
+            return Err(crate::Error::Parse {
+                file: file.to_string(),
+                line: 3,
+                msg: format!("value {} ({name}) missing or not a number", i + 1),
+            });
+        }
+    }
+    table.rows.push(row);
+    Ok(table)
+}
+
 /// A row of defaults with the read values put in, up to the first that doesn't convert.
 pub fn fill(fields: &[Field], items: &Fields) -> Vec<Value> {
     let mut row = default_row(fields);

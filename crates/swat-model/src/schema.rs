@@ -1,7 +1,7 @@
 //! Schemas of the tables read one derived type per row, from the Fortran type definitions (names,
 //! order, defaults). The comment on each names the type and the routine that reads the file.
 
-use crate::table::Kind::{Real as R, Text as T};
+use crate::table::Kind::{Int as I, Real as R, Text as T};
 use crate::table::{Field, a, f};
 
 /// `topography.hyd`: `topography_db` (`topo_read`).
@@ -76,3 +76,47 @@ pub const SNOW: &[Field] = &[
 
 /// `field.fld`: `field` (`field_read`).
 pub const FIELD: &[Field] = &[f("name", T, "default"), f("length", R, "500."), f("wid", R, "100."), f("ang", R, "30.")];
+
+/// `tillage.til`: `tillage_db` (`till_parm_read`). The row named `biomix` sets the basin's
+/// biological mixing (`bmix_eff`, `bmix_depth`).
+pub const TILLAGE: &[Field] = &[
+    f("tillnm", T, " "),
+    f("effmix", R, "0."),
+    f("deptil", R, "0."),
+    f("ranrns", R, "0."),
+    f("ridge_ht", R, "0."),
+    f("ridge_sp", R, "0."),
+];
+
+/// `carbon.bsn`: the basin carbon scalars `carbon_bsn_read` reads in one record when `codes.bsn`
+/// turns carbon on (`cswat` 2). Defaults are the Fortran variables' initial values.
+pub const CARBON_BSN: &[Field] = &[
+    f("frac_seq", R, ".95"),
+    f("frac_hum_microb", R, ".02"),
+    f("frac_hum_slow", R, ".54"),
+    f("frac_hum_passive", R, ".44"),
+    f("prmt_21", R, "1000."),
+    f("prmt_44", R, ".5"),
+    f("till_eff_days", I, "30"),
+    f("rtof", R, ".5"),
+    f("bio_consf", R, ".15"),
+    f("till_consf", R, ".10"),
+    f("tmpf", I, "2"),
+    f("watf", I, "1"),
+    f("tn", R, "-5."),
+    f("top", R, "30."),
+    f("tx", R, "50."),
+    f("bmix_a", R, "3.0"),
+    f("bmix_b", R, "0."),
+    f("bmix_c", R, "0."),
+    f("tillmix_a", R, "3.0"),
+    f("tillmix_b", R, "0."),
+    f("tillmix_c", R, "0."),
+    f("photo_degrade_factor", R, "0."),
+    f("n_act_frac", R, ".02"),
+    f("cnr_cap", R, "500."),
+    f("cnr_ref", R, "25."),
+    f("cpr_cap", R, "5000."),
+    f("cpr_ref", R, "200."),
+    f("mathers_int", I, "0"),
+];

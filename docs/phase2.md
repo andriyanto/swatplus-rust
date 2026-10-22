@@ -19,7 +19,7 @@ scenarios built from Ames_sub1 that remove one dependency at a time
 
 | Stage | Scenario | Adds | Exit |
 | --- | --- | --- | --- |
-| 2a | `Ames_bare`: bare soil, no plants, no management | soil water, snow, soil evaporation, curve-number runoff, percolation, lateral flow, soil temperature | `hru_wb_day` within tolerance, 12 HRUs, 1975–2020 |
+| 2a ✅ | `Ames_bare`: bare soil, no plants, no management | soil water, snow, soil evaporation, curve-number runoff, percolation, lateral flow, soil temperature, biological mixing | `hru_wb_day` within tolerance, 12 HRUs, 1975–2020: **exact**, 28 columns × 201 624 HRU-days |
 | 2b | `Ames_past`: pasture, no management | plant growth (`pl_grow`, ~1 100 lines), canopy, transpiration | `hru_wb_day` and the plant columns of `hru_pw_day` within tolerance |
 | later | `Ames_sub1` itself | management, irrigation, nutrients, carbon | with phase 4 |
 | later | `Osu_1hru` | paddy and wetland storage, decision tables, Penman-Monteith PET | with phases 4 and 6 |
@@ -29,13 +29,32 @@ evapotranspiration, all from the soil. The columns that move: precip, snofall, s
 wateryld, et, esoil, surq_cont, cn, sw_init, sw_final, sw_ave, sw_300, sno_init, sno_final,
 snopack, pet, sw_change, lagsurf.
 
+## Stage 2a: result
+
+Done (`swat-engine/src/hru.rs`). Every column the port writes is identical to SWAT+'s on every
+day, with no tolerance used. What it took beyond the plan:
+
+- **Basin parameter defaults.** `basin_prm_default` replaces values below 1e-6 after reading
+  `parameters.bsn`; Ames writes `cn_froz` as 0, so SWAT+ uses 0.000862 (frozen soil runoff).
+- **Biological mixing moves soil water.** With carbon on (`cswat = 2`), `mgt_biomix` mixes the
+  top layers every day (the `biomix` row of `tillage.til`: 1 % to 50 mm in Ames), soil water
+  included. Without it, evaporation drifted by up to 0.003 mm a day once the top layer dried
+  out. It needs `tillage.til` and `carbon.bsn` (temperature factor), now read.
+- **No `soil_lyr_depths.sol`.** The variants drop it, so soils keep the layers of `soils.sol`
+  plus SWAT+'s 10 mm top layer; re-layering to custom depths comes later.
+
+`run` checks a project's HRUs first and, when one needs something not ported (plants,
+management, urban land, tiles, septic systems, filter strips, surface storage, other PET methods,
+Green and Ampt, cracks, gwflow, sub-daily steps, water routed into HRUs), skips the water balance
+and says why.
+
 ## Stage 2a: inputs
 
 All read now (`swat-io`): `hru-data.hru`, `topography.hyd`, `hydrology.hyd`, `field.fld`,
 `soils.sol`, `soil_plant.ini`, `landuse.lum`, `cntable.lum`, `ovn_table.lum`,
-`cons_practice.lum`, `snow.sno`, `codes.bsn`, `parameters.bsn`. Not yet needed: `nutrients.sol`
-and the carbon files (the carbon model runs, but doesn't feed the water balance of a bare soil;
-to be confirmed in the port).
+`cons_practice.lum`, `snow.sno`, `codes.bsn`, `parameters.bsn`. Added in the port: `tillage.til`
+and `carbon.bsn` (biological mixing, above). Not needed: `nutrients.sol` and the rest of the
+carbon model, which doesn't feed the water balance.
 
 ## Stage 2a: the Fortran to port
 

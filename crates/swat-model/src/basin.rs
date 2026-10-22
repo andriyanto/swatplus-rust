@@ -144,6 +144,67 @@ impl BasinParams {
         self.reals.get(i).copied()
     }
 
+    /// SWAT+ `basin_prm_default`, run after reading: a value below 1e-6 (zero, or left out) takes
+    /// a default, which for some isn't the type's own default (`prf` 1, `cmn` 0.0003,
+    /// `urb_init_abst` 0). `petco_pmpt` between 0 and 0.5 becomes 0; `co2` below 100 becomes 400.
+    pub fn complete(&mut self) {
+        const FLOORED: [(&str, f32); 34] = [
+            ("evlai", 3.0),
+            ("ffcb", 0.0),
+            ("surlag", 4.0),
+            ("adj_pkr", 1.0),
+            ("prf", 1.0),
+            ("cmn", 0.0003),
+            ("n_updis", 20.0),
+            ("p_updis", 20.0),
+            ("nperco", 0.1),
+            ("pperco", 10.0),
+            ("phoskd", 175.0),
+            ("psp", 0.40),
+            ("rsdco", 0.05),
+            ("percop", 0.5),
+            ("msk_co1", 0.75),
+            ("msk_co2", 0.25),
+            ("msk_x", 0.20),
+            ("nperco_lchtile", 0.50),
+            ("evrch", 0.60),
+            ("cdn", 1.40),
+            ("sdnco", 1.30),
+            ("bact_swf", 0.15),
+            ("tb_adj", 0.0),
+            ("cn_froz", 0.000862),
+            ("nfixmx", 20.0),
+            ("decr_min", 0.01),
+            ("rsd_covco", 0.75),
+            ("urb_init_abst", 0.0),
+            ("uhalpha", 1.0),
+            ("eros_spl", 0.0),
+            ("rill_mult", 0.0),
+            ("eros_expo", 0.0),
+            ("c_factor", 0.0),
+            ("ch_d50", 0.0),
+        ];
+        let at = |name: &str| BASIN_PARAM_NAMES.iter().position(|n| *n == name);
+        for (name, value) in FLOORED {
+            if let Some(v) = at(name).and_then(|i| self.reals.get_mut(i))
+                && *v < 1.0e-6
+            {
+                *v = value;
+            }
+        }
+        if let Some(v) = at("petco_pmpt").and_then(|i| self.reals.get_mut(i))
+            && *v < 0.5
+            && *v > 0.0
+        {
+            *v = 0.0;
+        }
+        if let Some(v) = at("co2").and_then(|i| self.reals.get_mut(i))
+            && *v < 100.0
+        {
+            *v = 400.0;
+        }
+    }
+
     pub fn adj_pkr(&self) -> f32 {
         self.reals[3]
     }
