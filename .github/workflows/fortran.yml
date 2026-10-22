@@ -1,0 +1,78 @@
+name: SWAT+ Fortran build
+
+# Builds the SWAT+ Fortran engine at the commit this port follows, statically linked for Linux,
+# and keeps it on the `fortran-bin` branch, so the reference program can be fetched with git and
+# run next to the Rust engine (artifacts can't always be downloaded). Runs on demand, and when this
+# workflow changes.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [".github/workflows/fortran.yml"]
+
+permissions:
+  contents: write
+
+env:
+  SWATPLUS_REF: 6f515368525e7d84089ae0f9d33f4c9115de5679
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out SWAT+
+        uses: actions/checkout@v5
+        with:
+          repository: swat-model/swatplus
+          ref: ${{ env.SWATPLUS_REF }}
+          path: swatplus
+
+      - name: Install gfortran
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gfortran ninja-build
+
+      - name: Build (Release, static)
+        working-directory: swatplus
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_Fortran_COMPILER=gfortran -DTAG="${SWATPLUS_REF:0:7}"
+          cmake --build build
+          exe=$(find build -maxdepth 1 -type f -name 'swatplus-*' -perm -u+x | head -1)
+          test -n "$exe"
+          file "$exe"
+          echo "EXE=$PWD/$exe" >> "$GITHUB_ENV"
+
+      - name: Smoke test on Osu_1hru
+        run: |
+          cp -r swatplus/refdata/Osu_1hru run
+          (cd run && "$EXE" > run.log 2>&1)
+          test -f run/success.fin
+
+      - name: Publish to the fortran-bin branch
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir pub
+          cp "$EXE" pub/swatplus-fortran
+          chmod +x pub/swatplus-fortran
+          {
+            echo "SWAT+ Fortran engine, the reference for swatplus-rust."
+            echo
+            echo "swatplus commit: $SWATPLUS_REF"
+            echo "compiler: $(gfortran --version | head -1)"
+            echo "built on: ubuntu-24.04, $(date -u +%Y-%m-%dT%H:%M:%SZ), static"
+            echo "sha256: $(sha256sum pub/swatplus-fortran | cut -d' ' -f1)"
+            echo "workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo
+            echo "License: LGPL-2.1, as SWAT+ (source: https://github.com/swat-model/swatplus)."
+          } > pub/README.txt
+          cd pub
+          git init -q -b fortran-bin
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add .
+          git commit -q -m "SWAT+ Fortran ${SWATPLUS_REF:0:7}"
+          git push -f "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" fortran-bin
+          echo "::notice title=SWAT+ Fortran::published on fortran-bin, $(cat README.txt | grep sha256)"
