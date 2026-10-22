@@ -64,8 +64,7 @@ pub fn read_soils(text: &str) -> Result<Vec<Soil>> {
     let body = rec.mark();
     // Count the soils: a record of name and layer count, then that many layer records.
     let mut imax = 0;
-    loop {
-        let Ok(f) = rec.read(2) else { break };
+    while let Ok(f) = rec.read(2) {
         let nly = f.int(1).ok().flatten().unwrap_or(0).max(0);
         let mut ok = true;
         for _ in 0..nly {
