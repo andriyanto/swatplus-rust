@@ -1,9 +1,10 @@
 //! Loading a whole scenario: `file.cio` first, then the files it names.
 
+use swat_model::schema;
 use swat_model::{ClimateVar, ObjectKind, Project, StationList};
 
 use crate::source::FileSource;
-use crate::{Error, Result, basin, cio, climate, con, print, time};
+use crate::{Error, Result, basin, cio, climate, con, hru, print, table, time};
 
 /// What loading found wrong without failing, as SWAT+ goes on in those cases too.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -62,6 +63,43 @@ pub fn load_project(src: &dyn FileSource) -> Result<(Project, LoadReport)> {
     if let Some((name, text)) = fetch("climate", "weat_wgn")? {
         project.wgn = climate::read_wgn(&name, &text)?;
     }
+    // HRUs and the databases they point to (`hru_read` and the readers before it).
+    let tables: [(&str, &str, &'static [swat_model::table::Field]); 8] = [
+        ("hydrology", "topogr_hyd", schema::TOPOGRAPHY),
+        ("hydrology", "hydrol_hyd", schema::HYDROLOGY),
+        ("hydrology", "field_fld", schema::FIELD),
+        ("lum", "landuse_lum", schema::LANDUSE),
+        ("lum", "cntable_lum", schema::CNTABLE),
+        ("lum", "ovn_lum", schema::OVN_TABLE),
+        ("lum", "cons_prac_lum", schema::CONS_PRACTICE),
+        ("hru_parm_db", "snow", schema::SNOW),
+    ];
+    let mut read = Vec::new();
+    for (section, slot, fields) in tables {
+        read.push(match fetch(section, slot)? {
+            Some((name, text)) => Some(table::read_table(&name, &text, fields)?),
+            None => None,
+        });
+    }
+    let mut it = read.into_iter();
+    project.topography = it.next().flatten();
+    project.hydrology = it.next().flatten();
+    project.field = it.next().flatten();
+    project.landuse = it.next().flatten();
+    project.cntable = it.next().flatten();
+    project.ovn_table = it.next().flatten();
+    project.cons_practice = it.next().flatten();
+    project.snow = it.next().flatten();
+    if let Some((_, text)) = fetch("soils", "soils_sol")? {
+        project.soils = hru::read_soils(&text)?;
+    }
+    if let Some((_, text)) = fetch("init", "soil_plant_ini")? {
+        project.soil_plant_init = hru::read_soil_plant_init(&text, project.codes.nam1)?;
+    }
+    if let Some((_, text)) = fetch("hru", "hru_data")? {
+        project.hru_data = hru::read_hru_data(&text)?;
+    }
+
     let mut lists = Vec::new();
     for var in ClimateVar::ALL {
         if let Some((name, text)) = fetch("climate", var.cio_slot())? {

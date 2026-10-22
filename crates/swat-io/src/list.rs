@@ -104,6 +104,32 @@ impl<'a> Records<'a> {
         Ok(Fields { file: self.file.to_string(), line: start, items })
     }
 
+    /// A read of `n` values that keeps what it got when the file ends first, as Fortran assigns
+    /// the values read before an end-of-file. `None` when no value was read at all.
+    pub fn read_partial(&mut self, n: usize) -> Option<(Fields, bool)> {
+        let start = self.line();
+        let mut items: Vec<Item> = Vec::with_capacity(n);
+        let mut eof = false;
+        loop {
+            let Some(line) = self.raw() else {
+                eof = true;
+                break;
+            };
+            match tokenize(line, n - items.len(), &mut items) {
+                Some(Stop::Slash) | Some(Stop::Full) => break,
+                None => {}
+            }
+            if items.len() >= n {
+                break;
+            }
+        }
+        if items.is_empty() && eof {
+            return None;
+        }
+        items.truncate(n);
+        Some((Fields { file: self.file.to_string(), line: start, items }, eof))
+    }
+
     fn eof(&self) -> Error {
         Error::Eof { file: self.file.to_string() }
     }

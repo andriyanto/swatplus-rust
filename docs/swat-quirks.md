@@ -28,6 +28,15 @@ handles it.
   `0.00000`, which gfortran won't read as an integer: the read stops there and `igen` keeps its
   default 5, which changes the random seeds. Ames_sub1's file has `0 0`, so its `igen` is 0.
   (`swat-io/src/basin.rs`)
+- **Tables are counted, then read.** Database tables (`topography.hyd`, `landuse.lum`…) are
+  counted one value per record (blank lines don't count), then read that many times as whole
+  derived types; a short row takes values from the next line. `hru-data.hru` is sized by its
+  largest HRU number and each row placed at its own number. (`swat-io/src/table.rs`, `hru.rs`)
+- **Lookups by name are linear and take the first match**, compared as Fortran strings (trailing
+  blanks ignored); a name not found leaves the pointer 0. (`swat-model/src/table.rs`)
+- **Soil texture is one word.** `soils.sol` texture strings with blanks (`L- L- L- L`) are read
+  up to the first blank. A first layer thinner than 20 mm becomes 20 mm when the soil has one
+  layer or its second is deeper than 20 mm. (`soil_db_read`; `swat-io/src/hru.rs`)
 - **Connection files** are read twice per row, the second time with as many outflows as
   `out_tot` says. (`hyd_read_connect`; `swat-io/src/con.rs`)
 

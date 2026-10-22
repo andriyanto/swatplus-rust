@@ -84,3 +84,47 @@ fn ames_sub1() {
     assert_eq!(pcp.nbyr, 121);
     assert_eq!(pcp.records.first().map(|r| (r.year, r.jday, r.values[0])), Some((1900, 1, -99.0)));
 }
+
+#[test]
+fn ames_hru_inputs() {
+    let (p, _) = load_project(&scenario("Ames_sub1")).unwrap();
+    assert_eq!(p.hru_data.len(), 12);
+    let h1 = &p.hru_data[0];
+    assert_eq!((h1.id, h1.topo.as_str(), h1.soil.as_str(), h1.land_use_mgt.as_str()), (1, "topohru0001", "soil_01-h1", "cosy_lum"));
+
+    // 14 soils; the texture "L- L- L- L" reads as its first word.
+    assert_eq!(p.soils.len(), 14);
+    let s = p.soils.iter().find(|s| s.name == "soil_01-h1").unwrap();
+    assert_eq!((s.nly, s.hydgrp.as_str(), s.zmx), (4, "B", 2000.0));
+    assert_eq!(p.soils[0].texture, "L-");
+    assert_eq!(p.soils[0].layers.len(), 4);
+    assert_eq!((p.soils[0].layers[0].z, p.soils[0].layers[0].k), (50.0, 33.01));
+
+    let topo = p.topography.as_ref().unwrap();
+    let r = topo.find("topohru0001").unwrap();
+    assert_eq!((topo.real(r, "slope"), topo.real(r, "slope_len")), (Some(0.025), Some(91.463)));
+    let hyd = p.hydrology.as_ref().unwrap();
+    let r = hyd.find("hyd0001").unwrap();
+    assert_eq!((hyd.real(r, "esco"), hyd.real(r, "perco"), hyd.real(r, "latq_co")), (Some(0.95), Some(0.5), Some(0.01)));
+    let lu = p.landuse.as_ref().unwrap();
+    let r = lu.find("cosy_lum").unwrap();
+    assert_eq!(
+        (lu.text(r, "plant_cov"), lu.text(r, "mgt_ops"), lu.text(r, "cn_lu")),
+        (Some("cosy_comm"), Some("mgt_01"), Some("rc_strow_g"))
+    );
+    let cn = p.cntable.as_ref().unwrap();
+    let r = cn.find("fal_bare").unwrap();
+    assert_eq!(cn.get(r, "cn", 3).and_then(|v| v.as_real()), Some(94.0));
+    let sno = p.snow.as_ref().unwrap();
+    assert_eq!(sno.real(0, "meltmn"), Some(4.5));
+    assert_eq!(p.soil_plant_init.first().map(|s| (s.name.as_str(), s.sw_frac, s.nutc.as_str())), Some(("soilplant1", 0.5, "soilnut1")));
+}
+
+#[test]
+fn osu_hru_inputs() {
+    let (p, _) = load_project(&scenario("Osu_1hru")).unwrap();
+    assert_eq!(p.hru_data.len(), 1);
+    assert_eq!(p.hru_data[0].surf_stor, "paddy0001");
+    let s = p.soils.iter().find(|s| s.name == p.hru_data[0].soil).unwrap();
+    assert!(s.nly > 0 && !s.layers.is_empty());
+}

@@ -19,7 +19,7 @@ relative difference of 1e-4 or one unit in the last printed decimal (decision K1
 
 | Crate | Job |
 | --- | --- |
-| `swat-model` | The data of a project: `file.cio`, simulation period, print settings, spatial objects and their outflows, weather stations, weather generator, measured climate series. No I/O. |
+| `swat-model` | The data of a project: `file.cio`, basin codes and parameters, simulation period, print settings, spatial objects and their outflows, weather, HRUs, soils, and the database tables (topography, hydrology, land use, curve numbers, snow…). No I/O. |
 | `swat-io` | Readers for TxtInOut files. Each follows the SWAT+ routine that reads the file, with Fortran list-directed input rules, from a folder or from files in memory (the browser). |
 | `swat-engine` | The simulation. So far the clock, the daily weather (measured and generated) and the print schedule. |
 | `swatplus-rust` | The command line program: `inspect`, `run`, `compare`. |
@@ -40,6 +40,9 @@ branch (`SWAT+ Fortran build` workflow).
 
 The aim is the same results as SWAT+, so its behaviour is reproduced even where it surprises.
 What has been found so far is in [`docs/swat-quirks.md`](docs/swat-quirks.md).
+
+Next: the HRU water balance, in stages on scenarios built from Ames_sub1 — see
+[`docs/phase2.md`](docs/phase2.md).
 
 ## License
 

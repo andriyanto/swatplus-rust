@@ -10,10 +10,12 @@ pub mod basin;
 pub mod cio;
 pub mod climate;
 pub mod con;
+pub mod hru;
 pub mod list;
 pub mod print;
 pub mod project;
 pub mod source;
+pub mod table;
 pub mod time;
 
 pub use project::{LoadReport, load_project};

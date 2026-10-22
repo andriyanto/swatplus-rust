@@ -9,15 +9,20 @@
 pub mod basin;
 pub mod cio;
 pub mod climate;
+pub mod hru;
 pub mod objects;
 pub mod print;
+pub mod schema;
+pub mod table;
 pub mod time;
 
 pub use basin::{BasinCodes, BasinParams};
 pub use cio::{CioSection, FileCio};
 pub use climate::{ClimateRecord, ClimateVar, StationList, StationSeries, WeatherStation, Wgn, WgnMonth};
+pub use hru::{HruData, Soil, SoilLayer, SoilPlantInit};
 pub use objects::{ObjectKind, Outflow, SpatialObject};
 pub use print::{PrintObject, PrintSettings};
+pub use table::Table;
 pub use time::{SimDay, TimeSim};
 
 /// A SWAT+ project as far as the readers go so far: the master file, the simulation period, the
@@ -36,6 +41,18 @@ pub struct Project {
     pub station_lists: Vec<StationList>,
     /// The measured station files SWAT+ reads, in list order.
     pub series: Vec<StationSeries>,
+    /// `hru-data.hru`, indexed by HRU number - 1 (SWAT+ places rows by their number).
+    pub hru_data: Vec<HruData>,
+    pub soils: Vec<Soil>,
+    pub soil_plant_init: Vec<SoilPlantInit>,
+    pub topography: Option<Table>,
+    pub hydrology: Option<Table>,
+    pub field: Option<Table>,
+    pub landuse: Option<Table>,
+    pub cntable: Option<Table>,
+    pub ovn_table: Option<Table>,
+    pub cons_practice: Option<Table>,
+    pub snow: Option<Table>,
 }
 
 impl Project {
