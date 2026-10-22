@@ -737,18 +737,17 @@ impl Plant {
         }
         let f_p = self.phuacc_p / (self.phuacc_p + exponent.exp());
         if self.phuacc < db.dlai {
-            let laimax;
-            if db.perennial() {
+            let laimax = if db.perennial() {
                 if self.curyr_mat < 1 {
                     self.curyr_mat = 1;
                 }
                 let rto_lin = self.curyr_mat as f32 / db.mat_yrs as f32;
                 let rto = rto_lin.log10();
                 let lai_exp = rto * db.laixco_tree;
-                laimax = (self.lai_pot * 10.0_f32.powf(lai_exp)).min(self.lai_pot);
+                (self.lai_pot * 10.0_f32.powf(lai_exp)).min(self.lai_pot)
             } else {
-                laimax = self.lai_pot;
-            }
+                self.lai_pot
+            };
             self.cht = if db.perennial() { db.chtmx * f_p.sqrt() } else { db.chtmx * f.sqrt() };
             if self.lai > laimax {
                 self.lai = laimax;
