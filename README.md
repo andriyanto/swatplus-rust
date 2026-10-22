@@ -6,14 +6,14 @@ and in the browser (WebAssembly), and to be run by [RustGIS](https://github.com/
 Status: **phase 1.** The daily weather matches SWAT+ exactly: precipitation, maximum, minimum and
 mean temperature, solar radiation, wind speed and relative humidity, measured and generated, are
 identical to the Fortran engine's on every day of both reference scenarios (Osu_1hru 2013–2023,
-Ames_sub1 1975–2020, 12 HRUs). CI checks this on every push (`Validate against SWAT+`). The design, decisions and
-phases are in RustGIS: [`docs/swat/design.md`](https://github.com/andriyanto/rustgis/blob/swat-plus-design/docs/swat/design.md).
+Ames_sub1 1975–2020, 12 HRUs). CI checks this on every push.
+The design, decisions and phases are in RustGIS: [`docs/swat/design.md`](https://github.com/andriyanto/rustgis/blob/swat-plus-design/docs/swat/design.md).
 
 ## Goal
 
-Every daily output matches SWAT+ Fortran (commit `6f51536`) within tolerance on the reference
-scenarios. The Fortran baseline is built and run by RustGIS's `SWAT+ baseline` workflow; outputs
-are compared value by value with `tools/swat/compare_outputs.py` there.
+Every daily output matches SWAT+ Fortran (commit `6f51536`) on the reference scenarios, within a
+relative difference of 1e-4 or one unit in the last printed decimal (decision K12). The
+`Validate against SWAT+` workflow runs both engines and compares them with `swatplus-rust compare`.
 
 ## Layout
 
