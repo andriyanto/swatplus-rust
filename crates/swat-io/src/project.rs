@@ -117,6 +117,9 @@ pub fn load_project(src: &dyn FileSource) -> Result<(Project, LoadReport)> {
     project.irr_ops = it.next().flatten();
     project.chem_app = it.next().flatten();
     project.harv_ops = it.next().flatten();
+    if let Some((name, text)) = fetch("decision_table", "dtbl_lum")? {
+        project.lum_dtl = hru::read_decision_tables(&name, &text)?;
+    }
     if let Some((_, text)) = fetch("lum", "management_sch")? {
         project.management = hru::read_management(&text)?;
     }
@@ -124,6 +127,10 @@ pub fn load_project(src: &dyn FileSource) -> Result<(Project, LoadReport)> {
         project.plant_communities = hru::read_plant_communities(&text)?;
     }
     project.co2_yr_dat = src.read("co2_yr.dat").ok().flatten().is_some();
+    // soils_init opens it by this name, whatever file.cio says.
+    if let Some(text) = src.read("soil_lyr_depths.sol")? {
+        project.soil_lyr_depths = Some(hru::read_soil_lyr_depths(&text)?);
+    }
     if project.codes.cswat == 2
         && let Some((name, text)) = fetch("basin", "carbon_bsn")?
     {

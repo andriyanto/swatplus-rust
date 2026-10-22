@@ -21,7 +21,7 @@ pub use basin::{BasinCodes, BasinParams};
 pub use cio::{CioSection, FileCio};
 pub use climate::{ClimateRecord, ClimateVar, StationList, StationSeries, WeatherStation, Wgn, WgnMonth};
 pub use hru::{HruData, PlantCommunity, PlantInit, Soil, SoilLayer, SoilPlantInit};
-pub use mgt::{MgtOp, MgtSchedule};
+pub use mgt::{DecisionTable, DtblAct, DtblCond, MgtOp, MgtSchedule};
 pub use objects::{ObjectKind, Outflow, SpatialObject};
 pub use print::{PrintObject, PrintSettings};
 pub use table::Table;
@@ -68,11 +68,15 @@ pub struct Project {
     pub soil_test: Option<Table>,
     /// `management.sch`.
     pub management: Vec<MgtSchedule>,
+    /// `lum.dtl`.
+    pub lum_dtl: Vec<DecisionTable>,
     /// `harv.ops`, `fertilizer.frt`, `irr.ops` and `chem_app.ops`.
     pub harv_ops: Option<Table>,
     pub fertilizer: Option<Table>,
     pub irr_ops: Option<Table>,
     pub chem_app: Option<Table>,
+    /// `soil_lyr_depths.sol` (custom layer depths, mm, as listed), when the project has it.
+    pub soil_lyr_depths: Option<Vec<i32>>,
     /// Whether the project has `co2_yr.dat` (yearly CO2, read by `co2_read`; not handled yet).
     pub co2_yr_dat: bool,
 }

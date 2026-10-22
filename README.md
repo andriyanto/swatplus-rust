@@ -3,7 +3,7 @@
 SWAT+ (Soil and Water Assessment Tool Plus) translated from Fortran into Rust, to run natively
 and in the browser (WebAssembly), and to be run by [RustGIS](https://github.com/andriyanto/rustgis).
 
-Status: **phase 2 done (stages 2a, 2b-1, 2b-2).** The daily weather matches SWAT+ exactly: precipitation,
+Status: **phase 2 done (stages 2a, 2b-1, 2b-2, management M1 and M2).** The daily weather matches SWAT+ exactly: precipitation,
 maximum, minimum and mean temperature, solar radiation, wind speed and relative humidity, measured
 and generated, are identical to the Fortran engine's on every day of both reference scenarios
 (Osu_1hru 2013–2023, Ames_sub1 1975–2020, 12 HRUs). The HRU water balance of bare soil (no plants,
@@ -13,8 +13,9 @@ water) are identical on all 201 624 HRU-days of `Ames_bare`. With a pasture grow
 original carbon model (`Ames_past0`) and with the Century carbon model Ames uses
 (`Ames_past`), all four daily HRU tables — water balance, plants, nutrient balance and losses,
 77 columns — are identical too, and so are they with corn under Ames's scheduled management
-(planting, harvest, tillage, irrigation, fertilizer: `Ames_corn`, `Ames_cornf`). CI checks this
-on every push.
+(planting, harvest, tillage, irrigation, fertilizer: `Ames_corn`, `Ames_cornf`), and with
+**Ames_sub1 itself**, unchanged: corn and soybean in one community, its 305 scheduled
+operations, irrigation by decision table and custom soil layers. CI checks this on every push.
 The design, decisions and phases are in RustGIS: [`docs/swat/design.md`](https://github.com/andriyanto/rustgis/blob/swat-plus-design/docs/swat/design.md).
 
 ## Goal
@@ -49,10 +50,9 @@ branch (`SWAT+ Fortran build` workflow).
 The aim is the same results as SWAT+, so its behaviour is reproduced even where it surprises.
 What has been found so far is in [`docs/swat-quirks.md`](docs/swat-quirks.md).
 
-Next: two-plant communities and decision tables (Ames_sub1 itself), then routing (phase 3) —
-see [`docs/phase2.md`](docs/phase2.md). For a project the port can't simulate yet (decision
-tables, several plants, other PET methods…), `run` says why and writes the weather and
-precipitation only.
+Next: routing (phase 3) — see [`docs/phase2.md`](docs/phase2.md). For a project the port can't
+simulate yet (other decision table conditions and actions, other operations, other PET
+methods…), `run` says why and writes the weather and precipitation only.
 
 ## License
 

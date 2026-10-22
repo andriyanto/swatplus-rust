@@ -12,6 +12,7 @@
 #              SWAT+ Editor's default).
 #   Ames_corn  corn alone under mgt_01's dated operations (below).
 #   Ames_cornf Ames_corn with its fertilizer actually applied (below).
+#   Ames_cosy, Ames_cosy2, Ames_dtbl: Ames_sub1's own land uses, step by step (below).
 #
 # Both drop soil_lyr_depths.sol, so SWAT+ keeps the layers of soils.sol (plus its 10 mm top layer)
 # instead of re-layering every soil to custom depths; that path is validated later.
@@ -72,3 +73,31 @@ awk '$1 == "mgt_corn" { on = 1 }
   on && $1 == "fert" { f = ($6 == "05_10_15") ? "dairy_fr" : $6; m = ($6 == "elem_n") ? "inject" : "broadcast";
     printf "%56s %10s %10s %6s %16s %16s %9s\n", $1, $2, $3, $4, f, m, $7; next }
   { print }' "$out/Ames_corn/management.sch" > "$out/Ames_cornf/management.sch"
+
+# Ames_cosy: Ames_sub1's own land uses (cosy_comm, corn and soybean, under mgt_01 in 11 HRUs;
+# corn_comm under mgt_08 in the 12th) with mgt_01's decision table (irrigation on conditions)
+# left out: a community of two plants, of which mgt_01 only ever plants corn.
+rm -rf "$out/Ames_cosy"
+cp -r "$src" "$out/Ames_cosy"
+rm -f "$out/Ames_cosy/soil_lyr_depths.sol"
+awk '{ sub(/\r$/, "") } $1 == "cosy_lum" { sub(/mgt_01 /, "mgt_corn") } { print }' \
+  "$src/landuse.lum" > "$out/Ames_cosy/landuse.lum"
+cp "$out/Ames_corn/management.sch" "$out/Ames_cosy/management.sch"
+
+# Ames_cosy2: Ames_cosy with corn and soybean grown together: every planting and every
+# harvest of corn is followed, the same day, by one of soybean (so the two compete for light,
+# water and nutrients).
+rm -rf "$out/Ames_cosy2"
+cp -r "$out/Ames_cosy" "$out/Ames_cosy2"
+awk '{ sub(/\r$/, "") }
+  $1 == "mgt_corn" { on = 1; buf = ""; count = 0; head = $0; next }
+  !on { print; next }
+  { line = $0; buf = buf line "\n"; count++
+    if (($1 == "plnt" || $1 == "hvkl") && $5 == "corn") { sub(/ corn /, " soyb ", line); buf = buf line "\n"; count++ } }
+  END { split(head, h, " "); print h[1], count, h[3]; printf "%s", buf }' \
+  "$out/Ames_cosy/management.sch" > "$out/Ames_cosy2/management.sch"
+
+# Ames_dtbl: Ames_sub1 as it is, decision table included, but without soil_lyr_depths.sol.
+rm -rf "$out/Ames_dtbl"
+cp -r "$src" "$out/Ames_dtbl"
+rm -f "$out/Ames_dtbl/soil_lyr_depths.sol"

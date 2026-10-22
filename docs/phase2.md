@@ -23,7 +23,7 @@ scenarios built from Ames_sub1 that remove one dependency at a time
 | 2b-1 ✅ | `Ames_past0`: pasture, no management, original carbon model (`cswat` 0) | plant growth, canopy, transpiration, soil N and P, residue, erosion | **exact**: `hru_wb_day`, `hru_pw_day`, `hru_nb_day`, `hru_ls_day`, 77 columns × 201 624 HRU-days |
 | 2b-2 ✅ | `Ames_past`: the same with the carbon model on (`cswat` 2, as Ames) | `cbn_zhang2` and the Century pools, daily biological mixing of nutrients and texture | **exact**: the same four tables, and every layer's soil carbon (`hru_cbn_lyr`) within print precision |
 | M1 ✅ | `Ames_corn`, `Ames_cornf`: corn alone with `mgt_01`'s dated operations; `Ames_cornf` with its fertilizer applied | planting, harvest and kill, tillage with the carbon model, irrigation, fertilizer (mineral and manure), annual plants | **exact**: the four tables, 80 columns × 201 624 HRU-days each |
-| M2 | `Ames_sub1` itself | two plants (corn and soybean), irrigation by decision table | next |
+| M2 ✅ | `Ames_cosy`, `Ames_cosy2`, `Ames_dtbl`, then `Ames_sub1` itself | a community of two plants (corn and soybean; `Ames_cosy2` grows both together), irrigation by decision table, custom soil layers | **exact**: the four tables, all four scenarios |
 | later | `Osu_1hru` | paddy and wetland storage, decision tables, Penman-Monteith PET | with phases 4 and 6 |
 
 Bare soil in Ames_sub1 (HRU 1, 1980): 568 mm of precipitation, 64 mm of surface runoff, 531 mm of
@@ -43,12 +43,34 @@ day, with no tolerance used. What it took beyond the plan:
   included. Without it, evaporation drifted by up to 0.003 mm a day once the top layer dried
   out. It needs `tillage.til` and `carbon.bsn` (temperature factor), now read.
 - **No `soil_lyr_depths.sol`.** The variants drop it, so soils keep the layers of `soils.sol`
-  plus SWAT+'s 10 mm top layer; re-layering to custom depths comes later.
+  plus SWAT+'s 10 mm top layer; re-layering to custom depths came with M2.
 
 `run` checks a project's HRUs first and, when one needs something not ported (plants,
 management, urban land, tiles, septic systems, filter strips, surface storage, other PET methods,
 Green and Ampt, cracks, gwflow, sub-daily steps, water routed into HRUs), skips the water balance
 and says why.
+
+## Management M2: result
+
+Done: Ames_sub1 itself, unchanged, matches SWAT+ bit for bit in all four daily HRU tables, 12
+HRUs over 1975–2020. In three steps, each a scenario checked on its own:
+
+- `Ames_cosy`: Ames's land uses (corn and soybean in `cosy_comm` under `mgt_01`, which only plants
+  corn; corn under `mgt_08` in one HRU) without the decision table. The port's plants became a
+  community: every plant routine, residue pool (on the surface and per layer), mixing,
+  decomposition and management operation now loops over the plants as SWAT+ does.
+- `Ames_cosy2`: the same with soybean planted and harvested with every corn, so the two compete
+  for light, water and nutrients.
+- `Ames_dtbl`: Ames_sub1 with its decision table (`irr_year_irr`: irrigate when water stress
+  is high, the corn is past 20 % of its heat units, its leaf area over 0.5, and less than 500 mm
+  have been applied), but without custom layers. Ported: the `lum.dtl` reader, the crosswalk to
+  the schedule, `conditions` (water stress, heat units, leaf area, irrigation so far), `cond_real`
+  and the `irrigate` action.
+- `Ames_sub1`: `soil_lyr_depths.sol`, the custom layers (16 instead of 5), read and split as
+  `soils_init` does.
+
+All exact on the first comparison; the quirks found are in the "Plant communities", "Decision
+tables" and "Custom soil layers" sections of `docs/swat-quirks.md`.
 
 ## Management M1: result
 

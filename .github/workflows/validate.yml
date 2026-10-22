@@ -41,7 +41,7 @@ jobs:
         run: |
           status=0
           scripts/make-variants.sh testdata/Ames_sub1 variants
-          for scenario in Osu_1hru Ames_sub1 Ames_bare Ames_past0 Ames_past Ames_corn Ames_cornf; do
+          for scenario in Osu_1hru Ames_sub1 Ames_bare Ames_past0 Ames_past Ames_corn Ames_cornf Ames_cosy Ames_cosy2 Ames_dtbl; do
             src=testdata/$scenario
             test -d "$src" || src=variants/$scenario
             mkdir -p runs/$scenario

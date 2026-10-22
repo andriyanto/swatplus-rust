@@ -1,7 +1,9 @@
 //! `hru-data.hru` (`hru_read`), `soils.sol` (`soil_db_read`) and `soil_plant.ini`
 //! (`soil_plant_init`).
 
-use swat_model::{HruData, MgtOp, MgtSchedule, PlantCommunity, PlantInit, Soil, SoilLayer, SoilPlantInit};
+use swat_model::{
+    DecisionTable, DtblAct, DtblCond, HruData, MgtOp, MgtSchedule, PlantCommunity, PlantInit, Soil, SoilLayer, SoilPlantInit,
+};
 
 use crate::list::Records;
 use crate::{Error, Result};
@@ -250,6 +252,72 @@ pub fn read_management(text: &str) -> Result<Vec<MgtSchedule>> {
             });
         }
         out.push(sched);
+    }
+    Ok(out)
+}
+
+/// Reads a decision table file (`lum.dtl`) as `dtbl_lum_read` does: a title, the number of
+/// tables, a record skipped, then each table (a header, its name and sizes, a header, the
+/// conditions with their alternatives, a header, the actions with their outcomes).
+pub fn read_decision_tables(file: &str, text: &str) -> Result<Vec<DecisionTable>> {
+    let mut rec = Records::new(file, text);
+    rec.skip()?;
+    let n = rec.read(1)?.int(0)?.unwrap_or(0).max(0);
+    rec.read(0)?;
+    let mut out = Vec::new();
+    for _ in 0..n {
+        if rec.skip().is_err() {
+            break;
+        }
+        let h = rec.read(4)?;
+        let conds = h.int(1)?.unwrap_or(0).max(0) as usize;
+        let alts = h.int(2)?.unwrap_or(0).max(0) as usize;
+        let acts = h.int(3)?.unwrap_or(0).max(0) as usize;
+        let mut t = DecisionTable { name: h.text_or(0, ""), alts, ..DecisionTable::default() };
+        rec.skip()?;
+        for _ in 0..conds {
+            let f = rec.read(6 + alts)?;
+            let d = DtblCond::default();
+            t.conds.push(DtblCond {
+                var: f.text_or(0, &d.var),
+                ob: f.text_or(1, &d.ob),
+                ob_num: f.int_or(2, 0)?,
+                lim_var: f.text_or(3, &d.lim_var),
+                lim_op: f.text_or(4, &d.lim_op),
+                lim_const: f.real_or(5, 0.0)?,
+            });
+            t.alt.push((0..alts).map(|a| f.text_or(6 + a, "")).collect());
+        }
+        rec.skip()?;
+        for _ in 0..acts {
+            let f = rec.read(8 + alts)?;
+            t.acts.push(DtblAct {
+                typ: f.text_or(0, ""),
+                ob: f.text_or(1, ""),
+                ob_num: f.int_or(2, 0)?,
+                name: f.text_or(3, ""),
+                option: f.text_or(4, ""),
+                const_: f.real_or(5, 0.0)?,
+                const2: f.real_or(6, 1.0)?.max(1.0),
+                file_pointer: f.text_or(7, ""),
+            });
+            t.outcomes.push((0..alts).map(|a| f.text_or(8 + a, "")).collect());
+        }
+        out.push(t);
+    }
+    Ok(out)
+}
+
+/// Reads `soil_lyr_depths.sol` (`soils_init`): three header records, then one depth (mm, an
+/// integer) per record to the end of the file.
+pub fn read_soil_lyr_depths(text: &str) -> Result<Vec<i32>> {
+    let mut rec = Records::new("soil_lyr_depths.sol", text);
+    rec.skip()?;
+    rec.skip()?;
+    rec.skip()?;
+    let mut out = Vec::new();
+    while let Ok(f) = rec.read(1) {
+        out.push(f.int(0)?.unwrap_or(0));
     }
     Ok(out)
 }

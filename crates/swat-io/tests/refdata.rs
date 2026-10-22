@@ -67,6 +67,12 @@ fn ames_sub1() {
     assert_eq!((mgt.ops[0].op.as_str(), mgt.ops[0].mon, mgt.ops[0].day), ("till", 4, 1));
     assert_eq!(mgt.ops[0].op_char, "chisplow");
     assert!(p.harv_ops.as_ref().unwrap().find("grain").is_some());
+    assert_eq!(p.soil_lyr_depths.as_deref().map(|d| (d.len(), d[0], d[d.len() - 1])), Some((16, 10, 2100)));
+    let dt = &p.lum_dtl[0];
+    assert_eq!((dt.name.as_str(), dt.conds.len(), dt.alts, dt.acts.len()), ("irr_year_irr", 4, 1, 1));
+    assert_eq!((dt.conds[2].var.as_str(), dt.conds[2].lim_const, dt.alt[2][0].as_str()), ("phu_plant", 0.2, ">"));
+    assert_eq!((dt.acts[0].option.as_str(), dt.acts[0].const_, dt.acts[0].const2), ("sprinkler_ilm", 25.0, 20.0));
+    assert_eq!(p.lum_dtl[1].acts[0].ob, "unlim");
     assert!(p.fertilizer.as_ref().unwrap().find("elem_n").is_some());
     assert_eq!(p.cio.file("aquifer", "init"), Some("nbull"));
     // The init row lists 12 names for 11 slots; the extra one is ignored.

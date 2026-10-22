@@ -1,7 +1,8 @@
 //! Scheduled management (`mgt_operatn`, `mgt_sched`): planting, harvest and kill, tillage,
 //! irrigation and fertilizer on their dates, and the skip to the next year.
 //!
-//! So far for dated operations of these kinds, without decision tables.
+//! So far for dated operations of these kinds, and decision tables (`conditions`, `actions`)
+//! that irrigate on water stress, heat units, leaf area and the irrigation so far.
 
 use swat_model::table::{Table, fortran_eq};
 use swat_model::{MgtSchedule, Project};
@@ -61,6 +62,85 @@ pub struct Mgt {
     pub ops: Vec<Op>,
     pub cur_op: usize,
     pub yr_skip: bool,
+    /// The schedule's decision tables, checked every day (`sched%num_autos`).
+    pub dtbls: Vec<Dtbl>,
+}
+
+/// A condition variable of a decision table.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CondVar {
+    /// Mean water stress of the growing plants (1 without any).
+    WStress,
+    /// Irrigation applied so far (`hru%irr_yr`: never reset, so over the whole run).
+    IrrYear,
+    /// Heat units of the first plant with any, else of plant 1.
+    PhuPlant,
+    /// The community's leaf area.
+    LeafArea,
+}
+
+/// An action of a decision table.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Action {
+    /// `irrigate` from an unlimited source: `amt` mm with the `irr.ops` efficiency and runoff
+    /// share, at most `max_yr` times a year.
+    Irrigate { amt: f32, eff: f32, surq: f32, max_yr: i32 },
+}
+
+/// A decision table as an HRU uses it: conditions with each alternative's operator ("-" for
+/// none), actions with their outcome by alternative, and the count of each action this year
+/// (`pcom%dtbl%num_actions`, starting at 1).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Dtbl {
+    pub alts: usize,
+    pub conds: Vec<(CondVar, f32, Vec<String>)>,
+    pub acts: Vec<(Action, Vec<bool>)>,
+    pub num_actions: Vec<i32>,
+}
+
+impl Dtbl {
+    fn new(project: &Project, t: &swat_model::DecisionTable) -> Result<Dtbl, String> {
+        let mut conds = Vec::new();
+        for (c, alt) in t.conds.iter().zip(&t.alt) {
+            let v = match c.var.as_str() {
+                "w_stress" => CondVar::WStress,
+                "irr_year" => CondVar::IrrYear,
+                "phu_plant" => CondVar::PhuPlant,
+                "leaf_area" => CondVar::LeafArea,
+                other => return Err(format!("decision table {}: condition {other}", t.name)),
+            };
+            if c.ob_num != 0 {
+                return Err(format!("decision table {}: condition on object {}", t.name, c.ob_num));
+            }
+            for a in alt {
+                if !matches!(a.as_str(), "-" | "<" | ">" | "<=" | ">=" | "=" | "/=") {
+                    return Err(format!("decision table {}: alternative {a}", t.name));
+                }
+            }
+            conds.push((v, c.lim_const, alt.clone()));
+        }
+        let mut acts = Vec::new();
+        for (a, out) in t.acts.iter().zip(&t.outcomes) {
+            let act = match a.typ.as_str() {
+                "irrigate" => {
+                    if matches!(a.ob.as_str(), "aqu" | "cha" | "sdc" | "res") || a.name == "ponding" {
+                        return Err(format!("decision table {}: irrigation from {} ({})", t.name, a.ob, a.name));
+                    }
+                    let ir = project.irr_ops.as_ref();
+                    Action::Irrigate {
+                        amt: a.const_,
+                        eff: row_real(ir, &a.option, "eff", 0.0),
+                        surq: row_real(ir, &a.option, "surq", 0.0),
+                        max_yr: a.const2 as i32,
+                    }
+                }
+                other => return Err(format!("decision table {}: action {other}", t.name)),
+            };
+            acts.push((act, out.iter().map(|o| o == "y").collect()));
+        }
+        let n = acts.len();
+        Ok(Dtbl { alts: t.alts, conds, acts, num_actions: vec![1; n] })
+    }
 }
 
 fn row_real(t: Option<&Table>, name: &str, field: &str, default: f32) -> f32 {
@@ -86,8 +166,15 @@ impl Mgt {
     /// rotation starts in year `rot_yr_ini`, the simulation starting on day `day_start`.
     /// `Err` names what isn't ported yet.
     pub fn new(project: &Project, s: &MgtSchedule, ndays: &[i32; 13], rot_yr_ini: i32, day_start: i32) -> Result<Mgt, String> {
-        if !s.autos.is_empty() {
-            return Err(format!("schedule {}: decision tables ({})", s.name, s.autos.join(", ")));
+        // proc_cond: each decision table by name, the last of that name.
+        let mut dtbls = Vec::new();
+        for a in &s.autos {
+            let t = project
+                .lum_dtl
+                .iter()
+                .rfind(|t| fortran_eq(&t.name, a))
+                .ok_or_else(|| format!("schedule {}: decision table {a} not in lum.dtl", s.name))?;
+            dtbls.push(Dtbl::new(project, t)?);
         }
         let mut ops = Vec::with_capacity(s.ops.len());
         let mut jdays = Vec::with_capacity(s.ops.len());
@@ -162,11 +249,78 @@ impl Mgt {
             }
             cur_op = (iop - 1).min(n).max(1);
         }
-        Ok(Mgt { ops, cur_op: cur_op - 1, yr_skip: false })
+        Ok(Mgt { ops, cur_op: cur_op - 1, yr_skip: false, dtbls })
     }
 }
 
 impl super::Hru {
+    /// The decision tables of the HRU's schedule (`hru_control`: `conditions`, then `actions`),
+    /// before the day's stresses are reset. At the end of the year the action counts restart.
+    pub(super) fn dtbl_day(&mut self, end_yr: bool) {
+        let Some(mut m) = self.mgt.take() else { return };
+        for t in m.dtbls.iter_mut() {
+            let mut hit = vec![true; t.alts];
+            for (var, lim, alt) in &t.conds {
+                if *var == CondVar::PhuPlant && self.plants.is_empty() {
+                    hit.iter_mut().for_each(|h| *h = false);
+                    continue;
+                }
+                let cur = match var {
+                    CondVar::WStress => {
+                        let (mut n, mut sum) = (0, 0.0_f32);
+                        for pl in &self.plants {
+                            if pl.gro {
+                                n += 1;
+                                sum += pl.strsw;
+                            }
+                        }
+                        if n > 0 { sum / n as f32 } else { 1.0 }
+                    }
+                    CondVar::IrrYear => self.irr_yr,
+                    CondVar::PhuPlant => self.plants.iter().find(|p| p.phuacc > 1.0e-6).unwrap_or(&self.plants[0]).phuacc,
+                    CondVar::LeafArea => self.lai_sum,
+                };
+                // cond_real
+                for (h, op) in hit.iter_mut().zip(alt) {
+                    if op == "-" || !*h {
+                        continue;
+                    }
+                    let fails = match op.as_str() {
+                        "<" => cur >= *lim,
+                        ">" => cur <= *lim,
+                        "<=" => cur > *lim,
+                        ">=" => cur < *lim,
+                        "=" => cur != *lim,
+                        "/=" => cur == *lim,
+                        _ => false,
+                    };
+                    if fails {
+                        *h = false;
+                    }
+                }
+            }
+            for (iac, (act, out)) in t.acts.iter().enumerate() {
+                if !hit.iter().zip(out).any(|(h, o)| *h && *o) {
+                    continue;
+                }
+                match *act {
+                    Action::Irrigate { amt, eff, surq, max_yr } => {
+                        if t.num_actions[iac] <= max_yr {
+                            self.irr_applied = amt * eff * (1.0 - surq);
+                            self.irr_runoff = amt * surq;
+                            self.irr_yr += self.irr_applied;
+                            t.num_actions[iac] += 1;
+                        }
+                    }
+                }
+            }
+            if end_yr {
+                t.num_actions.iter_mut().for_each(|n| *n = 1);
+            }
+        }
+        self.mgt = Some(m);
+    }
+
     /// SWAT+ `mgt_operatn`: the operations dated today, in order.
     pub(super) fn mgt_operatn(&mut self, mo: i32, day_mo: i32, b: &HruBasin) {
         let Some(m) = self.mgt.as_ref() else { return };
@@ -202,31 +356,32 @@ impl super::Hru {
         let op = m.ops[m.cur_op].clone();
         match op.kind {
             OpKind::Plant => {
-                let zmx = self.zmx;
-                if let Some(pl) = self.plant.as_mut()
-                    && fortran_eq(&op.op_char, &pl.cpnm)
-                    && !pl.gro
-                {
-                    pl.gro = true;
-                    pl.idorm = false;
-                    self.zmx = plantop(pl, zmx);
+                for i in 0..self.plants.len() {
+                    let zmx = self.zmx;
+                    let pl = &mut self.plants[i];
+                    if fortran_eq(&op.op_char, &pl.cpnm) && !pl.gro {
+                        pl.gro = true;
+                        pl.idorm = false;
+                        self.zmx = plantop(pl, zmx);
+                    }
                 }
             }
             OpKind::HarvKill { grain, eff, bm_min } => {
-                if let Some(mut pl) = self.plant.take() {
+                for i in 0..self.plants.len() {
+                    let mut pl = std::mem::take(&mut self.plants[i]);
                     if pl.gro {
                         let biomass = pl.tot.m;
                         if fortran_eq(&op.op_char, &pl.cpnm) || fortran_eq(&op.op_char, "all") {
                             if biomass > bm_min && grain {
                                 self.harvgrain(&mut pl, eff);
                             }
-                            self.killop(&mut pl);
+                            self.killop(&mut pl, i);
                         }
                         pl.reset_stress();
                         pl.phuacc = 0.0;
                         self.phubase = 0.0;
                     }
-                    self.plant = Some(pl);
+                    self.plants[i] = pl;
                 }
             }
             OpKind::Till { effmix, deptil } => {
@@ -237,6 +392,7 @@ impl super::Hru {
             OpKind::Irr { amt_mm, eff, surq } => {
                 self.irr_applied = amt_mm * eff * (1.0 - surq);
                 self.irr_runoff = amt_mm * surq;
+                self.irr_yr += self.irr_applied;
             }
             OpKind::Fert(f) => {
                 let rtof = b.carbon.as_ref().map(|c| c.rtof).unwrap_or(0.5);
@@ -290,13 +446,17 @@ impl super::Hru {
 
     /// SWAT+ `mgt_killop`: the plant above ground goes to the surface residue, its roots to the
     /// layers' residue, and it stops growing. The community totals lose it for the rest of the day.
-    fn killop(&mut self, pl: &mut Plant) {
+    /// `pl` is plant `me` of the community, taken out of it.
+    fn killop(&mut self, pl: &mut Plant, me: usize) {
         let layers: Vec<(f32, f32)> = self.layers.iter().map(|l| (l.d, l.thick)).collect();
         pl.rootfr(&layers);
         pl.rsd = pl.rsd + pl.ab_gr;
-        self.rsd_tot = OrgMass::default() + pl.rsd;
-        for (ly, l) in self.layers.iter_mut().enumerate() {
-            l.rsd = l.rsd + OrgMass::scale(pl.rtfr[ly], pl.root);
+        self.rsd_tot = OrgMass::default();
+        for j in 0..self.plants.len() {
+            self.rsd_tot = self.rsd_tot + if j == me { pl.rsd } else { self.plants[j].rsd };
+        }
+        for ly in 0..pl.soil_rsd.len() {
+            pl.soil_rsd[ly] = pl.soil_rsd[ly] + OrgMass::scale(pl.rtfr[ly], pl.root);
         }
         self.tot_com = self.tot_com - pl.tot;
         self.ab_gr_com = self.ab_gr_com - pl.ab_gr;
@@ -357,8 +517,11 @@ impl super::Hru {
             ly.cp.tot.n += rtof * fr_ly * kg * f.forgn;
             ly.cp.tot.p += rtof * fr_ly * kg * f.forgp;
             if cswat == 0 {
-                ly.rsd.n += rtof * fr_ly * kg * f.forgn;
-                ly.rsd.p += rtof * fr_ly * kg * f.forgp;
+                // Plant 1's residue (SWAT+ would fail without plants).
+                if let Some(pl) = self.plants.first_mut() {
+                    pl.soil_rsd[l].n += rtof * fr_ly * kg * f.forgn;
+                    pl.soil_rsd[l].p += rtof * fr_ly * kg * f.forgp;
+                }
                 ly.hact.n += (1.0 - rtof) * fr_ly * kg * f.forgn;
                 // The active humus P is set from the stable humus's.
                 ly.hact.p = ly.hsta.p + (1.0 - rtof) * fr_ly * kg * f.forgp;

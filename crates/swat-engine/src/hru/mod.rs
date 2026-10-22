@@ -64,10 +64,9 @@ pub struct Layer {
     pub lab: f32,
     pub act: f32,
     pub sta: f32,
-    /// Active and stable humus (`hact`, `hsta`) and the plant's residue in the layer (`pl%rsd`).
+    /// Active and stable humus (`hact`, `hsta`).
     pub hact: OrgMass,
     pub hsta: OrgMass,
-    pub rsd: OrgMass,
     /// The carbon model's pools, and the mixing effect on decomposition (`ly%tillagef`,
     /// `tillagef_biomix`).
     pub cp: carbon::Pools,
@@ -148,8 +147,8 @@ pub struct Hru {
     /// Time of concentration (h) and the USLE factors K·P·LS·rock·11.8 (`lumv%usle_mult`).
     pub tconc: f32,
     pub usle_mult: f32,
-    /// The community's single plant, if any.
-    pub plant: Option<Plant>,
+    /// The plant community, in `plant.ini` order.
+    pub plants: Vec<Plant>,
     pub lai_sum: f32,
     pub laimx_sum: f32,
     pub cht_mx: f32,
@@ -174,6 +173,8 @@ pub struct Hru {
     /// the fertilizer N and P applied (`fertn`, `fertp`).
     pub irr_applied: f32,
     pub irr_runoff: f32,
+    /// Irrigation applied so far (`hru%irr_yr`; its yearly reset is commented out in SWAT+).
+    pub irr_yr: f32,
     pub fertn: f32,
     pub fertp: f32,
     /// The yield of today's harvest (`pl_yield%m`), printed and zeroed with the day's output.
@@ -660,7 +661,7 @@ fn init_hru(
         .iter()
         .find(|s| swat_model::table::fortran_eq(&s.name, &hd.soil))
         .ok_or_else(|| format!("{n}: soil {} not found", hd.soil))?;
-    soil_layers(&mut h, soil)?;
+    soil_layers(&mut h, soil, project.soil_lyr_depths.as_deref())?;
 
     // plant_init: the community named by the land use (none when the name isn't in plant.ini).
     let com = if lu_found && !is_null(lu.text("plant_cov")) {
@@ -671,8 +672,8 @@ fn init_hru(
     if let Some(com) = com
         && !com.plants.is_empty()
     {
-        if com.plants.len() > 1 {
-            return Err(format!("{n}: plant community {} of {} plants (one so far)", com.name, com.plants.len()));
+        if com.plants.len() > 20 {
+            return Err(format!("{n}: plant community {} of {} plants (SWAT+ keeps 20)", com.name, com.plants.len()));
         }
         if project.codes.cswat == 1 {
             return Err(format!("{n}: plants with carbon model 1"));
@@ -681,16 +682,19 @@ fn init_hru(
             return Err("co2_yr.dat".into());
         }
         let t = project.plants.as_ref().ok_or_else(|| format!("{n}: plants, but no plants.plt"))?;
-        let init = &com.plants[0];
-        // A name not in plants.plt keeps the default pointer, 1: the first plant.
-        let r = t.find(&init.cpnm).unwrap_or(0);
-        let db = PlantDb::new(t, r, project.params.get("rsdco").unwrap_or(0.05));
         let months: [(f32, f32); 12] = std::array::from_fn(|m| (g.m[m].tmp_max_ave, g.m[m].tmp_min_ave));
         let layers: Vec<(f32, f32)> = h.layers.iter().map(|l| (l.d, l.thick)).collect();
-        let pl = plant::plant_init(db, init, &months, ndays, g.lat, soil.zmx, &layers, hyd.real("epco"))?;
-        h.laimx_sum = 0.0 + pl.db.blai;
-        h.rsd_tot = OrgMass::default().add(pl.rsd);
-        h.plant = Some(pl);
+        h.laimx_sum = 0.0;
+        h.rsd_tot = OrgMass::default();
+        for init in &com.plants {
+            // A name not in plants.plt keeps the default pointer, 1: the first plant.
+            let r = t.find(&init.cpnm).unwrap_or(0);
+            let db = PlantDb::new(t, r, project.params.get("rsdco").unwrap_or(0.05));
+            let pl = plant::plant_init(db, init, &months, ndays, g.lat, soil.zmx, &layers, hyd.real("epco"))?;
+            h.rsd_tot = h.rsd_tot.add(pl.rsd);
+            h.laimx_sum += pl.db.blai;
+            h.plants.push(pl);
+        }
     }
 
     // landuse_read and plant_init: the schedule named by the land use (none when the name isn't
@@ -754,7 +758,7 @@ fn init_hru(
         h.sw += l.st;
     }
     // Dormancy on the day hydro_init runs: day 0 (time%day isn't set yet).
-    if let Some(pl) = h.plant.as_mut() {
+    if !h.plants.is_empty() {
         let sd = (0.4_f32 * ((0.0_f32 - 82.0) / 58.09).sin()).asin();
         let sdlat = -g.latsin * sd.tan() / g.latcos;
         let hlat = if sdlat > 1.0 {
@@ -765,7 +769,9 @@ fn init_hru(
             3.1416
         };
         let daylength = 7.6394 * hlat;
-        pl.idorm = pl.gro && daylength - g.daylth < g.daylmn;
+        for pl in h.plants.iter_mut() {
+            pl.idorm = pl.gro && daylength - g.daylth < g.daylmn;
+        }
     }
     h.zmx = h.layers.last().map(|l| l.d).unwrap_or(0.0);
     h.lat_ttime = if h.lat_ttime <= 0.0 {
@@ -807,8 +813,105 @@ fn init_hru(
     Ok(h)
 }
 
-/// `soils_init` (without `soil_lyr_depths.sol`) and `soil_phys_init` for one HRU's soil.
-fn soil_layers(h: &mut Hru, soil: &Soil) -> Result<(), String> {
+/// `soils_init` with custom layer depths (`soil_lyr_depths.sol`): the profile is cut into 1 mm
+/// slices that take their file layer's properties, and each custom layer averages its slices.
+/// The depths are read up to the first one at or past the profile's bottom (which becomes the
+/// last layer's) or to the end of the list (where the profile is cut short); a 10 mm top layer
+/// comes first, and depths of 10 mm or less are skipped.
+fn custom_layers(soil: &Soil, depths: &[i32]) -> Vec<Layer> {
+    let db = &soil.layers;
+    let Some(last) = db.last() else { return Vec::new() };
+    let tot0 = last.z as i32;
+    // The 1 mm slices: the index of the file layer each takes.
+    let mut cell = vec![0usize; tot0.max(0) as usize + 1];
+    let mut prev = 0_i32;
+    for (j, l) in db.iter().enumerate() {
+        let mut i = prev + 1;
+        while i <= tot0 {
+            if i as f32 <= l.z && i > prev {
+                cell[i as usize] = j;
+            } else {
+                break;
+            }
+            i += 1;
+        }
+        prev = l.z as i32;
+    }
+    // Counting pass.
+    let mut mlyr = 0;
+    let mut csld = 0_i32;
+    for &v in depths {
+        csld = v;
+        if csld <= tot0 {
+            if csld > 10 {
+                mlyr += 1;
+                if csld == tot0 {
+                    break;
+                }
+            }
+        } else {
+            csld = tot0;
+            mlyr += 1;
+            break;
+        }
+    }
+    mlyr += 1;
+    let tot = tot0.min(csld);
+    // Layers: each read skips depths of 10 mm or less; the first is read again after the 10 mm layer.
+    let mut out = Vec::with_capacity(mlyr);
+    let mut p = 0usize;
+    let mut pcd = 1_i32;
+    for i in 0..mlyr {
+        while let Some(&v) = depths.get(p) {
+            csld = v;
+            p += 1;
+            if csld > 10 {
+                break;
+            }
+        }
+        let d;
+        if i == 0 {
+            d = 10.0;
+            csld = 10;
+            p = p.saturating_sub(1);
+        } else {
+            if csld > tot {
+                csld = tot;
+            }
+            d = csld as f32;
+        }
+        let mut sum = [0.0_f32; 10];
+        let mut n = 0;
+        for jj in pcd..=csld {
+            let l = &db[cell.get(jj.max(0) as usize).copied().unwrap_or(0)];
+            for (s, v) in sum.iter_mut().zip([l.bd, l.awc, l.k, l.cbn, l.clay, l.silt, l.sand, l.rock, l.alb, l.usle_k]) {
+                *s += v;
+            }
+            n += 1;
+        }
+        let nf = n as f32;
+        out.push(Layer {
+            d,
+            bd: sum[0] / nf,
+            awc: sum[1] / nf,
+            k: sum[2] / nf,
+            cbn: sum[3] / nf,
+            clay: sum[4] / nf,
+            silt: sum[5] / nf,
+            sand: sum[6] / nf,
+            rock: sum[7] / nf,
+            alb: sum[8] / nf,
+            usle_k: sum[9] / nf,
+            ..Layer::default()
+        });
+        pcd = csld + 1;
+    }
+    out
+}
+
+/// `soils_init` and `soil_phys_init` for one HRU's soil; `depths` are the custom layer depths
+/// when the project has them.
+fn soil_layers(h: &mut Hru, soil: &Soil, depths: Option<&[i32]>) -> Result<(), String> {
     let db = &soil.layers;
     let first = db.first().ok_or_else(|| format!("soil {} has no layers", soil.name))?;
     let from = |l: &swat_model::SoilLayer, d: f32| Layer {
@@ -826,7 +929,9 @@ fn soil_layers(h: &mut Hru, soil: &Soil) -> Result<(), String> {
         ..Layer::default()
     };
     let mut layers = vec![from(first, 10.0)];
-    if first.z > 19.5 {
+    if let Some(dep) = depths {
+        layers = custom_layers(soil, dep);
+    } else if first.z > 19.5 {
         // A 10 mm top layer is added; layer j takes the properties of the file's layer j - 1.
         for l in db {
             layers.push(from(l, l.z));
@@ -1000,6 +1105,8 @@ impl Hru {
                 self.till_days += 1;
             }
         }
+        // The schedule's decision tables, on yesterday's stresses.
+        self.dtbl_day(c.end_yr);
         let mut sw_volume_begin = 0.0_f32;
         for l in &self.layers {
             sw_volume_begin += l.st;
@@ -1015,7 +1122,7 @@ impl Hru {
         if w.tave > 0.0 && c.phutot > 0.01 {
             self.phubase += w.tave / c.phutot;
         }
-        if let Some(pl) = self.plant.as_mut() {
+        for pl in self.plants.iter_mut() {
             pl.strsw = 1.0;
             pl.strst = 1.0;
             pl.strsn = 1.0;
@@ -1146,14 +1253,22 @@ impl Hru {
         };
         self.pl_grow(&mut pd, &pw, &b.plant, saved);
 
-        // Stress of the plants growing (as 1 - stress), averaged.
+        // Stress of the plants growing (as 1 - stress), averaged; the salt stress is summed only.
         let mut strs = [0.0_f32; 6];
-        if let Some(pl) = self.plant.as_ref()
-            && pl.gro
-            && !pl.idorm
-            && pl.phuacc <= 1.0
-        {
-            strs = [1.0 - pl.strsw, 1.0 - pl.strsa, 1.0 - pl.strst, 1.0 - pl.strsn, 1.0 - pl.strsp, 1.0 - pl.strss];
+        let mut npl_gro = 0;
+        for pl in &self.plants {
+            if pl.gro && !pl.idorm && pl.phuacc <= 1.0 {
+                npl_gro += 1;
+                let v = [1.0 - pl.strsw, 1.0 - pl.strsa, 1.0 - pl.strst, 1.0 - pl.strsn, 1.0 - pl.strsp, 1.0 - pl.strss];
+                for k in 0..6 {
+                    strs[k] += v[k];
+                }
+            }
+        }
+        if npl_gro > 0 {
+            for v in strs.iter_mut().take(5) {
+                *v /= npl_gro as f32;
+            }
         }
 
         // sw_300
@@ -1311,10 +1426,10 @@ impl Hru {
         if cswat == 0 && self.hyd_biomix > 1.0e-6 {
             self.year_end_mixing(self.hyd_biomix);
         }
-        if let Some(pl) = self.plant.as_mut()
-            && pl.db.perennial()
-        {
-            pl.curyr_mat = (pl.curyr_mat + 1).min(pl.db.mat_yrs);
+        for pl in self.plants.iter_mut() {
+            if pl.db.perennial() {
+                pl.curyr_mat = (pl.curyr_mat + 1).min(pl.db.mat_yrs);
+            }
         }
         if self.lat >= 0.0 {
             self.phubase = 0.0;

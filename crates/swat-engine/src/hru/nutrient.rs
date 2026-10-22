@@ -172,9 +172,10 @@ impl Hru {
             Some(l) => (l.st, l.fc, l.tmp),
             None => return,
         };
-        if let Some(pl) = self.plant.as_mut()
-            && tmp > 0.0
-        {
+        for pl in self.plants.iter_mut() {
+            if tmp <= 0.0 {
+                continue;
+            }
             let ca = residue_ca(&pl.rsd);
             let st = if st < 0.0 { 0.0000001 } else { st };
             let (_, _, csf) = sut_cdg(st, fc, tmp);
@@ -190,7 +191,7 @@ impl Hru {
             l.hact.p += 0.2 * decomp.p;
         }
         self.rsd_tot = OrgMass::default();
-        if let Some(pl) = self.plant.as_ref() {
+        for pl in &self.plants {
             self.rsd_tot = self.rsd_tot.add(pl.rsd);
         }
     }
@@ -198,7 +199,6 @@ impl Hru {
     /// SWAT+ `nut_nminrl`: humus mineralization, soil residue decomposition and denitrification.
     /// The top layer's rates use the second layer's water and temperature.
     pub(super) fn nut_nminrl(&mut self, b: &NutBasin, nd: &mut NutDay) {
-        let rsdco = self.plant.as_ref().map(|p| p.db.rsdco_pl);
         for k in 0..self.layers.len() {
             let kk = if k == 0 { 1.min(self.layers.len() - 1) } else { k };
             let (st, fc, tmp) = (self.layers[kk].st, self.layers[kk].fc, self.layers[kk].tmp);
@@ -227,30 +227,33 @@ impl Hru {
             l.lab += hmp;
             nd.act_nit_n += hmn;
             nd.org_lab_p += hmp;
-            if let Some(rsdco_pl) = rsdco {
-                let ca = residue_ca(&l.rsd);
-                let mut decr = rsdco_pl * ca * csf;
+            for pl in self.plants.iter_mut() {
+                let r = &mut pl.soil_rsd[k];
+                let ca = residue_ca(r);
+                let mut decr = pl.db.rsdco_pl * ca * csf;
                 decr = decr.max(b.decr_min);
                 decr = decr.min(1.0);
-                let decomp = OrgMass::scale(decr, l.rsd);
-                l.rsd = l.rsd.sub(decomp);
-                if l.rsd.m < 1.0e-10 {
-                    l.rsd.m = 0.0;
+                let decomp = OrgMass::scale(decr, *r);
+                *r = r.sub(decomp);
+                if r.m < 1.0e-10 {
+                    r.m = 0.0;
                 }
-                if l.rsd.c < 1.0e-10 {
-                    l.rsd.c = 0.0;
+                if r.c < 1.0e-10 {
+                    r.c = 0.0;
                 }
-                if l.rsd.n < 1.0e-10 {
-                    l.rsd.n = 0.0;
+                if r.n < 1.0e-10 {
+                    r.n = 0.0;
                 }
-                if l.rsd.p < 1.0e-10 {
-                    l.rsd.p = 0.0;
+                if r.p < 1.0e-10 {
+                    r.p = 0.0;
                 }
+                let l = &mut self.layers[k];
                 l.no3 += 0.8 * decomp.n;
                 l.hact.n += 0.2 * decomp.n;
                 l.lab += 0.8 * decomp.p;
                 l.hsta.p += 0.2 * decomp.p;
             }
+            let l = &mut self.layers[k];
             let wdn = if sut >= b.sdnco { l.no3 * (1.0 - (-b.cdn * cdg * l.cbn / 100.0).exp()) } else { 0.0 };
             l.no3 = (l.no3 - wdn).max(0.0001);
             nd.denit += wdn;
@@ -543,8 +546,7 @@ impl Hru {
         let (mut mix_wsol, mut mix_lab, mut mix_act, mut mix_sta) = (0.0_f32, 0.0_f32, 0.0_f32, 0.0_f32);
         let mut mix_hact = OrgMass::default();
         let mut mix_hsta = OrgMass::default();
-        let mut mix_rsd = OrgMass::default();
-        let surf_rsd0 = self.plant.as_ref().map(|p| p.rsd);
+        let mut mix_rsd = vec![OrgMass::default(); self.plants.len()];
         for l in 0..nly {
             let prev = if l == 0 { 0.0 } else { self.layers[l - 1].d };
             let ly = &self.layers[l];
@@ -570,8 +572,8 @@ impl Hru {
             mix_lab += fm * ly.lab;
             mix_act += fm * ly.act;
             mix_sta += fm * ly.sta;
-            if let Some(r) = surf_rsd0 {
-                mix_rsd = mix_rsd.add(OrgMass::scale(fm, r));
+            for (m, pl) in mix_rsd.iter_mut().zip(&self.plants) {
+                *m = m.add(OrgMass::scale(fm, pl.rsd));
             }
             mix_hact = mix_hact.add(OrgMass::scale(fm, ly.hact));
             mix_hsta = mix_hsta.add(OrgMass::scale(fm, ly.hsta));
@@ -586,10 +588,11 @@ impl Hru {
             ly.lab = fnm * ly.lab + fd * mix_lab;
             ly.act = fnm * ly.act + fd * mix_act;
             ly.sta = fnm * ly.sta + fd * mix_sta;
-            if let Some(pl) = self.plant.as_mut() {
-                ly.rsd = OrgMass::scale(fnm, ly.rsd).add(OrgMass::scale(fd, mix_rsd));
+            for (m, pl) in mix_rsd.iter().zip(self.plants.iter_mut()) {
+                let r = &mut pl.soil_rsd[l];
+                *r = OrgMass::scale(fnm, *r).add(OrgMass::scale(fd, *m));
                 let surf_rsd = OrgMass::scale(emix * fd, pl.rsd);
-                ly.rsd = ly.rsd.add(surf_rsd);
+                *r = r.add(surf_rsd);
                 pl.rsd = pl.rsd.sub(surf_rsd);
                 self.rsd_tot = self.rsd_tot.sub(surf_rsd);
             }

@@ -1,7 +1,7 @@
 //! Plants: the plant database as `plantparm_init` completes it, a plant's setup (`plant_init`) and
 //! its daily growth (`pl_community`, `pl_waterup`, `pl_grow` and the routines it calls).
 //!
-//! So far for communities of one plant: perennials, plants with heat units over the whole year
+//! Communities of up to 20 plants: perennials, plants with heat units over the whole year
 //! (`days_mat` 0) and annuals with days to maturity.
 
 use std::ops::{Add, Sub};
@@ -307,8 +307,12 @@ pub struct Plant {
     pub stem: OrgMass,
     pub seed: OrgMass,
     pub root: OrgMass,
-    /// Surface residue of this plant (`pl_mass(j)%rsd(ipl)`).
+    /// Surface residue of this plant (`pl_mass(j)%rsd(ipl)`), and its residue in each soil
+    /// layer (`soil1(j)%pl(ipl)%rsd`).
     pub rsd: OrgMass,
+    pub soil_rsd: Vec<OrgMass>,
+    /// Light intercepted today (`par(ipl)`).
+    pub par: f32,
 }
 
 /// Basin values the plant routines read.
@@ -377,7 +381,6 @@ pub struct PlantDay {
     pub ep_day: f32,
     pub pet_day: f32,
     pub vpd: f32,
-    pub par: f32,
     pub nplnt: f32,
     pub pplnt: f32,
     pub fixn: f32,
@@ -418,14 +421,15 @@ pub struct PlantWeather {
 pub struct Saved {
     /// `pl_nut_demand`'s `delg_p`: kept when the plant's heat units are under 0.1.
     pub delg_p: f32,
-    /// `uno3d`, `uapd`, `un2`, `up2` of plant 1: arrays of the HRU module shared by every HRU.
+    /// `uno3d`, `uapd`, `un2`, `up2`: arrays of the HRU module shared by every HRU.
     /// `pl_nut_demand` meant to zero them but zeroes the element of the loop counter left over
     /// (`ipl`, one past the last plant), so a plant that is dormant when its demand is computed
     /// and wakes the same day grows with the demand last computed for any HRU.
-    pub uno3d: f32,
-    pub uapd: f32,
-    pub un2: f32,
-    pub up2: f32,
+    /// Indexed by plant number (1-based; 20 in SWAT+, `mpc`).
+    pub uno3d: [f32; 21],
+    pub uapd: [f32; 21],
+    pub un2: [f32; 21],
+    pub up2: [f32; 21],
     /// `nut_psed`'s fractions, kept when there is no attached phosphorus.
     pub fr_orgp: f32,
     pub fr_actmin: f32,
@@ -547,6 +551,7 @@ pub fn plant_init(
     pl.harv_idx = db.hvsti;
     pl.lai_pot = db.blai;
     pl.rtfr = vec![0.0; layers.len()];
+    pl.soil_rsd = vec![OrgMass::default(); layers.len()];
     pl.db = db;
     if pl.gro {
         if pl.db.perennial() {
@@ -834,7 +839,8 @@ impl Plant {
     }
 
     /// SWAT+ `pl_leaf_gro`: leaf area and canopy height.
-    fn leaf_gro(&mut self) {
+    /// `chts` are the community's canopy heights (this plant's, `me`, is taken as it is now).
+    fn leaf_gro(&mut self, chts: &[f32], me: usize) {
         let db = self.db.clone();
         let f = self.phuacc / (self.phuacc + (db.leaf1 - db.leaf2 * self.phuacc).exp());
         self.laimxfr = f.min(self.laimxfr);
@@ -862,7 +868,11 @@ impl Plant {
                 self.lai = laimax;
             }
             let mut deltalai = ff * laimax * (1.0 - (5.0 * (self.lai - laimax)).exp()) * self.strsw.sqrt();
-            let sumlaiht = self.lai * self.cht;
+            // The sum takes this plant's leaf area with every plant's height.
+            let mut sumlaiht = 0.0_f32;
+            for (j, &c) in chts.iter().enumerate() {
+                sumlaiht += self.lai * if j == me { self.cht } else { c };
+            }
             let rto = if sumlaiht > 1.0e-6 { (self.lai * self.cht) / sumlaiht } else { 1.0 };
             deltalai *= rto;
             self.lai += deltalai;
@@ -905,35 +915,42 @@ impl Plant {
 }
 
 impl Hru {
-    /// SWAT+ `pl_community` with its call of `pl_waterup`: community totals, transpiration and
+    /// SWAT+ `pl_community` with its calls of `pl_waterup`: community totals, transpiration and
     /// the light each plant intercepts.
     pub(super) fn pl_community(&mut self, d: &mut PlantDay, solrad: f32, b: &PlantBasin) {
-        d.par = 0.0;
-        let Some(pl) = self.plant.as_mut() else {
-            self.lai_sum = 0.0;
-            self.tot_com = OrgMass::default();
-            self.ab_gr_com = OrgMass::default();
-            self.cht_mx = 0.0;
-            return;
-        };
-        self.lai_sum = 0.0 + pl.lai;
-        let epmax = if self.lai_sum > 1.0e-6 { d.ep_max * pl.lai / self.lai_sum } else { 0.0 };
-        self.tot_com = OrgMass::default().add(pl.tot);
-        self.ab_gr_com = OrgMass::default().add(pl.ab_gr);
-        self.cht_mx = 0.0_f32.max(pl.cht);
-        if pl.gro {
-            self.pl_waterup(epmax, d, b);
+        self.lai_sum = 0.0;
+        for pl in &self.plants {
+            self.lai_sum += pl.lai;
         }
-        let Some(pl) = self.plant.as_ref() else { return };
-        if !pl.idorm && pl.gro {
-            d.par = 0.5 * solrad * (1.0 - (-pl.db.ext_coef * (pl.lai + 0.05)).exp());
+        let lai_sum = self.lai_sum;
+        let epmax: Vec<f32> = self.plants.iter().map(|pl| if lai_sum > 1.0e-6 { d.ep_max * pl.lai / lai_sum } else { 0.0 }).collect();
+        self.tot_com = OrgMass::default();
+        self.ab_gr_com = OrgMass::default();
+        for pl in &self.plants {
+            self.tot_com = self.tot_com.add(pl.tot);
+            self.ab_gr_com = self.ab_gr_com.add(pl.ab_gr);
+        }
+        self.cht_mx = 0.0;
+        for pl in &self.plants {
+            self.cht_mx = self.cht_mx.max(pl.cht);
+        }
+        for i in 0..self.plants.len() {
+            if self.plants[i].gro {
+                self.pl_waterup(i, epmax[i], d, b);
+            }
+        }
+        for pl in self.plants.iter_mut() {
+            pl.par = 0.0;
+            if !pl.idorm && pl.gro {
+                pl.par = 0.5 * solrad * (1.0 - (-pl.db.ext_coef * (pl.lai + 0.05)).exp());
+            }
         }
     }
 
-    /// SWAT+ `pl_waterup`: aeration stress and water uptake by root depth.
-    fn pl_waterup(&mut self, epmax: f32, d: &mut PlantDay, b: &PlantBasin) {
+    /// SWAT+ `pl_waterup` for plant `i`: aeration stress and water uptake by root depth.
+    fn pl_waterup(&mut self, i: usize, epmax: f32, d: &mut PlantDay, b: &PlantBasin) {
         let (sw, sumfc, sumul) = (self.sw, self.sumfc, self.sumul);
-        let Some(pl) = self.plant.as_mut() else { return };
+        let pl = &mut self.plants[i];
         if sw > sumfc {
             let satco = (sw - sumfc) / (sumul - sumfc);
             let scparm = 100.0 * (satco - pl.db.aeration) / (1.0001 - pl.db.aeration);
@@ -980,43 +997,48 @@ impl Hru {
         for l in &self.layers {
             self.sw += l.st;
         }
-        let Some(pl) = self.plant.as_mut() else { return };
+        let pl = &mut self.plants[i];
         pl.strss = 1.0;
         pl.strsw = sum_wuse / epmax;
         d.ep_day += sum_wuse;
     }
 
-    /// SWAT+ `pl_grow` (with `pl_nut_demand` before it): heat units, dormancy and, for a plant
-    /// awake and growing, biomass, roots, leaves, senescence, seed and partition.
+    /// SWAT+ `pl_grow` (with `pl_nut_demand` before it): heat units, dormancy and, for each plant
+    /// awake and growing, biomass, roots, leaves, senescence, seed and partition. The nutrient
+    /// demands are the module arrays `uno3d`, `uapd`, `un2`, `up2` by plant number, shared by all
+    /// HRUs (see `Saved`).
     pub(super) fn pl_grow(&mut self, d: &mut PlantDay, w: &PlantWeather, b: &PlantBasin, saved: &mut Saved) {
-        // pl_nut_demand: uno3d and uapd are not reset (see `Saved`).
-        d.uno3d = saved.uno3d;
-        d.uapd = saved.uapd;
-        d.un2 = saved.un2;
-        d.up2 = saved.up2;
+        // pl_nut_demand zeroes the element of the loop counter left by pl_community (one past
+        // the last plant) instead of the plants'.
+        let stale = self.plants.len() + 1;
+        if stale < saved.uno3d.len() {
+            saved.uno3d[stale] = 0.0;
+            saved.uapd[stale] = 0.0;
+        }
         d.uno3d_tot = 0.0;
         d.uapd_tot = 0.0;
-        if let Some(pl) = self.plant.as_mut()
-            && !pl.idorm
-            && pl.gro
-        {
-            let mut delg = 0.0_f32;
-            if pl.phumat > 0.1 {
-                delg = (w.tave - pl.db.t_base) / pl.phumat;
-                saved.delg_p = (w.tave - pl.db.t_base) / pl.phumat_p;
+        for (i, pl) in self.plants.iter_mut().enumerate() {
+            if !pl.idorm && pl.gro {
+                let mut delg = 0.0_f32;
+                if pl.phumat > 0.1 {
+                    delg = (w.tave - pl.db.t_base) / pl.phumat;
+                    saved.delg_p = (w.tave - pl.db.t_base) / pl.phumat_p;
+                }
+                if delg < 0.0 {
+                    delg = 0.0;
+                }
+                if saved.delg_p < 0.0 {
+                    saved.delg_p = 0.0;
+                }
+                pl.phuacc += delg;
+                pl.phuacc_p += saved.delg_p;
+                pl.nupd(d);
+                pl.pupd(d);
+                let k = i + 1;
+                (saved.uno3d[k], saved.un2[k], saved.uapd[k], saved.up2[k]) = (d.uno3d, d.un2, d.uapd, d.up2);
+                d.uno3d_tot += d.uno3d;
+                d.uapd_tot += d.uapd;
             }
-            if delg < 0.0 {
-                delg = 0.0;
-            }
-            if saved.delg_p < 0.0 {
-                saved.delg_p = 0.0;
-            }
-            pl.phuacc += delg;
-            pl.phuacc_p += saved.delg_p;
-            pl.nupd(d);
-            pl.pupd(d);
-            d.uno3d_tot += d.uno3d;
-            d.uapd_tot += d.uapd;
         }
         d.sum_no3 = 0.0;
         d.sum_solp = 0.0;
@@ -1027,34 +1049,36 @@ impl Hru {
 
         d.bm_grow = 0.0;
         d.c_gro = 0.0;
-        let Some(mut pl) = self.plant.take() else { return };
-        let mut up = OrgMass::default();
-        if pl.gro && pl.db.trig == "temp_gro" {
-            self.pl_dormant(&mut pl, w);
-        }
-        if !pl.idorm && pl.gro {
-            self.pl_biomass_gro(&mut pl, d, w, b, &mut up);
-            let zmx = self.zmx;
-            let layers: Vec<(f32, f32)> = self.layers.iter().map(|l| (l.d, l.thick)).collect();
-            pl.root_gro(zmx, &layers);
-            pl.leaf_gro();
-            let drop = pl.leaf_senes();
-            if drop.m > 0.0 {
-                self.rsd_tot = self.rsd_tot.add(drop);
-                self.tot_com = self.tot_com.sub(drop);
-                self.ab_gr_com = self.ab_gr_com.sub(drop);
+        for i in 0..self.plants.len() {
+            let k = i + 1;
+            (d.uno3d, d.un2, d.uapd, d.up2) = (saved.uno3d[k], saved.un2[k], saved.uapd[k], saved.up2[k]);
+            let mut pl = std::mem::take(&mut self.plants[i]);
+            let mut up = OrgMass::default();
+            if pl.gro && pl.db.trig == "temp_gro" {
+                self.pl_dormant(&mut pl, w);
             }
-            pl.seed_gro(d.ep_day, d.pet_day, w.station_tave);
-            pl.partition(up, false);
+            if !pl.idorm && pl.gro {
+                self.pl_biomass_gro(&mut pl, d, w, b, &mut up);
+                let zmx = self.zmx;
+                let layers: Vec<(f32, f32)> = self.layers.iter().map(|l| (l.d, l.thick)).collect();
+                pl.root_gro(zmx, &layers);
+                let chts: Vec<f32> = self.plants.iter().enumerate().map(|(j, p)| if j == i { f32::NAN } else { p.cht }).collect();
+                pl.leaf_gro(&chts, i);
+                let drop = pl.leaf_senes();
+                if drop.m > 0.0 {
+                    self.rsd_tot = self.rsd_tot.add(drop);
+                    self.tot_com = self.tot_com.sub(drop);
+                    self.ab_gr_com = self.ab_gr_com.sub(drop);
+                }
+                pl.seed_gro(d.ep_day, d.pet_day, w.station_tave);
+                pl.partition(up, false);
+            }
+            if w.end_yr {
+                self.pl_mortality(&mut pl);
+            }
+            self.plants[i] = pl;
+            (saved.uno3d[k], saved.un2[k], saved.uapd[k], saved.up2[k]) = (d.uno3d, d.un2, d.uapd, d.up2);
         }
-        if w.end_yr {
-            self.pl_mortality(&mut pl);
-        }
-        self.plant = Some(pl);
-        saved.uno3d = d.uno3d;
-        saved.uapd = d.uapd;
-        saved.un2 = d.un2;
-        saved.up2 = d.up2;
     }
 
     /// SWAT+ `pl_dormant` for perennials (annuals other than cold-season ones don't go dormant).
@@ -1115,7 +1139,7 @@ impl Hru {
             beadj -= db.wavp * ruedecl;
             beadj = beadj.max(0.27 * db.bio_e);
         }
-        let mut bioday = beadj * d.par;
+        let mut bioday = beadj * pl.par;
         if bioday < 0.0 {
             bioday = 0.0;
         }
@@ -1288,7 +1312,7 @@ impl Hru {
             self.rsd_tot = self.rsd_tot.add(OrgMass::scale(rto, pl.ab_gr));
             for ly in 0..self.layers.len() {
                 let add = OrgMass::scale(rto * pl.rtfr[ly], pl.root);
-                self.layers[ly].rsd = self.layers[ly].rsd.add(add);
+                pl.soil_rsd[ly] = pl.soil_rsd[ly].add(add);
             }
             pl.tot = OrgMass::scale(rto1, pl.tot);
             pl.ab_gr = OrgMass::scale(rto1, pl.ab_gr);

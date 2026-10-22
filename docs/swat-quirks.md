@@ -129,7 +129,7 @@ handles it.
   length it tests is that of day 0.
 - **The demand of a plant that wakes up is stale.** `pl_nut_demand` should zero each plant's N
   and P demand (`uno3d`, `uapd`) but zeroes the element after the last plant (the loop counter
-  left over). These arrays belong to the module, not to the HRU: a plant still dormant when its
+  left over; element 1 for an HRU without plants). These arrays belong to the module, not to the HRU: a plant still dormant when its
   demand is computed, and woken by `pl_dormant` the same day, grows with the demand last
   computed for any HRU, and its stress is measured against that HRU's optimum (`un2`, `up2`).
   (`swat-engine/src/hru/plant.rs::Saved`)
@@ -190,6 +190,51 @@ handles it.
   is counted once per mixed layer. The mixing's effect on decomposition (`mgt_tillfactor`,
   `idc_till` 3) uses an efficiency that, once reduced for the layer the mixing depth ends in,
   stays 0 for the layers below.
+
+## Plant communities
+
+From `pl_community`, `pl_grow` and the routines they call, with a community of several plants
+(Ames's `cosy_comm`, corn and soybean); the port is `swat-engine/src/hru/plant.rs`.
+
+- **Water goes to the plants in community order**, each taking its share of the maximum
+  transpiration (by leaf area) from what the plants before it left.
+- **Nitrogen and P taken up are a running total for the HRU** (`nplnt`, `pplnt`, and the fixed N
+  `fixn`): a second plant's uptake by layer starts from the first's total, and adds it again to
+  its own N, as does a non-legume after a legume with the fixed N.
+- **Leaf growth is shared by canopy height** (`pl_leaf_gro`), but the sum uses the growing
+  plant's leaf area with every plant's height, so each plant's share is its height over the sum
+  of heights.
+- **The salt stress printed is summed** over the growing plants, the other stresses averaged.
+- **Sediment takes plant 1's surface residue N once per plant** (`nut_orgnc2`), and no other
+  plant's.
+
+## Decision tables
+
+From `conditions`, `cond_real` and `actions` as `hru_control` calls them (Ames's
+`irr_year_irr`); the port is in `swat-engine/src/hru/mgt.rs`.
+
+- **They run first thing in the day**, before the stresses are reset: water stress is
+  yesterday's, as are leaf area and heat units.
+- **The yearly irrigation is never reset** (`hru%irr_yr`; its reset is commented out), so
+  "irrigation this year under 500 mm" holds until 500 mm have been applied over the whole run.
+  Ames reaches it in its second year (1976); after that only `mgt_01`'s one dated irrigation
+  waters, when the 41-year rotation comes round to it again in 2018.
+- **Heat units are those of the first plant that has any**, else plant 1's; the condition's
+  limit variable (`phu_mat`) isn't used.
+- **The action count starts at 1** and restarts at 1 every year, so `const2` 20 allows 20
+  applications a year. Of two tables with the same name the last is used.
+
+## Custom soil layers (`soil_lyr_depths.sol`)
+
+From `soils_init`; the port is `custom_layers` in `swat-engine/src/hru/mod.rs`.
+
+- **The profile is cut into 1 mm slices**, by whole millimetres (the depths are truncated to
+  integers), each with its `soils.sol` layer's properties, and each new layer averages its
+  slices one by one in single precision (so a uniform layer's bulk density of 1.26 comes out a
+  bit off).
+- **Depths of 10 mm or less are skipped**; a 10 mm top layer is always first. The first depth at
+  or past the profile's bottom becomes the bottom; if the list ends before the bottom, the
+  profile ends there. The file is read whatever `file.cio` says, by that name.
 
 ## Management (dated operations)
 

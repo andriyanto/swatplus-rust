@@ -214,89 +214,96 @@ impl Hru {
     /// SWAT+ `cbn_surfrsd_decomp`: surface residue loses a share to sunlight, and decomposes
     /// into the top layer's metabolic, structural and lignin litter.
     pub(super) fn cbn_surfrsd_decomp(&mut self, cb: &CarbonBasin) {
-        let Some(pl) = self.plant.as_mut() else { return };
-        let photo = OrgMass::scale(cb.photo_degrade_factor, pl.rsd);
-        pl.rsd = pl.rsd - photo;
-        self.rsd_tot = self.rsd_tot - photo;
-        let l = &mut self.layers[0];
-        if l.tmp <= 0.0 {
-            return;
-        }
-        let mut sut = 0.1 + 0.9 * (l.st / l.fc).sqrt();
-        sut = sut.max(0.05);
-        let xx = l.tmp;
-        let mut cdg = 0.9 * xx / (xx + (9.93_f32 - 0.312 * xx).exp()) + 0.1;
-        cdg = cdg.max(0.1);
-        let mut xx = cdg * sut;
-        if xx < 0.0 {
-            xx = 0.0;
-        }
-        if xx > 1.0e6 {
-            xx = 1.0e6;
-        }
-        let csf = xx.sqrt();
-        let r = pl.rsd;
-        let cnrf = if r.n > 1.0e-4 {
-            let mut cnr = r.c / r.n;
-            if cnr > cb.cnr_cap {
-                cnr = cb.cnr_cap;
+        for i in 0..self.plants.len() {
+            let pl = &mut self.plants[i];
+            let photo = OrgMass::scale(cb.photo_degrade_factor, pl.rsd);
+            pl.rsd = pl.rsd - photo;
+            self.rsd_tot = self.rsd_tot - photo;
+            let l = &mut self.layers[0];
+            if l.tmp <= 0.0 {
+                continue;
             }
-            (-0.693_f32 * (cnr - cb.cnr_ref) / cb.cnr_ref).exp()
-        } else {
-            1.0
-        };
-        let cprf = if r.p > 1.0e-4 {
-            let mut cpr = r.c / r.p;
-            if cpr > cb.cpr_cap {
-                cpr = cb.cpr_cap;
+            let mut sut = 0.1 + 0.9 * (l.st / l.fc).sqrt();
+            sut = sut.max(0.05);
+            let xx = l.tmp;
+            let mut cdg = 0.9 * xx / (xx + (9.93_f32 - 0.312 * xx).exp()) + 0.1;
+            cdg = cdg.max(0.1);
+            let mut xx = cdg * sut;
+            if xx < 0.0 {
+                xx = 0.0;
             }
-            (-0.693_f32 * (cpr - cb.cpr_ref) / cb.cpr_ref).exp()
-        } else {
-            1.0
-        };
-        let ca = cnrf.min(cprf).min(1.0);
-        let mut decr = pl.db.rsdco_pl * ca * csf;
-        decr = decr.max(cb.decr_min);
-        decr = decr.min(1.0);
-        let decomp = OrgMass::scale(decr, pl.rsd);
-        pl.rsd = pl.rsd - decomp;
-        self.rsd_tot = self.rsd_tot - decomp;
-        if pl.rsd.m < 1.0e-10 {
-            pl.rsd.m = 0.0;
+            if xx > 1.0e6 {
+                xx = 1.0e6;
+            }
+            let csf = xx.sqrt();
+            let r = pl.rsd;
+            let cnrf = if r.n > 1.0e-4 {
+                let mut cnr = r.c / r.n;
+                if cnr > cb.cnr_cap {
+                    cnr = cb.cnr_cap;
+                }
+                (-0.693_f32 * (cnr - cb.cnr_ref) / cb.cnr_ref).exp()
+            } else {
+                1.0
+            };
+            let cprf = if r.p > 1.0e-4 {
+                let mut cpr = r.c / r.p;
+                if cpr > cb.cpr_cap {
+                    cpr = cb.cpr_cap;
+                }
+                (-0.693_f32 * (cpr - cb.cpr_ref) / cb.cpr_ref).exp()
+            } else {
+                1.0
+            };
+            let ca = cnrf.min(cprf).min(1.0);
+            let mut decr = pl.db.rsdco_pl * ca * csf;
+            decr = decr.max(cb.decr_min);
+            decr = decr.min(1.0);
+            let decomp = OrgMass::scale(decr, pl.rsd);
+            pl.rsd = pl.rsd - decomp;
+            self.rsd_tot = self.rsd_tot - decomp;
+            if pl.rsd.m < 1.0e-10 {
+                pl.rsd.m = 0.0;
+            }
+            if pl.rsd.c < 1.0e-10 {
+                pl.rsd.c = 0.0;
+            }
+            if pl.rsd.n < 1.0e-10 {
+                pl.rsd.n = 0.0;
+            }
+            if pl.rsd.p < 1.0e-10 {
+                pl.rsd.p = 0.0;
+            }
+            let f = pl.db.fracs;
+            l.cp.meta = l.cp.meta + OrgMass::scale(f.meta_abg, decomp);
+            l.cp.str = l.cp.str + OrgMass::scale(f.str_abg, decomp);
+            l.cp.lig = l.cp.lig + OrgMass::scale(f.lig_abg, decomp);
         }
-        if pl.rsd.c < 1.0e-10 {
-            pl.rsd.c = 0.0;
-        }
-        if pl.rsd.n < 1.0e-10 {
-            pl.rsd.n = 0.0;
-        }
-        if pl.rsd.p < 1.0e-10 {
-            pl.rsd.p = 0.0;
-        }
-        let f = pl.db.fracs;
-        l.cp.meta = l.cp.meta + OrgMass::scale(f.meta_abg, decomp);
-        l.cp.str = l.cp.str + OrgMass::scale(f.str_abg, decomp);
-        l.cp.lig = l.cp.lig + OrgMass::scale(f.lig_abg, decomp);
     }
 
     /// SWAT+ `cbn_rsd_transfer`: all of a thawed layer's plant residue goes to its litter pools.
     pub(super) fn cbn_rsd_transfer(&mut self) {
-        let Some(f) = self.plant.as_ref().map(|p| p.db.fracs) else { return };
-        for l in self.layers.iter_mut() {
-            if l.tmp > 0.0 {
-                let transfer = OrgMass::scale(1.0, l.rsd);
-                l.rsd = l.rsd - transfer;
-                if l.rsd.m < 1.0e-10 {
-                    l.rsd.m = 0.0;
+        for k in 0..self.layers.len() {
+            let l = &mut self.layers[k];
+            if l.tmp <= 0.0 {
+                continue;
+            }
+            for pl in self.plants.iter_mut() {
+                let f = pl.db.fracs;
+                let r = &mut pl.soil_rsd[k];
+                let transfer = OrgMass::scale(1.0, *r);
+                *r = *r - transfer;
+                if r.m < 1.0e-10 {
+                    r.m = 0.0;
                 }
-                if l.rsd.c < 1.0e-10 {
-                    l.rsd.c = 0.0;
+                if r.c < 1.0e-10 {
+                    r.c = 0.0;
                 }
-                if l.rsd.n < 1.0e-10 {
-                    l.rsd.n = 0.0;
+                if r.n < 1.0e-10 {
+                    r.n = 0.0;
                 }
-                if l.rsd.p < 1.0e-10 {
-                    l.rsd.p = 0.0;
+                if r.p < 1.0e-10 {
+                    r.p = 0.0;
                 }
                 l.cp.meta = l.cp.meta + OrgMass::scale(f.meta_blg, transfer);
                 l.cp.str = l.cp.str + OrgMass::scale(f.str_blg, transfer);
@@ -603,8 +610,12 @@ impl Hru {
             c.tot.n *= n_left_rto;
             c.hs.n *= n_left_rto;
             c.hp.n *= n_left_rto;
-            if let Some(pl) = self.plant.as_mut() {
-                pl.rsd.n *= n_left_rto;
+            // The loop over plants scales plant 1's residue each time.
+            let npl = self.plants.len();
+            if let Some(pl) = self.plants.first_mut() {
+                for _ in 0..npl {
+                    pl.rsd.n *= n_left_rto;
+                }
             }
             let l = &mut self.layers[0];
             let c = &mut l.cp;
@@ -624,7 +635,7 @@ impl Hru {
             c.hs.c *= 1.0 - ero_fr;
             c.hp.c *= 1.0 - ero_fr;
         }
-        if let Some(pl) = self.plant.as_mut() {
+        for pl in self.plants.iter_mut() {
             pl.rsd.c *= 1.0 - ero_fr;
         }
         let l = &mut self.layers[0];
@@ -688,8 +699,7 @@ impl Hru {
         let (mut wsol, mut lab, mut act, mut sta) = (0.0_f32, 0.0_f32, 0.0_f32, 0.0_f32);
         let mut m = Pools::default();
         let (mut mix_clay, mut mix_silt, mut mix_sand) = (0.0_f32, 0.0_f32, 0.0_f32);
-        let mut mix_rsd = OrgMass::default();
-        let surf = self.plant.as_ref().map(|p| p.rsd);
+        let mut mix_rsd = vec![OrgMass::default(); self.plants.len()];
         for l in 0..lyr_exit.min(frac_mixed.len()) {
             let fm = frac_mixed[l];
             let ly = &self.layers[l];
@@ -709,10 +719,10 @@ impl Hru {
             m.str = m.str + OrgMass::scale(fm, ly.cp.str);
             m.lig = m.lig + OrgMass::scale(fm, ly.cp.lig);
             m.meta = m.meta + OrgMass::scale(fm, ly.cp.meta);
-            if let Some(s) = surf {
-                mix_rsd = mix_rsd + OrgMass::scale(frac_dep[l] * avg_emix, ly.rsd);
-                let surf_rsd = OrgMass::scale(frac_dep[l] * avg_emix, s);
-                mix_rsd = mix_rsd + surf_rsd;
+            for (mr, pl) in mix_rsd.iter_mut().zip(&self.plants) {
+                *mr = *mr + OrgMass::scale(frac_dep[l] * avg_emix, pl.soil_rsd[l]);
+                let surf_rsd = OrgMass::scale(frac_dep[l] * avg_emix, pl.rsd);
+                *mr = *mr + surf_rsd;
             }
         }
         // Humus pools of the old model (hact, hsta) are mixed too, but are empty with cswat 2.
@@ -728,8 +738,8 @@ impl Hru {
             ly.sta = fnm * ly.sta + fd * sta;
             let mix = |a: OrgMass, b: OrgMass| OrgMass::scale(fnm, a) + OrgMass::scale(fd, b);
             ly.cp.tot = mix(ly.cp.tot, m.tot);
-            if let Some(pl) = self.plant.as_mut() {
-                ly.rsd = mix(ly.rsd, mix_rsd);
+            for (mr, pl) in mix_rsd.iter().zip(self.plants.iter_mut()) {
+                pl.soil_rsd[l] = mix(pl.soil_rsd[l], *mr);
                 let surf_rsd = OrgMass::scale(fd * avg_emix, pl.rsd);
                 pl.rsd = pl.rsd - surf_rsd;
                 self.rsd_tot = self.rsd_tot - surf_rsd;
@@ -834,8 +844,7 @@ impl Hru {
         let (mut no3, mut nh4, mut wsol, mut lab, mut act, mut sta) = (0.0_f32, 0.0_f32, 0.0_f32, 0.0_f32, 0.0_f32, 0.0_f32);
         let mut m = Pools::default();
         let (mut hact, mut hsta) = (OrgMass::default(), OrgMass::default());
-        let mut mix_rsd = OrgMass::default();
-        let surf = self.plant.as_ref().map(|p| p.rsd);
+        let mut mix_rsd = vec![OrgMass::default(); self.plants.len()];
         for l in 0..nly {
             let prev = if l == 0 { 0.0 } else { self.layers[l - 1].d };
             let ly = &mut self.layers[l];
@@ -877,9 +886,9 @@ impl Hru {
             m.str = m.str + OrgMass::scale(fm, ly.cp.str);
             m.lig = m.lig + OrgMass::scale(fm, ly.cp.lig);
             m.meta = m.meta + OrgMass::scale(fm, ly.cp.meta);
-            if let Some(s) = surf {
-                mix_rsd = mix_rsd + OrgMass::scale(frac_dep[l] * emix, ly.rsd);
-                mix_rsd = mix_rsd + OrgMass::scale(frac_dep[l] * emix, s);
+            for (mr, pl) in mix_rsd.iter_mut().zip(&self.plants) {
+                *mr = *mr + OrgMass::scale(frac_dep[l] * emix, pl.soil_rsd[l]);
+                *mr = *mr + OrgMass::scale(frac_dep[l] * emix, pl.rsd);
             }
         }
         for l in 0..lyr_exit {
@@ -895,8 +904,8 @@ impl Hru {
             ly.act = fnm * ly.act + fd * act;
             ly.sta = fnm * ly.sta + fd * sta;
             ly.cp.tot = mix(ly.cp.tot, m.tot);
-            if let Some(pl) = self.plant.as_mut() {
-                ly.rsd = mix(ly.rsd, mix_rsd);
+            for (mr, pl) in mix_rsd.iter().zip(self.plants.iter_mut()) {
+                pl.soil_rsd[l] = mix(pl.soil_rsd[l], *mr);
                 let surf_rsd = OrgMass::scale(fd * emix, pl.rsd);
                 pl.rsd = pl.rsd - surf_rsd;
                 self.rsd_tot = self.rsd_tot - surf_rsd;
