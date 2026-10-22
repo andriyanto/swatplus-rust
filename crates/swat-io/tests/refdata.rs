@@ -17,6 +17,10 @@ fn osu_1hru() {
     assert_eq!((p.time.yrc_start, p.time.yrc_end, p.time.day_start, p.time.day_end), (2010, 2023, 1, 365));
     assert_eq!(p.time.days().len(), 14 * 365 + 3);
     assert_eq!(p.print.nyskip, 3);
+    // day_lag_mx is written 0.00000: not an integer, so the read stops and igen stays 5.
+    assert_eq!(p.params.igen, 5);
+    assert_eq!(p.params.adj_pkr(), 1.0);
+    assert_eq!(p.codes.pet, 1);
     assert_eq!(p.print.object("hru_wb").map(|o| o.avann.as_str()), Some("y"));
 
     // object.cnt: 1 HRU, 1 routing unit, 1 aquifer, 1 SWAT-DEG channel.

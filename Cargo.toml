@@ -12,6 +12,7 @@ repository = "https://github.com/andriyanto/swatplus-rust"
 [workspace.dependencies]
 swat-model = { path = "crates/swat-model" }
 swat-io = { path = "crates/swat-io" }
+swat-engine = { path = "crates/swat-engine" }
 
 # No external dependencies yet. Any added later must have a license compatible with
 # LGPL-2.1-only (MIT, BSD, Boost...): Apache-2.0 alone is not. See NOTICE.

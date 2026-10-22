@@ -14,6 +14,7 @@ path = "src/main.rs"
 [dependencies]
 swat-model.workspace = true
 swat-io.workspace = true
+swat-engine.workspace = true
 
 [lints]
 workspace = true

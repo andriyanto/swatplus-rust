@@ -6,12 +6,14 @@
 //! `real` is single precision (decision K4 in the RustGIS design, docs/swat/design.md).
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::unreachable))]
 
+pub mod basin;
 pub mod cio;
 pub mod climate;
 pub mod objects;
 pub mod print;
 pub mod time;
 
+pub use basin::{BasinCodes, BasinParams};
 pub use cio::{CioSection, FileCio};
 pub use climate::{ClimateRecord, ClimateVar, StationList, StationSeries, WeatherStation, Wgn, WgnMonth};
 pub use objects::{ObjectKind, Outflow, SpatialObject};
@@ -25,6 +27,8 @@ pub struct Project {
     pub cio: FileCio,
     pub time: TimeSim,
     pub print: PrintSettings,
+    pub codes: BasinCodes,
+    pub params: BasinParams,
     pub objects: Vec<SpatialObject>,
     pub stations: Vec<WeatherStation>,
     pub wgn: Vec<Wgn>,

@@ -3,6 +3,13 @@
 version = 4
 
 [[package]]
+name = "swat-engine"
+version = "0.1.0"
+dependencies = [
+ "swat-model",
+]
+
+[[package]]
 name = "swat-io"
 version = "0.1.0"
 dependencies = [
@@ -17,6 +24,7 @@ version = "0.1.0"
 name = "swatplus-rust"
 version = "0.1.0"
 dependencies = [
+ "swat-engine",
  "swat-io",
  "swat-model",
 ]

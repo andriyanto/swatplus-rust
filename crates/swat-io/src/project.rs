@@ -3,7 +3,7 @@
 use swat_model::{ClimateVar, ObjectKind, Project, StationList};
 
 use crate::source::FileSource;
-use crate::{Error, Result, cio, climate, con, print, time};
+use crate::{Error, Result, basin, cio, climate, con, print, time};
 
 /// What loading found wrong without failing, as SWAT+ goes on in those cases too.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -39,6 +39,12 @@ pub fn load_project(src: &dyn FileSource) -> Result<(Project, LoadReport)> {
         }
     };
 
+    if let Some((_, text)) = fetch("basin", "codes_bas")? {
+        project.codes = basin::read_codes(&text)?;
+    }
+    if let Some((_, text)) = fetch("basin", "parms_bas")? {
+        project.params = basin::read_params(&text)?;
+    }
     if let Some((_, text)) = fetch("simulation", "time")? {
         project.time = time::read(&text)?;
     }

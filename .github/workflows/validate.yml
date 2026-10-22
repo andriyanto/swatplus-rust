@@ -1,0 +1,59 @@
+name: Validate against SWAT+
+
+# Runs the SWAT+ Fortran engine (from the fortran-bin branch) and swatplus-rust on the reference
+# scenarios, and compares every daily table the port writes, value by value. The tolerance is
+# decision K12 of the design: a relative difference of 1e-4, or one unit in the last printed decimal.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Get the SWAT+ Fortran engine
+        run: |
+          git fetch --depth 1 origin fortran-bin
+          git show origin/fortran-bin:swatplus-fortran > swatplus-fortran
+          git show origin/fortran-bin:README.txt
+          chmod +x swatplus-fortran
+          echo "FORTRAN=$PWD/swatplus-fortran" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build swatplus-rust
+        run: |
+          cargo build --release -p swatplus-rust
+          echo "RUST=$PWD/target/release/swatplus-rust" >> "$GITHUB_ENV"
+
+      - name: Run and compare
+        run: |
+          status=0
+          for scenario in Osu_1hru Ames_sub1; do
+            mkdir -p runs/$scenario
+            cp -r testdata/$scenario runs/$scenario/fortran
+            scripts/print-daily.sh runs/$scenario/fortran hru_wb,hru_pw hru_cb,hru_cb_vars
+            (cd runs/$scenario/fortran && "$FORTRAN" > run.log 2>&1)
+            test -f runs/$scenario/fortran/success.fin
+            "$RUST" run testdata/$scenario --out runs/$scenario/rust
+            for table in hru_wb_day hru_pw_day; do
+              if "$RUST" compare runs/$scenario/fortran/$table.txt runs/$scenario/rust/$table.txt > runs/$scenario/$table.cmp; then
+                echo "::notice title=$scenario $table::$(grep -c '^  ok' runs/$scenario/$table.cmp) columns match, $(head -1 runs/$scenario/$table.cmp | cut -d: -f2)"
+              else
+                status=1
+                echo "::error title=$scenario $table::$(grep -E 'MISMATCH|missing|not in' runs/$scenario/$table.cmp | head -3 | tr -s ' ' | paste -sd ';' -)"
+              fi
+              cat runs/$scenario/$table.cmp
+            done
+          done
+          exit $status
