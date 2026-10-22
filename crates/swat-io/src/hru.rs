@@ -1,7 +1,7 @@
 //! `hru-data.hru` (`hru_read`), `soils.sol` (`soil_db_read`) and `soil_plant.ini`
 //! (`soil_plant_init`).
 
-use swat_model::{HruData, PlantCommunity, PlantInit, Soil, SoilLayer, SoilPlantInit};
+use swat_model::{HruData, MgtOp, MgtSchedule, PlantCommunity, PlantInit, Soil, SoilLayer, SoilPlantInit};
 
 use crate::list::Records;
 use crate::{Error, Result};
@@ -204,9 +204,72 @@ pub fn read_plant_communities(text: &str) -> Result<Vec<PlantCommunity>> {
     Ok(out)
 }
 
+/// Reads `management.sch` as `mgt_read_mgtops` does: a count pass (name, number of operations
+/// and of decision tables, then one record each), then the schedules. Each operation is one
+/// list-directed read of seven values; SWAT+ stops on a bad one, and so does this.
+pub fn read_management(text: &str) -> Result<Vec<MgtSchedule>> {
+    let file = "management.sch";
+    let mut rec = Records::new(file, text);
+    rec.skip()?;
+    rec.skip()?;
+    let body = rec.mark();
+    let mut imax = 0;
+    'count: while let Ok(f) = rec.read(3) {
+        let nops = f.int(1).ok().flatten().unwrap_or(0).max(0);
+        let nauto = f.int(2).ok().flatten().unwrap_or(0).max(0);
+        for _ in 0..nauto + nops {
+            if rec.skip().is_err() {
+                break 'count;
+            }
+        }
+        imax += 1;
+    }
+    rec.reset(body);
+    let mut out = Vec::with_capacity(imax);
+    for _ in 0..imax {
+        let Some((h, _)) = rec.read_partial(3) else { break };
+        let mut sched = MgtSchedule { name: h.text_or(0, ""), ..MgtSchedule::default() };
+        let nops = h.int(1)?.unwrap_or(0).max(0);
+        let nauto = h.int(2)?.unwrap_or(0).max(0);
+        for _ in 0..nauto {
+            match rec.skip() {
+                Ok(name) => sched.autos.push(name.unwrap_or_default()),
+                Err(_) => break,
+            }
+        }
+        for _ in 0..nops {
+            let f = rec.read(7)?;
+            sched.ops.push(MgtOp {
+                op: f.text_or(0, ""),
+                mon: f.int_or(1, 0)?,
+                day: f.int_or(2, 0)?,
+                husc: f.real_or(3, 0.0)?,
+                op_char: f.text_or(4, ""),
+                op_plant: f.text_or(5, ""),
+                op3: f.real_or(6, 0.0)?,
+            });
+        }
+        out.push(sched);
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn management_schedules() {
+        let text = "management.sch\nheader\nm1 2 1\nauto1\n till 4 1 0.0 chisplow null 0.0\t\n\
+                    skip 0 0 0 null null 0\nm2 1 0\nfert 6 1 0.0 null elem_n 181.4\n";
+        let m = read_management(text).unwrap();
+        assert_eq!(m.len(), 2);
+        assert_eq!(m[0].autos, ["auto1"]);
+        assert_eq!(m[0].ops[0].op_char, "chisplow");
+        assert_eq!(m[0].ops[1].op, "skip");
+        assert_eq!(m[1].ops[0].op3, 181.4);
+        assert_eq!(m[1].ops[0].op_plant, "elem_n");
+    }
 
     #[test]
     fn hru_rows_by_number() {

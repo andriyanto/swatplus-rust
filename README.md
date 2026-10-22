@@ -12,7 +12,9 @@ temperature, soil evaporation, curve-number runoff and its lag, percolation, lat
 water) are identical on all 201 624 HRU-days of `Ames_bare`. With a pasture growing and the
 original carbon model (`Ames_past0`) and with the Century carbon model Ames uses
 (`Ames_past`), all four daily HRU tables — water balance, plants, nutrient balance and losses,
-77 columns — are identical too. CI checks this on every push.
+77 columns — are identical too, and so are they with corn under Ames's scheduled management
+(planting, harvest, tillage, irrigation, fertilizer: `Ames_corn`, `Ames_cornf`). CI checks this
+on every push.
 The design, decisions and phases are in RustGIS: [`docs/swat/design.md`](https://github.com/andriyanto/rustgis/blob/swat-plus-design/docs/swat/design.md).
 
 ## Goal
@@ -27,7 +29,7 @@ relative difference of 1e-4 or one unit in the last printed decimal (decision K1
 | --- | --- |
 | `swat-model` | The data of a project: `file.cio`, basin codes and parameters, simulation period, print settings, spatial objects and their outflows, weather, HRUs, soils, and the database tables (topography, hydrology, land use, curve numbers, snow…). No I/O. |
 | `swat-io` | Readers for TxtInOut files. Each follows the SWAT+ routine that reads the file, with Fortran list-directed input rules, from a folder or from files in memory (the browser). |
-| `swat-engine` | The simulation. So far the clock, the daily weather (measured and generated), the print schedule, and HRUs without management: water balance, one plant's growth, soil nutrients (original and Century carbon models) and erosion. |
+| `swat-engine` | The simulation. So far the clock, the daily weather (measured and generated), the print schedule, and HRUs: water balance, one plant's growth, soil nutrients (original and Century carbon models), erosion, and dated management. |
 | `swatplus-rust` | The command line program: `inspect`, `run`, `compare`. |
 
 No external dependencies, so the core builds anywhere, WebAssembly included.
@@ -47,10 +49,10 @@ branch (`SWAT+ Fortran build` workflow).
 The aim is the same results as SWAT+, so its behaviour is reproduced even where it surprises.
 What has been found so far is in [`docs/swat-quirks.md`](docs/swat-quirks.md).
 
-Next: management (planting, harvest, tillage, fertilizer, irrigation) toward the full
-reference scenarios, and routing (phase 3) — see [`docs/phase2.md`](docs/phase2.md). For a project the port can't simulate yet (management,
-several plants, other PET methods…), `run` says why and writes the weather and precipitation
-only.
+Next: two-plant communities and decision tables (Ames_sub1 itself), then routing (phase 3) —
+see [`docs/phase2.md`](docs/phase2.md). For a project the port can't simulate yet (decision
+tables, several plants, other PET methods…), `run` says why and writes the weather and
+precipitation only.
 
 ## License
 

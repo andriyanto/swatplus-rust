@@ -1,8 +1,8 @@
 //! Plants: the plant database as `plantparm_init` completes it, a plant's setup (`plant_init`) and
 //! its daily growth (`pl_community`, `pl_waterup`, `pl_grow` and the routines it calls).
 //!
-//! So far for communities of one plant, perennial or with its heat units over the whole year
-//! (`days_mat` 0), and without management.
+//! So far for communities of one plant: perennials, plants with heat units over the whole year
+//! (`days_mat` 0) and annuals with days to maturity.
 
 use std::ops::{Add, Sub};
 
@@ -61,6 +61,7 @@ pub struct PlantDb {
     pub t_base: f32,
     pub cnyld: f32,
     pub cpyld: f32,
+    pub wsyf: f32,
     pub pltnfr1: f32,
     pub pltnfr3: f32,
     pub pltpfr1: f32,
@@ -135,6 +136,7 @@ impl PlantDb {
             t_base: x("t_base"),
             cnyld: x("cnyld"),
             cpyld: x("cpyld"),
+            wsyf: x("wsyf"),
             pltnfr1: x("pltnfr1"),
             pltnfr3: x("pltnfr3"),
             pltpfr1: x("pltpfr1"),
@@ -243,7 +245,7 @@ impl PlantDb {
         self.typ == "perennial"
     }
 
-    fn annual(&self) -> bool {
+    pub fn annual(&self) -> bool {
         matches!(self.typ.as_str(), "warm_annual" | "cold_annual" | "warm_annual_tuber" | "cold_annual_tuber")
     }
 }
@@ -252,6 +254,8 @@ impl PlantDb {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Plant {
     pub db: PlantDb,
+    /// The name `plant.ini` gives it, which operations refer to.
+    pub cpnm: String,
     /// Growing (`gro`) and dormant (`idorm`).
     pub gro: bool,
     pub idorm: bool,
@@ -289,6 +293,13 @@ pub struct Plant {
     pub strsa: f32,
     pub strss: f32,
     pub reg: f32,
+    /// Stress summed over the season (`sum_w`, `sum_tmp`, `sum_n`, `sum_p`, `sum_a`), for
+    /// `mgt_out.txt`.
+    pub sum_w: f32,
+    pub sum_tmp: f32,
+    pub sum_n: f32,
+    pub sum_p: f32,
+    pub sum_a: f32,
     // pl_mass
     pub tot: OrgMass,
     pub ab_gr: OrgMass,
@@ -424,29 +435,45 @@ pub struct Saved {
 }
 
 /// `plant_init` for the community's single plant. `wgn_months` gives each month's mean maximum
-/// and minimum temperature, `ndays` the month table, `zmx` the soil's maximum rooting depth from
+/// and minimum temperature, `ndays` the month table, `lat` the generator's latitude, `zmx` the soil's maximum rooting depth from
 /// `soils.sol` (the HRU's own comes later, in `hydro_init`) and `layers` the depths and
 /// thicknesses for the root distribution.
+#[allow(clippy::too_many_arguments)]
 pub fn plant_init(
     db: PlantDb,
     init: &swat_model::PlantInit,
     wgn_months: &[(f32, f32); 12],
     ndays: &[i32; 13],
+    lat: f32,
     zmx: f32,
     layers: &[(f32, f32)],
     epco: f32,
 ) -> Result<Plant, String> {
-    let mut pl = Plant { gro: init.igro == "y", idorm: true, ..Plant::default() };
+    let mut pl = Plant { cpnm: init.cpnm.clone(), gro: init.igro == "y", idorm: true, ..Plant::default() };
     let r = init.rsdin;
     pl.rsd = OrgMass { m: 0.0 + r, c: 0.0 + 0.42 * r, n: 0.0 + 0.42 * r / 10.0, p: 0.0 + 0.42 * r / 100.0 };
 
+    // xmon leaves the month as it was for a day past the year's end.
+    let mut mo_prev = 1_i32;
+    let mut tave_of = |iday: i32| {
+        let (mo, _) = crate::clock::xmon(ndays, iday);
+        if mo > 0 {
+            mo_prev = mo;
+        }
+        let (mx, mn) = wgn_months.get((mo_prev - 1).max(0) as usize).copied().unwrap_or((0.0, 0.0));
+        (mx + mn) / 2.0
+    };
+    let mut phu0 = 0.0_f32;
+    for iday in 1..=365 {
+        let tave = tave_of(iday);
+        if tave > 0.0 {
+            phu0 += tave;
+        }
+    }
     if db.days_mat == 0 {
         let mut phutot = 0.0_f32;
         for iday in 1..=365 {
-            let (mo, _) = crate::clock::xmon(ndays, iday);
-            let (mx, mn) = wgn_months.get((mo - 1).max(0) as usize).copied().unwrap_or((0.0, 0.0));
-            let tave = (mx + mn) / 2.0;
-            let phuday = tave - db.t_base;
+            let phuday = tave_of(iday) - db.t_base;
             if phuday > 0.0 {
                 phutot += phuday;
             }
@@ -455,7 +482,44 @@ pub fn plant_init(
     } else if db.days_mat < 0 {
         pl.phumat = -pl.phumat;
     } else {
-        return Err(format!("plant {}: days to maturity {} (only 0, heat units over the year, so far)", db.name, db.days_mat));
+        if !db.annual() {
+            // igrow would be left from an earlier call (implicit SAVE) or set from day length.
+            return Err(format!("plant {}: days to maturity {} for a {} plant (annuals only so far)", db.name, db.days_mat, db.typ));
+        }
+        // The planting day: when base-0 heat units reach 0.15 of the year's.
+        let mut iday_sum = 181_i32;
+        let mut iday_sh = 181_i32;
+        let mut phutot = 0.0_f32;
+        phu0 *= 0.15;
+        let mut igrow = None;
+        for iday in 1..=365 {
+            let tave = if lat > 0.0 {
+                tave_of(iday)
+            } else {
+                iday_sum += 1;
+                iday_sh = if iday_sum > 365 { iday_sum - 365 } else { iday_sum };
+                tave_of(iday_sh)
+            };
+            if tave > 0.0 {
+                phutot += tave;
+            }
+            if phutot > phu0 {
+                igrow = Some(if lat > 0.0 { iday } else { iday_sh });
+                break;
+            }
+        }
+        let Some(igrow) = igrow else {
+            return Err(format!("plant {}: base-0 heat units never reach the planting share", db.name));
+        };
+        phutot = 0.0;
+        for iday in igrow..=igrow + db.days_mat {
+            let d = if lat > 0.0 || iday <= 365 { iday } else { iday - 365 };
+            let phuday = tave_of(d) - db.t_base;
+            if phuday > 0.0 {
+                phutot += phuday;
+            }
+        }
+        pl.phumat = phutot;
     }
 
     pl.phuacc = init.phuacc;
@@ -504,6 +568,22 @@ pub fn plant_init(
 }
 
 impl Plant {
+    /// `plstrz`: no stress.
+    pub(super) fn reset_stress(&mut self) {
+        self.strsw = 1.0;
+        self.strst = 1.0;
+        self.strsn = 1.0;
+        self.strsp = 1.0;
+        self.strsa = 1.0;
+        self.strss = 1.0;
+        self.reg = 0.0;
+        self.sum_w = 0.0;
+        self.sum_tmp = 0.0;
+        self.sum_n = 0.0;
+        self.sum_p = 0.0;
+        self.sum_a = 0.0;
+    }
+
     /// SWAT+ `pl_root_gro`: rooting depth and the root share of biomass.
     fn root_gro(&mut self, zmx: f32, layers: &[(f32, f32)]) {
         let db = &self.db;
@@ -529,7 +609,7 @@ impl Plant {
     }
 
     /// SWAT+ `pl_rootfr`: the share of roots in each layer. `layers` are (depth, thickness).
-    fn rootfr(&mut self, layers: &[(f32, f32)]) {
+    pub(super) fn rootfr(&mut self, layers: &[(f32, f32)]) {
         for v in self.rtfr.iter_mut() {
             *v = 0.0;
         }
@@ -1071,6 +1151,11 @@ impl Hru {
         up.c = 0.42 * up.m;
         d.bm_grow += up.m;
         d.c_gro += up.c;
+        pl.sum_w += 1.0 - pl.strsw;
+        pl.sum_tmp += 1.0 - pl.strst;
+        pl.sum_n += 1.0 - pl.strsn;
+        pl.sum_p += 1.0 - pl.strsp;
+        pl.sum_a += 1.0 - pl.strsa;
     }
 
     /// SWAT+ `pl_nup` (and `pl_nfix`): nitrogen uptake by depth and nitrogen stress.

@@ -22,7 +22,8 @@ scenarios built from Ames_sub1 that remove one dependency at a time
 | 2a ✅ | `Ames_bare`: bare soil, no plants, no management | soil water, snow, soil evaporation, curve-number runoff, percolation, lateral flow, soil temperature, biological mixing | `hru_wb_day` within tolerance, 12 HRUs, 1975–2020: **exact**, 28 columns × 201 624 HRU-days |
 | 2b-1 ✅ | `Ames_past0`: pasture, no management, original carbon model (`cswat` 0) | plant growth, canopy, transpiration, soil N and P, residue, erosion | **exact**: `hru_wb_day`, `hru_pw_day`, `hru_nb_day`, `hru_ls_day`, 77 columns × 201 624 HRU-days |
 | 2b-2 ✅ | `Ames_past`: the same with the carbon model on (`cswat` 2, as Ames) | `cbn_zhang2` and the Century pools, daily biological mixing of nutrients and texture | **exact**: the same four tables, and every layer's soil carbon (`hru_cbn_lyr`) within print precision |
-| later | `Ames_sub1` itself | management, irrigation, nutrients, carbon | with phase 4 |
+| M1 ✅ | `Ames_corn`, `Ames_cornf`: corn alone with `mgt_01`'s dated operations; `Ames_cornf` with its fertilizer applied | planting, harvest and kill, tillage with the carbon model, irrigation, fertilizer (mineral and manure), annual plants | **exact**: the four tables, 80 columns × 201 624 HRU-days each |
+| M2 | `Ames_sub1` itself | two plants (corn and soybean), irrigation by decision table | next |
 | later | `Osu_1hru` | paddy and wetland storage, decision tables, Penman-Monteith PET | with phases 4 and 6 |
 
 Bare soil in Ames_sub1 (HRU 1, 1980): 568 mm of precipitation, 64 mm of surface runoff, 531 mm of
@@ -48,6 +49,28 @@ day, with no tolerance used. What it took beyond the plan:
 management, urban land, tiles, septic systems, filter strips, surface storage, other PET methods,
 Green and Ampt, cracks, gwflow, sub-daily steps, water routed into HRUs), skips the water balance
 and says why.
+
+## Management M1: result
+
+Done (`swat-engine/src/hru/mgt.rs`; readers for `management.sch`, `harv.ops`,
+`fertilizer.frt`, `irr.ops`, `chem_app.ops`). `Ames_corn` is Ames with corn alone (`corn_comm`)
+and `mgt_01`'s 305 operations without its decision table: tillage, planting, one irrigation,
+fertilizer, harvest and kill, and the yearly skips (a 41-year rotation, run over 46 years). Its fertilizer
+names are in the wrong column, so SWAT+ applies none (see the quirks); `Ames_cornf` moves them
+and broadcasts or injects them, with dairy manure in place of one blend for the organic path.
+Ported: `mgt_operatn`, `mgt_sched` (plant, harvest and kill, tillage, irrigation, fertilizer,
+skip), `mgt_plantop`, `mgt_harvgrain`, `mgt_killop`, `pl_fert`, `mgt_newtillmix_cswat1`,
+`mgt_tillfactor` for tillage, the tillage counters and their effect on biological mixing and
+decomposition, the yearly resets, and `plant_init` for annuals. Both match SWAT+ bit for bit.
+
+What it took beyond the plan: a one-bit difference in Hargreaves PET, from `x ** 0.5`, which
+Rust computed as a square root (quirks, "Arithmetic"). It showed only in the fertilized run, a
+few printed digits over 46 years; found by comparing each layer's soil water from SWAT+'s
+`object.prt` output (`sol_water`) and the state SWAT+ writes at each operation (`mgt_out.txt`).
+
+Limits, reported by `run`: decision tables, operations other than these (grazing, pesticide,
+manure, burning, harvest only, kill only…), operations by heat units, harvests other than grain,
+tillage with the original carbon model.
 
 ## Stage 2b-2: result
 

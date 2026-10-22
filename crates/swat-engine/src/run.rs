@@ -186,6 +186,8 @@ pub fn run(project: &Project, out: &mut dyn OutputSink) -> Result<RunReport, Str
                     let g = weather.wgn.get(h.wgn);
                     let ctx = DayCtx {
                         day: clock.day,
+                        mo: clock.mo,
+                        day_mo: clock.day_mo,
                         tmp_an: g.map(|g| g.tmp_an).unwrap_or(0.0),
                         phutot: g.map(|g| g.phutot).unwrap_or(0.0),
                         daylmn: g.map(|g| g.daylmn).unwrap_or(0.0),

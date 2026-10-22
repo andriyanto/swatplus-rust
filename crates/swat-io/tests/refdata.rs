@@ -58,8 +58,16 @@ fn ames_sub1() {
     let (p, report) = load_project(&scenario("Ames_sub1")).unwrap();
     // file.cio names an aquifer file "nbull" (a typo for null). It isn't there, and as there are
     // no aquifers SWAT+ never opens it; neither does the loader. nutrients.sol is named but not
-    // there: SWAT+ then uses its default soil nutrients.
-    assert_eq!(report.missing, ["nutrients.sol"]);
+    // there: SWAT+ then uses its default soil nutrients. Nor is chem_app.ops: fertilizer then
+    // goes on with element 0 of the chemical applications, all zero.
+    assert_eq!(report.missing, ["nutrients.sol", "chem_app.ops"]);
+    let mgt = p.management.iter().find(|m| m.name == "mgt_01").unwrap();
+    assert_eq!(mgt.autos, ["irr_year_irr"]);
+    assert_eq!(mgt.ops.len(), 305);
+    assert_eq!((mgt.ops[0].op.as_str(), mgt.ops[0].mon, mgt.ops[0].day), ("till", 4, 1));
+    assert_eq!(mgt.ops[0].op_char, "chisplow");
+    assert!(p.harv_ops.as_ref().unwrap().find("grain").is_some());
+    assert!(p.fertilizer.as_ref().unwrap().find("elem_n").is_some());
     assert_eq!(p.cio.file("aquifer", "init"), Some("nbull"));
     // The init row lists 12 names for 11 slots; the extra one is ignored.
     assert_eq!(p.cio.file("init", "soil_plant_ini"), Some("soil_plant.ini"));

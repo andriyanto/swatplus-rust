@@ -662,7 +662,7 @@ impl Weather {
             let ramm = w.solradmx * 37.59 / 30.0;
             if w.tmax > w.tmin {
                 let xl = 2.501 - 2.361e-3 * w.tave;
-                w.pet = 0.0023 * (ramm / xl) * (w.tave + 17.8) * (w.tmax - w.tmin).powf(0.5);
+                w.pet = 0.0023 * (ramm / xl) * (w.tave + 17.8) * crate::fortran::rpow(w.tmax - w.tmin, 0.5);
                 w.pet = w.pet.max(0.01);
             } else {
                 w.pet = 0.01;

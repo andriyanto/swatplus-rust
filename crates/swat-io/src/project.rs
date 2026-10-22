@@ -98,6 +98,28 @@ pub fn load_project(src: &dyn FileSource) -> Result<(Project, LoadReport)> {
     project.tillage = it.next().flatten();
     project.plants = it.next().flatten();
     project.soil_test = it.next().flatten();
+    // proc_db: the operation databases, then the schedules that point into them.
+    let ops: [(&str, &str, &'static [swat_model::table::Field]); 4] = [
+        ("hru_parm_db", "fert_frt", schema::FERTILIZER),
+        ("ops", "irr_ops", schema::IRR_OPS),
+        ("ops", "chem_ops", schema::CHEM_APP),
+        ("ops", "harv_ops", schema::HARV_OPS),
+    ];
+    let mut read = Vec::new();
+    for (section, slot, fields) in ops {
+        read.push(match fetch(section, slot)? {
+            Some((name, text)) => Some(table::read_table(&name, &text, fields)?),
+            None => None,
+        });
+    }
+    let mut it = read.into_iter();
+    project.fertilizer = it.next().flatten();
+    project.irr_ops = it.next().flatten();
+    project.chem_app = it.next().flatten();
+    project.harv_ops = it.next().flatten();
+    if let Some((_, text)) = fetch("lum", "management_sch")? {
+        project.management = hru::read_management(&text)?;
+    }
     if let Some((_, text)) = fetch("init", "plant")? {
         project.plant_communities = hru::read_plant_communities(&text)?;
     }

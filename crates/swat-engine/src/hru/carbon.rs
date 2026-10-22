@@ -6,7 +6,7 @@
 
 use swat_model::Project;
 
-use super::plant::{OrgMass, Saved};
+use super::plant::{OrgMass, Saved, exp_w};
 use super::{Biomix, Hru};
 
 /// A layer's carbon model pools (`soil1(j)`): total, slow and passive humus, microbial biomass,
@@ -53,6 +53,16 @@ pub struct CarbonBasin {
     pub bmix_a: f32,
     pub bmix_b: f32,
     pub bmix_c: f32,
+    /// Tillage: days its effect lasts, the mixing coefficients, and how fast the soil
+    /// consolidates after it (`till_consf`) and the biological mixing recovers (`bio_consf`).
+    pub till_eff_days: i32,
+    pub tillmix_a: f32,
+    pub tillmix_b: f32,
+    pub tillmix_c: f32,
+    pub till_consf: f32,
+    pub bio_consf: f32,
+    /// `man_coef%rtof`: the share of organic fertilizer going to residue.
+    pub rtof: f32,
     pub photo_degrade_factor: f32,
     pub cnr_cap: f32,
     pub cnr_ref: f32,
@@ -106,6 +116,13 @@ impl CarbonBasin {
             bmix_a: r("bmix_a", 3.0),
             bmix_b: r("bmix_b", 0.0),
             bmix_c: r("bmix_c", 0.0),
+            till_eff_days: i("till_eff_days", 30),
+            tillmix_a: r("tillmix_a", 3.0),
+            tillmix_b: r("tillmix_b", 5.0),
+            tillmix_c: r("tillmix_c", -5.5),
+            till_consf: r("till_consf", 0.10),
+            bio_consf: r("bio_consf", 0.15),
+            rtof: r("rtof", 0.5),
             photo_degrade_factor: r("photo_degrade_factor", 0.01),
             cnr_cap: r("cnr_cap", 500.0),
             cnr_ref: r("cnr_ref", 25.0),
@@ -294,6 +311,8 @@ impl Hru {
         let mut denit = 0.0_f32;
         let nly = self.layers.len();
         let rsd_tot = self.rsd_tot;
+        let till_on = self.till_switch && self.till_days <= cb.till_eff_days;
+        let till_depth = self.till_depth;
         // org_allo(2)%abco2 is a module variable: layers below the first set it from their sand.
         let mut allo = cb.rates;
         for k in 0..nly {
@@ -301,6 +320,7 @@ impl Hru {
             let cf = if k == 0 { 0 } else { 1 };
             let dmid = (self.layers[kk].d + self.layers[kk.saturating_sub(1)].d) / 2.0;
             let st_kk = self.layers[kk].st;
+            let d_prev = if k == 0 { 0.0 } else { self.layers[k - 1].d };
             let l = &mut self.layers[k];
             let sol_mass = 10000.0 * l.thick * l.bd * (1.0 - l.rock / 100.0);
             let stemp = l.tmp;
@@ -334,7 +354,20 @@ impl Hru {
                 let w2 = 0.5 + 0.5 * (xx2 / (xx2 + (-20.0 * xx2).exp()));
                 sut = w1 * w2;
             }
-            let till_eff = if cb.idc_till == 3 { 1.0 + l.tillagef } else { 1.0 };
+            let till_eff = match cb.idc_till {
+                // DSSAT: 1.6 above the tillage depth for its days of effect.
+                1 if till_on => {
+                    if k == 0 || l.d <= till_depth {
+                        1.6
+                    } else if d_prev < till_depth {
+                        1.0 + 0.6 * (till_depth - d_prev) / (l.d - d_prev)
+                    } else {
+                        1.0
+                    }
+                }
+                3 => 1.0 + l.tillagef,
+                _ => 1.0,
+            };
             let cdg = match bm.tmpf {
                 1 => {
                     if stemp <= 35.0 {
@@ -713,30 +746,176 @@ impl Hru {
             ly.silt = 100.0 / mass * (fnm * ly.silt * mass / 100.0 + fd * mix_silt);
             ly.sand = 100.0 / mass * (fnm * ly.sand * mass / 100.0 + fd * mix_sand);
         }
-        self.tillfactor(avg_emix, dtil, cb);
+        self.tillfactor(true, avg_emix, dtil, cb, self.till_days);
     }
 
-    /// SWAT+ `mgt_tillfactor` for a biological mixing event (no tillage): each thawed layer's
-    /// mixing effect on decomposition. `emix` is reduced for the layer the mixing depth ends in
-    /// and is 0 below it, for good.
-    fn tillfactor(&mut self, mut emix: f32, dtil: f32, cb: &CarbonBasin) {
+    /// SWAT+ `mgt_tillfactor`: each thawed layer's mixing effect on decomposition, from a
+    /// biological mixing event or a tillage. `emix` is reduced for the layer the mixing depth
+    /// ends in and is 0 below it, for good. While a tillage still has effect (`till_days` > 0)
+    /// its factor decays as the soil consolidates, on every call.
+    pub(super) fn tillfactor(&mut self, bio_mix_event: bool, mut emix: f32, dtil: f32, cb: &CarbonBasin, till_days: i32) {
         for l in 0..self.layers.len() {
             let prev = if l == 0 { 0.0 } else { self.layers[l - 1].d };
             let ly = &mut self.layers[l];
+            let frac_mixed;
             if ly.d <= dtil {
+                frac_mixed = 1.0;
             } else if ly.d > dtil && prev < dtil {
                 emix = emix * (dtil - prev) / ly.thick;
+                frac_mixed = 1.0 - (dtil - prev) / ly.thick;
             } else {
+                frac_mixed = 0.0;
                 emix = 0.0;
             }
-            let zz = cb.bmix_a + cb.bmix_b * (cb.bmix_c * ly.clay / 100.0).exp();
-            let csdr = 0.0 + emix;
-            if ly.tmp <= 0.0 {
-                ly.tillagef_biomix = 0.0;
+            let mut xx = 0.0_f32;
+            let (zz, yy) = if bio_mix_event {
+                (cb.bmix_a + cb.bmix_b * (cb.bmix_c * ly.clay / 100.0).exp(), 0.0)
             } else {
-                ly.tillagef_biomix = zz * (csdr / (csdr + (1.0 - 2.0 * csdr).exp()));
-                ly.tillagef = 0.0 + ly.tillagef_biomix;
+                let zz = cb.tillmix_a + cb.tillmix_b * (cb.tillmix_c * ly.clay / 100.0).exp();
+                (zz, ly.tillagef_tillmix / zz)
+            };
+            if yy > 0.01 {
+                let xx1 = yy.powf(exp_w(-0.13 + 1.06 * yy));
+                let mut xx2 = exp_w(0.64 + 0.64 * crate::fortran::rpow(yy, 10.0));
+                if xx2 > 10.0 {
+                    xx2 = 10.0;
+                }
+                xx = xx1 * xx2;
+            }
+            let csdr = xx + emix;
+            if ly.tmp <= 0.0 && bio_mix_event {
+                ly.tillagef_biomix = 0.0;
+            } else if ly.tmp > 0.0 {
+                let f = zz * (csdr / (csdr + (1.0 - 2.0 * csdr).exp()));
+                if bio_mix_event {
+                    ly.tillagef_biomix = f;
+                } else {
+                    ly.tillagef_tillmix = f;
+                    if ly.tillagef_tillmix > 0.0 {
+                        ly.tillagef_tillmix *= frac_mixed;
+                    }
+                }
+                if till_days > 0 {
+                    let consf = if ly.st >= ly.fc { cb.till_consf } else { cb.till_consf * ly.st / ly.fc };
+                    ly.tillagef_tillmix *= 1.0 - consf;
+                    if ly.tillagef_tillmix <= 0.01 {
+                        ly.tillagef_tillmix = 0.0;
+                    }
+                }
+                ly.tillagef = ly.tillagef_tillmix + ly.tillagef_biomix;
             }
         }
+    }
+
+    /// SWAT+ `mgt_newtillmix_cswat1`: a tillage of mixing efficiency `effmix` to depth `deptil`
+    /// with the carbon model. The layers above the depth give a share of their soil, water,
+    /// nutrients and pools to a mix spread back by thickness; the mix takes the surface residue
+    /// in too, but the residue leaves the surface layer by layer from what is left, so less
+    /// leaves than goes in. Then `mgt_tillfactor`.
+    pub(super) fn tillmix_cswat1(&mut self, effmix: f32, deptil: f32, cb: &CarbonBasin) {
+        let emix = effmix;
+        let mut dtil = deptil;
+        self.till_days = 0;
+        self.till_depth = dtil;
+        self.till_switch = true;
+        if dtil <= 1.0e-6 {
+            return;
+        }
+        let nly = self.layers.len();
+        let bd1 = self.layers.first().map(|l| l.bd).unwrap_or(0.0);
+        let sol_mass: Vec<f32> = self.layers.iter().map(|l| (l.thick / 1000.0) * 10000.0 * bd1 * 1000.0 * (1.0 - l.rock / 100.0)).collect();
+        if dtil < 10.0 {
+            dtil = 11.0;
+        }
+        let mut sol_msn = vec![0.0_f32; nly];
+        let mut frac_dep = vec![0.0_f32; nly];
+        let mut lyr_exit = nly;
+        let (mut mix_sw, mut mix_rock, mut mix_sand, mut mix_silt, mut mix_clay) = (0.0_f32, 0.0_f32, 0.0_f32, 0.0_f32, 0.0_f32);
+        let (mut no3, mut nh4, mut wsol, mut lab, mut act, mut sta) = (0.0_f32, 0.0_f32, 0.0_f32, 0.0_f32, 0.0_f32, 0.0_f32);
+        let mut m = Pools::default();
+        let (mut hact, mut hsta) = (OrgMass::default(), OrgMass::default());
+        let mut mix_rsd = OrgMass::default();
+        let surf = self.plant.as_ref().map(|p| p.rsd);
+        for l in 0..nly {
+            let prev = if l == 0 { 0.0 } else { self.layers[l - 1].d };
+            let ly = &mut self.layers[l];
+            let sol_msm;
+            if ly.d <= dtil {
+                sol_msm = emix * sol_mass[l];
+                sol_msn[l] = sol_mass[l] - sol_msm;
+                frac_dep[l] = ly.thick / dtil;
+            } else if ly.d > dtil && prev < dtil {
+                sol_msm = emix * sol_mass[l] * ((dtil - prev) / ly.thick);
+                sol_msn[l] = sol_mass[l] - sol_msm;
+                frac_dep[l] = (dtil - prev) / dtil;
+            } else {
+                ly.tillagef = 0.0;
+                sol_msn[l] = sol_mass[l];
+                frac_dep[l] = 0.0;
+                lyr_exit = l;
+                break;
+            }
+            let fm = sol_msm / sol_mass[l];
+            let ly = &self.layers[l];
+            mix_sw += fm * ly.st;
+            mix_rock += fm * ly.rock * sol_mass[l] / 100.0;
+            mix_sand += fm * ly.sand * sol_mass[l] / 100.0;
+            mix_silt += fm * ly.silt * sol_mass[l] / 100.0;
+            mix_clay += fm * ly.clay * sol_mass[l] / 100.0;
+            no3 += fm * ly.no3;
+            nh4 += fm * ly.nh4;
+            wsol += fm * ly.wsol;
+            lab += fm * ly.lab;
+            act += fm * ly.act;
+            sta += fm * ly.sta;
+            m.tot = m.tot + OrgMass::scale(fm, ly.cp.tot);
+            hact = hact + OrgMass::scale(fm, ly.hact);
+            hsta = hsta + OrgMass::scale(fm, ly.hsta);
+            m.hs = m.hs + OrgMass::scale(fm, ly.cp.hs);
+            m.hp = m.hp + OrgMass::scale(fm, ly.cp.hp);
+            m.microb = m.microb + OrgMass::scale(fm, ly.cp.microb);
+            m.str = m.str + OrgMass::scale(fm, ly.cp.str);
+            m.lig = m.lig + OrgMass::scale(fm, ly.cp.lig);
+            m.meta = m.meta + OrgMass::scale(fm, ly.cp.meta);
+            if let Some(s) = surf {
+                mix_rsd = mix_rsd + OrgMass::scale(frac_dep[l] * emix, ly.rsd);
+                mix_rsd = mix_rsd + OrgMass::scale(frac_dep[l] * emix, s);
+            }
+        }
+        for l in 0..lyr_exit {
+            let fnm = sol_msn[l] / sol_mass[l];
+            let fd = frac_dep[l];
+            let mass = sol_mass[l];
+            let ly = &mut self.layers[l];
+            let mix = |a: OrgMass, b: OrgMass| OrgMass::scale(fnm, a) + OrgMass::scale(fd, b);
+            ly.no3 = fnm * ly.no3 + fd * no3;
+            ly.nh4 = fnm * ly.nh4 + fd * nh4;
+            ly.wsol = fnm * ly.wsol + fd * wsol;
+            ly.lab = fnm * ly.lab + fd * lab;
+            ly.act = fnm * ly.act + fd * act;
+            ly.sta = fnm * ly.sta + fd * sta;
+            ly.cp.tot = mix(ly.cp.tot, m.tot);
+            if let Some(pl) = self.plant.as_mut() {
+                ly.rsd = mix(ly.rsd, mix_rsd);
+                let surf_rsd = OrgMass::scale(fd * emix, pl.rsd);
+                pl.rsd = pl.rsd - surf_rsd;
+                self.rsd_tot = self.rsd_tot - surf_rsd;
+            }
+            ly.hact = mix(ly.hact, hact);
+            ly.hsta = mix(ly.hsta, hsta);
+            let c = &mut ly.cp;
+            c.hs = mix(c.hs, m.hs);
+            c.hp = mix(c.hp, m.hp);
+            c.microb = mix(c.microb, m.microb);
+            c.str = mix(c.str, m.str);
+            c.lig = mix(c.lig, m.lig);
+            c.meta = mix(c.meta, m.meta);
+            ly.clay = 100.0 / mass * (fnm * ly.clay * mass / 100.0 + fd * mix_clay);
+            ly.silt = 100.0 / mass * (fnm * ly.silt * mass / 100.0 + fd * mix_silt);
+            ly.sand = 100.0 / mass * (fnm * ly.sand * mass / 100.0 + fd * mix_sand);
+            ly.rock = 100.0 / mass * (fnm * ly.rock * mass / 100.0 + fd * mix_rock);
+            ly.st = fnm * ly.st + fd * mix_sw;
+        }
+        self.tillfactor(false, emix, dtil, cb, self.till_days);
     }
 }

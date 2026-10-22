@@ -6,6 +6,14 @@
 
 use std::cmp::Ordering;
 
+/// Fortran `x ** y` for a real exponent: the math library's `powf`, as gfortran calls it.
+/// Rust's `x.powf(0.5)` with a constant exponent is turned into `sqrt` by the optimizer, which is
+/// correctly rounded where `powf` is not always (they differ in the last bit for about 1 value
+/// in 1600); hiding the exponent from the optimizer keeps the library call.
+pub fn rpow(x: f32, y: f32) -> f32 {
+    x.powf(std::hint::black_box(y))
+}
+
 /// SWAT+ `aunif`: the Park–Miller minimal standard generator (Schrage's method). Advances `seed`
 /// and returns a number in (0, 1). The product is formed in double precision and rounded to single,
 /// as `x1 * 4.656612875d-10` assigned to a `real`.

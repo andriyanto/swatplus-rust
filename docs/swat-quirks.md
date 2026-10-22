@@ -190,3 +190,54 @@ handles it.
   is counted once per mixed layer. The mixing's effect on decomposition (`mgt_tillfactor`,
   `idc_till` 3) uses an efficiency that, once reduced for the layer the mixing depth ends in,
   stays 0 for the layers below.
+
+## Management (dated operations)
+
+From `mgt_operatn`, `mgt_sched`, `plant_init`, `time_control` and the operation routines; the
+port is `swat-engine/src/hru/mgt.rs`, with tillage in `hru/carbon.rs`.
+
+- **Operations run on their month and day,** in schedule order, after evapotranspiration and
+  before runoff, and only until the year is skipped. A `skip` (month 0) never matches a date: the
+  schedule waits on it until the year ends, when `time_control` steps past it. At the end of the
+  list it starts over.
+- **The first operation is one before the one wanted.** `plant_init` looks for the first
+  operation of the starting rotation year on or after the start day and keeps its index minus one
+  (at least 1). For a schedule starting on day 1 that is operation 1 anyway. An HRU with a
+  schedule but no plants keeps the default, 1.
+- **A fertilizer operation names the fertilizer first, then the application method**
+  (`chem_app.ops`). Ames's `mgt_01` gives them the other way round (`null elem_n`), so its
+  fertilizer is element 0 of `fertilizer.frt`, all zeros: nothing is applied. A method that isn't
+  found (Ames has no `chem_app.ops`) has no surface share, so everything goes into the second
+  layer. With the original carbon model, organic P sets the first two layers' active humus P to
+  the stable humus P plus the fertilizer's.
+- **Harvest and kill** (`hvkl`, grain): the seed is the yield times the harvest efficiency; what
+  the harvest misses goes to the top layer's active humus (`hact`), which the carbon model never
+  reads. The kill puts the rest above ground into the surface residue and the roots into the
+  layers' residue by the root distribution, and takes the plant out of the community totals,
+  which, for the rest of the day (runoff and erosion), still count the harvested seed. Stresses,
+  heat units and the HRU's base heat units are reset for every growing plant, whichever one the
+  operation names.
+- **Planting caps the soil's rooting depth for good** (`mgt_plantop`): `zmx` becomes the
+  smaller of itself and the plant's maximum root depth.
+- **Annual plants' heat units** (`plant_init`, `days_mat` > 0): planting is taken as the day
+  base-0 heat units reach 15 % of the year's; maturity sums `days_mat` days from there, the days
+  past 31 December taking December's temperature (`xmon` leaves the month as it was).
+- **Tillage with the carbon model** (`mgt_newtillmix_cswat1`): the layers above the tillage depth
+  give a share of their soil (clay, silt, sand, rock), water, mineral N and P, and pools to a mix
+  spread back by thickness. Every layer's mass is taken with the first layer's bulk density. The
+  surface residue joins the mix once per mixed layer, but leaves the surface layer by layer, each
+  time a share of what is left: less leaves than goes in.
+- **Tillage's effect on decomposition** (`mgt_tillfactor`, `idc_till` 3) is weighted in the
+  layer the depth ends in by the share of the layer *below* the depth. For `till_eff_days`
+  (100 in Ames) the factor decays every time `mgt_tillfactor` runs, which after a tillage is
+  every day the biological mixing runs. That mixing stops on the day of a tillage and comes
+  back by `bio_consf` of its full value a day.
+
+## Arithmetic
+
+- **`x ** 0.5` is the math library's `powf`**, not a square root: gfortran calls `powf`, while
+  Rust's optimizer turns `x.powf(0.5)` into `sqrt`, which is correctly rounded where `powf` isn't
+  always (they differ in the last bit for about one value in 1600). Hargreaves PET has it; one
+  bit of PET was enough to move a soil layer's water by one bit a few days later and a printed
+  digit weeks after. The port calls `powf` with the exponent hidden from the optimizer
+  (`fortran::rpow`).

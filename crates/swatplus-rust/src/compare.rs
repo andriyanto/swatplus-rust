@@ -71,7 +71,8 @@ pub fn compare(expected: &Table, actual: &Table, abs: f64, rel: f64, label: &str
             let r = if d > 0.0 { d / x.abs().max(y.abs()) } else { 0.0 };
             s.max_abs = s.max_abs.max(d);
             s.max_rel = s.max_rel.max(r);
-            if d > abs && r > rel {
+            // A hair of slack: 0.144 - 0.143 is a little over 0.001 in binary.
+            if d > abs * (1.0 + 1.0e-6) && r > rel {
                 s.mismatches += 1;
                 if s.first.is_none() {
                     s.first = Some(format!("{} day {} unit {}: SWAT+ {x} vs {y} ({name})", key.0, key.1, key.2));

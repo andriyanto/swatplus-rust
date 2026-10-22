@@ -215,3 +215,35 @@ pub const CARBON_LYR: &[Field] = &[
     f("apco2", R, "0."),
     f("abco2", R, "0."),
 ];
+
+/// `harv.ops`: `harvest_operation` (`mgt_read_harvops`).
+pub const HARV_OPS: &[Field] = &[f("name", T, ""), f("typ", T, ""), f("hi_ovr", R, "0."), f("eff", R, "0."), f("bm_min", R, "0")];
+
+/// `fertilizer.frt`: `fertilizer_db` (`fert_parm_read`). The name is 16 characters in SWAT+.
+pub const FERTILIZER: &[Field] =
+    &[f("fertnm", T, " "), f("fminn", R, "0."), f("fminp", R, "0."), f("forgn", R, "0."), f("forgp", R, "0."), f("fnh3n", R, "0.")];
+
+/// `irr.ops`: `irrigation_operation` (`mgt_read_irrops`).
+pub const IRR_OPS: &[Field] = &[
+    f("name", T, ""),
+    f("amt_mm", R, "25.4"),
+    f("eff", R, "0."),
+    f("surq", R, "0."),
+    f("dep_mm", R, "0."),
+    f("salt", R, "0."),
+    f("no3", R, "0."),
+    f("po4", R, "0."),
+];
+
+/// `chem_app.ops`: `chemical_application_operation` (`mgt_read_chemapp`).
+pub const CHEM_APP: &[Field] = &[
+    f("name", T, ""),
+    f("form", T, " "),
+    f("op_typ", T, " "),
+    f("app_eff", R, "0."),
+    f("foliar_eff", R, "0."),
+    f("inject_dep", R, "0."),
+    f("surf_frac", R, "0."),
+    f("drift_pot", R, "0."),
+    f("aerial_unif", R, "0."),
+];
