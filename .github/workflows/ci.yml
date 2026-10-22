@@ -26,7 +26,11 @@ jobs:
       - name: Format
         run: cargo fmt --all --check
       - name: Lint
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        # Each diagnostic is also emitted as an annotation, readable without the job log.
+        run: |
+          set -o pipefail
+          cargo clippy --workspace --all-targets --message-format=short -- -D warnings 2>&1 \
+            | tee clippy.txt | sed -n 's/^\(.*:[0-9]*:[0-9]*: \(error\|warning\).*\)$/::error::\1/p'
       - name: Test
         run: cargo test --workspace
       - name: Inspect the reference scenarios
