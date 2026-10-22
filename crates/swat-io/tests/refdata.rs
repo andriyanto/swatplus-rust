@@ -57,8 +57,9 @@ fn osu_1hru() {
 fn ames_sub1() {
     let (p, report) = load_project(&scenario("Ames_sub1")).unwrap();
     // file.cio names an aquifer file "nbull" (a typo for null). It isn't there, and as there are
-    // no aquifers SWAT+ never opens it; neither does the loader.
-    assert!(report.missing.is_empty(), "missing: {:?}", report.missing);
+    // no aquifers SWAT+ never opens it; neither does the loader. nutrients.sol is named but not
+    // there: SWAT+ then uses its default soil nutrients.
+    assert_eq!(report.missing, ["nutrients.sol"]);
     assert_eq!(p.cio.file("aquifer", "init"), Some("nbull"));
     // The init row lists 12 names for 11 slots; the extra one is ignored.
     assert_eq!(p.cio.file("init", "soil_plant_ini"), Some("soil_plant.ini"));
@@ -110,6 +111,20 @@ fn ames_hru_inputs() {
     let c = p.carbon.as_ref().unwrap();
     assert_eq!((c.int(0, "tmpf"), c.real(0, "tn"), c.real(0, "top"), c.real(0, "tx")), (Some(2), Some(-0.5), Some(30.0), Some(50.0)));
     assert_eq!(c.int(0, "mathers_int"), Some(1));
+
+    // Plants and plant communities.
+    let plt = p.plants.as_ref().unwrap();
+    let r = plt.find("past").unwrap();
+    assert_eq!((plt.text(r, "typ"), plt.text(r, "trig")), (Some("perennial"), Some("temp_gro")));
+    assert_eq!((plt.int(r, "days_mat"), plt.real(r, "bio_e"), plt.int(r, "mat_yrs")), (Some(0), Some(35.0), Some(2)));
+    assert_eq!(plt.real(r, "lig_frac"), Some(0.235));
+    let com = p.plant_communities.iter().find(|c| c.name == "past_comm").unwrap();
+    assert_eq!(com.plants.len(), 1);
+    let pl = &com.plants[0];
+    assert_eq!((pl.cpnm.as_str(), pl.igro.as_str(), pl.bioms, pl.fr_yrmat, pl.rsdin), ("past", "y", 20000.0, 1.0, 10000.0));
+    assert_eq!(p.plant_communities.iter().find(|c| c.name == "cosy_comm").map(|c| c.plants.len()), Some(2));
+    assert!(p.soil_test.is_none());
+    assert!(!p.co2_yr_dat);
 
     let topo = p.topography.as_ref().unwrap();
     let r = topo.find("topohru0001").unwrap();

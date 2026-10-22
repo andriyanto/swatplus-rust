@@ -65,7 +65,7 @@ pub fn load_project(src: &dyn FileSource) -> Result<(Project, LoadReport)> {
         project.wgn = climate::read_wgn(&name, &text)?;
     }
     // HRUs and the databases they point to (`hru_read` and the readers before it).
-    let tables: [(&str, &str, &'static [swat_model::table::Field]); 9] = [
+    let tables: [(&str, &str, &'static [swat_model::table::Field]); 11] = [
         ("hydrology", "topogr_hyd", schema::TOPOGRAPHY),
         ("hydrology", "hydrol_hyd", schema::HYDROLOGY),
         ("hydrology", "field_fld", schema::FIELD),
@@ -75,6 +75,8 @@ pub fn load_project(src: &dyn FileSource) -> Result<(Project, LoadReport)> {
         ("lum", "cons_prac_lum", schema::CONS_PRACTICE),
         ("hru_parm_db", "snow", schema::SNOW),
         ("hru_parm_db", "till_til", schema::TILLAGE),
+        ("hru_parm_db", "plants_plt", schema::PLANTS),
+        ("soils", "nut_sol", schema::SOILTEST),
     ];
     let mut read = Vec::new();
     for (section, slot, fields) in tables {
@@ -93,6 +95,12 @@ pub fn load_project(src: &dyn FileSource) -> Result<(Project, LoadReport)> {
     project.cons_practice = it.next().flatten();
     project.snow = it.next().flatten();
     project.tillage = it.next().flatten();
+    project.plants = it.next().flatten();
+    project.soil_test = it.next().flatten();
+    if let Some((_, text)) = fetch("init", "plant")? {
+        project.plant_communities = hru::read_plant_communities(&text)?;
+    }
+    project.co2_yr_dat = src.read("co2_yr.dat").ok().flatten().is_some();
     if project.codes.cswat == 2
         && let Some((name, text)) = fetch("basin", "carbon_bsn")?
     {

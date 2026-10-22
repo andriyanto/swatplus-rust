@@ -6,8 +6,8 @@
 //! swatplus-rust compare <SWAT+ table> <our table> [--abs 0.001] [--rel 1e-4]
 //! ```
 //!
-//! `run` covers the daily weather and, for HRUs without plants or management, the water
-//! balance, and writes `hru_wb_day.txt` and `hru_pw_day.txt` with the columns it computes.
+//! `run` covers the daily weather and, for HRUs without management, the water balance, plants,
+//! nutrients and losses, and writes the `hru_*_day.txt` tables with the columns it computes.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::unreachable)]
 
 mod compare;
@@ -115,14 +115,19 @@ fn run(dir: &str, out: &str) -> ExitCode {
         eprintln!("error: {}: {e}", out.display());
         return ExitCode::FAILURE;
     }
-    for (name, text) in [("hru_wb_day.txt", &tables.wb), ("hru_pw_day.txt", &tables.pw)] {
+    for (name, text) in
+        [("hru_wb_day.txt", &tables.wb), ("hru_pw_day.txt", &tables.pw), ("hru_nb_day.txt", &tables.nb), ("hru_ls_day.txt", &tables.ls)]
+    {
+        if text.is_empty() {
+            continue;
+        }
         let path = out.join(name);
         if let Err(e) = std::fs::write(&path, text) {
             eprintln!("error: {}: {e}", path.display());
             return ExitCode::FAILURE;
         }
     }
-    println!("wrote hru_wb_day.txt and hru_pw_day.txt to {}", out.display());
+    println!("wrote the daily HRU tables to {}", out.display());
     ExitCode::SUCCESS
 }
 

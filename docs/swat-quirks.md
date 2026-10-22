@@ -116,3 +116,53 @@ handles it.
   printed year (`basin_sw_init`).
 - **Two values for one name.** `es_max` is changed before `ep_max` is computed from it when PET
   limits both (`et_act`).
+
+## Plants (stage 2b)
+
+- **A plant name not in `plants.plt` takes the first plant** (`readpcom` leaves the pointer at its
+  default, 1). A land use whose plant community isn't in `plant.ini` has no plants at all.
+- **Harvest index above 0.7 becomes 0.02** (`plantparm_init`); Ames' pasture has 0.9.
+- **Roots start at the depth of `soils.sol`'s `zmx`.** `plant_init` caps the first rooting depth
+  with the soil profile's maximum from the file; the HRU's own (the bottom of its last layer)
+  is set later by `hydro_init`.
+- **Dormancy is first decided for day 0.** `hydro_init` runs before the clock is set, so the day
+  length it tests is that of day 0.
+- **The demand of a plant that wakes up is stale.** `pl_nut_demand` should zero each plant's N
+  and P demand (`uno3d`, `uapd`) but zeroes the element after the last plant (the loop counter
+  left over). These arrays belong to the module, not to the HRU: a plant still dormant when its
+  demand is computed, and woken by `pl_dormant` the same day, grows with the demand last
+  computed for any HRU, and its stress is measured against that HRU's optimum (`un2`, `up2`).
+  (`swat-engine/src/hru/plant.rs::Saved`)
+- **Temperature stress is always a sine.** `pl_tstr` computes the classic SWAT stress, then
+  replaces it whenever `rto > 0 .or. rto < 2`, which is always true:
+  `strst = sin(1.5707 * (tave - tbase) / (topt - tbase))`, kept within 0–1.
+- **Water uptake skips `epco` in the second layer** (`pl_waterup` tests `k == 2`, not 1).
+- **A perennial growing on temperature drops leaf area but no leaves.** Its leaf turnover
+  (`leaf_tov`) is only set for plants growing on moisture, so `pl_leaf_senes` moves no mass to
+  the residue. Leaves dropped at dormancy carry no carbon (`leaf_drop%c` is never set).
+- **The heat index uses the weather of object j** (`ob(j)%wst` with j the HRU number); with
+  HRUs first in the object list, that is the HRU's own station.
+- **Base heat units reset at the end of the year in the northern hemisphere and on day 181 in
+  the southern** (`time_control`) — Indonesian projects reset in July.
+
+## Nutrients and erosion (original carbon model, `cswat` 0)
+
+- **The top layer mineralizes at the second layer's temperature and water** (`nut_nminrl`
+  takes `kk = 2` for `k = 1`).
+- **`rsd_nitorg_n` and `rsd_laborg_p` print 0.** `rsd_decomp` sums them, then `nut_nminrl`,
+  called right after, zeroes them.
+- **Soil mixing at the end of each year.** With `cswat` 0, `time_control` calls
+  `mgt_newtillmix_cswat0` with the hydrology's `biomix` (0.2 in Ames) on the last day: the
+  layers above 50 mm exchange that share of their water, nitrogen, phosphorus and humus, and
+  part of the surface residue goes into them. (`hru/nutrient.rs::year_end_mixing`)
+- **The C factor method is always 1.** `ero_cfactor` sets `bsn_cc%cfac = 1` before testing it,
+  so the C factor comes from residue and biomass, whatever `codes.bsn` says.
+- **The snow test on sediment is inverted** (`ero_ysed`): with snow only yields under 1e-6 are
+  zeroed; without snow the yield is divided by `exp(0)`.
+- **The sediment store is emptied twice.** `stor_surfstor` takes the released sediment from its
+  lag store right after computing it and again with the other constituents, so the store goes
+  negative after a day with sediment and the next day's release is smaller.
+- **Mineral P on sediment is swapped** (`nut_psed`): the "active" share is computed from the
+  stable pool's size and the "stable" share from the active pool's.
+- **Missing `nutrients.sol`** (Ames names it but doesn't have it) means SWAT+'s defaults:
+  7 ppm nitrate and 5 ppm labile P at the surface, decreasing with depth.

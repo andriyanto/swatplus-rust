@@ -4,7 +4,8 @@ use swat_model::{ObjectKind, Project};
 
 use crate::climate::{Source, Weather};
 use crate::clock::Clock;
-use crate::hru::{Hru, HruBasin, HruWb, init_hrus};
+use crate::hru::plant::Saved;
+use crate::hru::{DayCtx, Hru, HruBasin, HruDay, init_hrus};
 
 /// The weather an HRU sees on a day (`w` in `hru_control`): its station's, with the lapse-rate
 /// corrections for elevation when `codes.bsn` turns them on.
@@ -34,7 +35,7 @@ pub struct Day {
 pub trait OutputSink {
     /// One HRU's day: its 1-based number, the connection-file object, its weather and, when the
     /// project's HRUs are within what the port simulates, its water balance.
-    fn hru_day(&mut self, day: Day, hru: usize, gis_id: i32, name: &str, w: &HruWeather, wb: Option<&HruWb>);
+    fn hru_day(&mut self, day: Day, hru: usize, gis_id: i32, name: &str, w: &HruWeather, d: Option<&HruDay>);
 }
 
 /// SWAT+'s daily print switches (`pco%day_print`, `day_print_over`, `int_day_cur`) and the print
@@ -123,7 +124,7 @@ pub fn run(project: &Project, out: &mut dyn OutputSink) -> Result<RunReport, Str
     // The HRUs' land phase, when everything they need is ported.
     let wgn_of: Vec<usize> =
         hrus.iter().map(|(ist, ..)| weather.stations.get(ist - 1).map(|s| s.wgn.saturating_sub(1)).unwrap_or(0)).collect();
-    let mut land: Option<Vec<Hru>> = match init_hrus(project, &wgn_of, &weather.wgn, clock.step) {
+    let mut land: Option<Vec<Hru>> = match init_hrus(project, &wgn_of, &weather.wgn, clock.step, &clock.ndays) {
         Ok(h) if h.len() == hrus.len() => Some(h),
         Ok(h) => {
             report.hru_skipped = Some(format!("{} HRUs in hru-data.hru, {} in hru.con", h.len(), hrus.len()));
@@ -136,6 +137,7 @@ pub fn run(project: &Project, out: &mut dyn OutputSink) -> Result<RunReport, Str
     };
     let basin = HruBasin::new(project);
     let mut balance_started = false;
+    let mut saved = Saved::default();
 
     clock.before_loop();
     weather.precip_control(0, &clock)?;
@@ -179,20 +181,38 @@ pub fn run(project: &Project, out: &mut dyn OutputSink) -> Result<RunReport, Str
                     w.tmin += tlaps;
                     w.tave += tlaps;
                 }
-                let mut wb = None;
+                let mut hd = None;
                 if let Some(h) = land.as_mut().and_then(|l| l.get_mut(j)) {
                     let g = weather.wgn.get(h.wgn);
-                    let (tmp_an, phutot) = g.map(|g| (g.tmp_an, g.phutot)).unwrap_or((0.0, 0.0));
-                    let mut d = h.day(&w, clock.day, tmp_an, phutot, &basin);
+                    let ctx = DayCtx {
+                        day: clock.day,
+                        tmp_an: g.map(|g| g.tmp_an).unwrap_or(0.0),
+                        phutot: g.map(|g| g.phutot).unwrap_or(0.0),
+                        daylmn: g.map(|g| g.daylmn).unwrap_or(0.0),
+                        dormhr: g.map(|g| g.daylth).unwrap_or(0.0),
+                        station_tave: s.tave,
+                        daylength: s.daylength,
+                        precip_half_hr: s.precip_half_hr,
+                        end_yr: clock.day == clock.day_end_yr,
+                    };
+                    let mut d = h.day(&w, &ctx, &basin, &mut saved);
                     if output {
-                        h.close_day(&mut d, printing);
+                        h.close_day(&mut d.wb, printing);
                     }
-                    wb = Some(d);
+                    hd = Some(d);
                 }
                 if printing {
-                    out.hru_day(day, j + 1, o.gis_id, &o.name, &w, wb.as_ref());
+                    out.hru_day(day, j + 1, o.gis_id, &o.name, &w, hd.as_ref());
                 }
             }
+            if clock.day == 181 {
+                for h in land.iter_mut().flatten() {
+                    h.midyear();
+                }
+            }
+        }
+        for h in land.iter_mut().flatten() {
+            h.end_year(basin.cswat);
         }
         clock.yrc += 1;
     }

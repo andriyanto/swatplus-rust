@@ -20,7 +20,8 @@ scenarios built from Ames_sub1 that remove one dependency at a time
 | Stage | Scenario | Adds | Exit |
 | --- | --- | --- | --- |
 | 2a ✅ | `Ames_bare`: bare soil, no plants, no management | soil water, snow, soil evaporation, curve-number runoff, percolation, lateral flow, soil temperature, biological mixing | `hru_wb_day` within tolerance, 12 HRUs, 1975–2020: **exact**, 28 columns × 201 624 HRU-days |
-| 2b | `Ames_past`: pasture, no management | plant growth (`pl_grow`, ~1 100 lines), canopy, transpiration | `hru_wb_day` and the plant columns of `hru_pw_day` within tolerance |
+| 2b-1 ✅ | `Ames_past0`: pasture, no management, original carbon model (`cswat` 0) | plant growth, canopy, transpiration, soil N and P, residue, erosion | **exact**: `hru_wb_day`, `hru_pw_day`, `hru_nb_day`, `hru_ls_day`, 77 columns × 201 624 HRU-days |
+| 2b-2 | `Ames_past`: the same with the carbon model on (`cswat` 2, as Ames) | `cbn_zhang2` and the Century pools | the same tables |
 | later | `Ames_sub1` itself | management, irrigation, nutrients, carbon | with phase 4 |
 | later | `Osu_1hru` | paddy and wetland storage, decision tables, Penman-Monteith PET | with phases 4 and 6 |
 
@@ -47,6 +48,25 @@ day, with no tolerance used. What it took beyond the plan:
 management, urban land, tiles, septic systems, filter strips, surface storage, other PET methods,
 Green and Ampt, cracks, gwflow, sub-daily steps, water routed into HRUs), skips the water balance
 and says why.
+
+## Stage 2b-1: result
+
+Done (`swat-engine/src/hru/plant.rs`, `hru/nutrient.rs`). The pasture grows on soil nitrogen:
+with nutrient stress off, almost every water balance column changes, so plants can't be
+validated without the soil nutrients. Stage 2b was split on the carbon model: the original one
+(`cswat` 0, SWAT+ Editor's default) first, `Ames_past0`; the Century model Ames uses
+(`cswat` 2, `cbn_zhang2`, ~650 lines) next. Ported for 2b-1: `plant_init`,
+`plantparm_init`, `pl_community`, `pl_waterup`, `pl_grow` with `pl_nut_demand`, `pl_dormant`,
+`pl_biomass_gro`, `pl_tstr`, `pl_nup`, `pl_nfix`, `pl_pup`, `pl_root_gro`, `pl_rootfr`,
+`pl_leaf_gro`, `pl_leaf_senes`, `pl_seed_gro`, `pl_partition`, `pl_mortality`; canopy
+interception and transpiration in `et_act`; `soil_nutcarb_init`, `rsd_decomp`, `nut_nminrl`,
+`nut_nitvol`, `nut_pminrl`, `nut_nlch`, `nut_solp`, `pest_enrsb`, `nut_orgn`, `nut_psed`;
+erosion (`ero_pkq`, `ero_eiusle`, `ero_cfactor`, `ero_ysed`) and the sediment lag; the
+end-of-year mixing and the yearly resets. All four daily tables are identical to SWAT+'s.
+
+Limits, each reported by `run` when a project needs it: one plant per community, plants with
+heat units over the year (`days_mat` 0) or perennials, no plant population, no `co2_yr.dat`, no
+atmospheric deposition, soil P model 0.
 
 ## Stage 2a: inputs
 

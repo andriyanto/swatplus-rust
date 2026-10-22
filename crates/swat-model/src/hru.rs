@@ -63,3 +63,35 @@ pub struct SoilPlantInit {
     pub hmetc: String,
     pub csc: String,
 }
+
+/// One plant of a community in `plant.ini` (`plant_init_db`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlantInit {
+    /// Plant name in `plants.plt`.
+    pub cpnm: String,
+    /// Growing at the start (`y`) or not (`lc_status`).
+    pub igro: String,
+    pub lai: f32,
+    pub bioms: f32,
+    /// Fraction of heat units accumulated.
+    pub phuacc: f32,
+    pub pop: f32,
+    /// Fraction of the years to maturity reached (`yrs_init`).
+    pub fr_yrmat: f32,
+    /// Initial surface residue (kg/ha).
+    pub rsdin: f32,
+}
+
+impl Default for PlantInit {
+    fn default() -> Self {
+        Self { cpnm: "frsd".into(), igro: "y".into(), lai: 0.0, bioms: 0.0, phuacc: 0.0, pop: 0.0, fr_yrmat: 1.0, rsdin: 10000.0 }
+    }
+}
+
+/// A plant community of `plant.ini` (`plant_community_db`, read by `readpcom`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlantCommunity {
+    pub name: String,
+    pub rot_yr_ini: i32,
+    pub plants: Vec<PlantInit>,
+}

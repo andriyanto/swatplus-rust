@@ -1,15 +1,24 @@
 //! HRUs: their setup (`proc_hru` and `time_conc_init`) and their daily water balance
 //! (`hru_control`, `hru_output`).
 //!
-//! So far for HRUs without plants or management (stage 2a, bare soil): snow, soil temperature,
-//! potential and actual evaporation, curve-number runoff with its lag, percolation, lateral flow
-//! and its lag, saturation excess. [`init_hrus`] says which inputs need what isn't ported yet.
+//! So far for HRUs without management: snow, soil temperature, potential and actual
+//! evaporation, curve-number runoff with its lag, percolation, lateral flow and its lag,
+//! saturation excess, erosion, a single-plant community's growth and water use (`plant`), and
+//! the soil nutrients of the original carbon model (`nutrient`). [`init_hrus`] says which inputs
+//! need what isn't ported yet.
+
+pub mod nutrient;
+pub mod plant;
+
+use std::ops::Add;
 
 use swat_model::schema;
 use swat_model::table::{Field, Table, Value, default_row};
 use swat_model::{HruData, Project, Soil};
 
 use crate::run::HruWeather;
+use nutrient::{NutBasin, NutDay, SoilTest};
+use plant::{OrgMass, Plant, PlantBasin, PlantDay, PlantDb, PlantWeather, Saved};
 
 /// One soil layer (`soil(j)%phys(ly)` and `soil(j)%ly(ly)`).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -39,6 +48,24 @@ pub struct Layer {
     pub tmp: f32,
     /// Biological mixing efficiency the layer starts with (`ly%init_bmix`).
     pub init_bmix: f32,
+    /// Organic carbon (%), wilting point water (mm) and USLE K.
+    pub cbn: f32,
+    pub wpmm: f32,
+    pub usle_k: f32,
+    /// The day's percolation out of the layer and lateral flow from it (`ly%prk`, `ly%flat`).
+    pub prk: f32,
+    pub flat: f32,
+    /// Mineral nitrogen and phosphorus (kg/ha): `mn%no3`, `mn%nh4`, `mp%wsol`, `lab`, `act`, `sta`.
+    pub no3: f32,
+    pub nh4: f32,
+    pub wsol: f32,
+    pub lab: f32,
+    pub act: f32,
+    pub sta: f32,
+    /// Active and stable humus (`hact`, `hsta`) and the plant's residue in the layer (`pl%rsd`).
+    pub hact: OrgMass,
+    pub hsta: OrgMass,
+    pub rsd: OrgMass,
 }
 
 /// Snow parameters (`snow.sno` row).
@@ -100,6 +127,182 @@ pub struct Hru {
     /// Soil water and snow at the start of the printed period (`hwb_d%sw_init`, `sno_init`).
     pub sw_init: f32,
     pub sno_init: f32,
+    /// Latitude of the HRU object, for the yearly resets.
+    pub lat: f32,
+    pub canmx: f32,
+    pub erorgn: f32,
+    pub erorgp: f32,
+    /// Biological mixing efficiency (`hyd%biomix`), used at the end of each year with `cswat` 0.
+    pub hyd_biomix: f32,
+    pub anion_excl: f32,
+    /// Time of concentration (h) and the USLE factors K·P·LS·rock·11.8 (`lumv%usle_mult`).
+    pub tconc: f32,
+    pub usle_mult: f32,
+    /// The community's single plant, if any.
+    pub plant: Option<Plant>,
+    pub lai_sum: f32,
+    pub laimx_sum: f32,
+    pub cht_mx: f32,
+    /// Community totals as `pl_community` sums them each day, before the day's growth.
+    pub tot_com: OrgMass,
+    pub ab_gr_com: OrgMass,
+    /// Surface residue of all plants (`pl_mass%rsd_tot`).
+    pub rsd_tot: OrgMass,
+    /// Lag stores of sediment and its nutrients, surface nitrate and soluble P (`surf_bs(2..8)`):
+    /// sediment, organic N, organic P, nitrate, soluble P, active and stable mineral P.
+    pub surf_bs_sed: [f32; 7],
+    /// Lag store of lateral nitrate (`bss(2)`).
+    pub bss_no3: f32,
+}
+
+/// One day of `hru_pw_day` (plants and weather), the columns the port computes.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct HruPw {
+    pub lai: f32,
+    pub bioms: f32,
+    pub yield_: f32,
+    pub residue: f32,
+    pub sol_tmp: f32,
+    pub strsw: f32,
+    pub strsa: f32,
+    pub strstmp: f32,
+    pub strsn: f32,
+    pub strsp: f32,
+    pub strss: f32,
+    pub nplnt: f32,
+    pub percn: f32,
+    pub pplnt: f32,
+    pub phubase0: f32,
+    pub lai_max: f32,
+    pub bm_max: f32,
+    pub bm_grow: f32,
+    pub c_gro: f32,
+}
+
+impl HruPw {
+    pub fn columns(&self) -> [(&'static str, f32); 19] {
+        [
+            ("lai", self.lai),
+            ("bioms", self.bioms),
+            ("yield", self.yield_),
+            ("residue", self.residue),
+            ("sol_tmp", self.sol_tmp),
+            ("strsw", self.strsw),
+            ("strsa", self.strsa),
+            ("strstmp", self.strstmp),
+            ("strsn", self.strsn),
+            ("strsp", self.strsp),
+            ("strss", self.strss),
+            ("nplt", self.nplnt),
+            ("percn", self.percn),
+            ("pplnt", self.pplnt),
+            ("phubas0", self.phubase0),
+            ("lai_max", self.lai_max),
+            ("bm_max", self.bm_max),
+            ("bm_grow", self.bm_grow),
+            ("c_gro", self.c_gro),
+        ]
+    }
+}
+
+/// One day of `hru_nb_day` (nutrient balance), the columns the port computes.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct HruNb {
+    pub lab_min_p: f32,
+    pub act_sta_p: f32,
+    pub fixn: f32,
+    pub denit: f32,
+    pub act_nit_n: f32,
+    pub act_sta_n: f32,
+    pub org_lab_p: f32,
+    pub rsd_nitorg_n: f32,
+    pub rsd_laborg_p: f32,
+    pub nuptake: f32,
+    pub puptake: f32,
+}
+
+impl HruNb {
+    pub fn columns(&self) -> [(&'static str, f32); 11] {
+        [
+            ("lab_min_p", self.lab_min_p),
+            ("act_sta_p", self.act_sta_p),
+            ("fixn", self.fixn),
+            ("denit", self.denit),
+            ("act_nit_n", self.act_nit_n),
+            ("act_sta_n", self.act_sta_n),
+            ("org_lab_p", self.org_lab_p),
+            ("rsd_nitorg_n", self.rsd_nitorg_n),
+            ("rsd_laborg_p", self.rsd_laborg_p),
+            ("nuptake", self.nuptake),
+            ("puptake", self.puptake),
+        ]
+    }
+}
+
+/// One day of `hru_ls_day` (losses), the columns the port computes.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct HruLs {
+    pub sedyld: f32,
+    pub sedorgn: f32,
+    pub sedorgp: f32,
+    pub surqno3: f32,
+    pub latno3: f32,
+    pub surqsolp: f32,
+    pub usle: f32,
+    pub sedminp: f32,
+    pub tileno3: f32,
+    pub lchlabp: f32,
+    pub tilelabp: f32,
+    pub satexn: f32,
+    pub percn: f32,
+}
+
+impl HruLs {
+    pub fn columns(&self) -> [(&'static str, f32); 13] {
+        [
+            ("sedyld", self.sedyld),
+            ("sedorgn", self.sedorgn),
+            ("sedorgp", self.sedorgp),
+            ("surqno3", self.surqno3),
+            ("lat3no3", self.latno3),
+            ("surqsolp", self.surqsolp),
+            ("usle", self.usle),
+            ("sedminp", self.sedminp),
+            ("tileno3", self.tileno3),
+            ("lchlabp", self.lchlabp),
+            ("tilelabp", self.tilelabp),
+            ("satexn", self.satexn),
+            ("percn", self.percn),
+        ]
+    }
+}
+
+/// An HRU's day: the four daily tables. `nutrients` is false when the soil nutrients follow the
+/// carbon model (`cswat` 2), not ported yet: then `nb`, `ls` (but sediment) and nitrate
+/// percolation aren't SWAT+'s.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct HruDay {
+    pub wb: HruWb,
+    pub pw: HruPw,
+    pub nb: HruNb,
+    pub ls: HruLs,
+    pub nutrients: bool,
+}
+
+/// What an HRU's day needs besides its weather: the day of the year, its station's unadjusted
+/// mean temperature, day length and peak half-hour rain fraction, its generator's values, and
+/// whether the day ends the year.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DayCtx {
+    pub day: i32,
+    pub tmp_an: f32,
+    pub phutot: f32,
+    pub daylmn: f32,
+    pub dormhr: f32,
+    pub station_tave: f32,
+    pub daylength: f32,
+    pub precip_half_hr: f32,
+    pub end_yr: bool,
 }
 
 /// One day of `hru_wb_day`, the columns the port computes.
@@ -176,8 +379,11 @@ impl HruWb {
 pub struct HruBasin {
     pub pet: i32,
     pub cn_froz: f32,
+    pub cswat: i32,
     /// Biological mixing, done daily when carbon is on (`cswat` 2).
     pub biomix: Option<Biomix>,
+    pub plant: PlantBasin,
+    pub nut: NutBasin,
 }
 
 /// Biological mixing settings: the `biomix` row of `tillage.til` and the temperature factor of
@@ -199,7 +405,10 @@ impl HruBasin {
         Self {
             pet: project.codes.pet,
             cn_froz: project.params.get("cn_froz").unwrap_or(0.000862),
+            cswat: project.codes.cswat,
             biomix: if project.codes.cswat == 2 { Some(Biomix::new(project)) } else { None },
+            plant: PlantBasin::new(project),
+            nut: NutBasin::new(project),
         }
     }
 }
@@ -289,9 +498,21 @@ fn is_null(s: &str) -> bool {
 ///
 /// `wgn` gives each HRU's generator (0-based) and `wgns` the generators as `cli_initwgn` left
 /// them. Returns `Err` with the reason when an input needs a part of SWAT+ not ported yet.
-pub fn init_hrus(project: &Project, wgn: &[usize], wgns: &[crate::climate::WgnState], step: i32) -> Result<Vec<Hru>, String> {
+pub fn init_hrus(
+    project: &Project,
+    wgn: &[usize],
+    wgns: &[crate::climate::WgnState],
+    step: i32,
+    ndays: &[i32; 13],
+) -> Result<Vec<Hru>, String> {
     let bmix = Biomix::new(project);
     let codes = &project.codes;
+    if codes.sol_p_model != 0 {
+        return Err("soil phosphorus model 1 (nut_pminrl2)".into());
+    }
+    if project.cio.file("climate", "atmo_cli").is_some() {
+        return Err("atmospheric deposition".into());
+    }
     if step > 1 {
         return Err("sub-daily time steps".into());
     }
@@ -318,7 +539,7 @@ pub fn init_hrus(project: &Project, wgn: &[usize], wgns: &[crate::climate::WgnSt
     for (i, hd) in project.hru_data.iter().enumerate() {
         let ob = hru_objs.get(i).ok_or_else(|| format!("HRU {} has no object in hru.con", i + 1))?;
         let g = wgn.get(i).and_then(|&k| wgns.get(k)).ok_or_else(|| format!("HRU {}: no weather generator", i + 1))?;
-        let mut h = init_hru(project, hd, ob, g, ffcb)?;
+        let mut h = init_hru(project, hd, ob, g, ffcb, ndays)?;
         h.wgn = wgn.get(i).copied().unwrap_or(0);
         init_bmix(&mut h, &bmix);
         time_conc(&mut h, surlag);
@@ -333,13 +554,14 @@ fn init_hru(
     ob: &swat_model::SpatialObject,
     g: &crate::climate::WgnState,
     ffcb: f32,
+    ndays: &[i32; 13],
 ) -> Result<Hru, String> {
     let n = &hd.name;
     let (lu, lu_found) = Row::find(project.landuse.as_ref(), schema::LANDUSE, &hd.land_use_mgt);
     if !lu_found && !is_null(&hd.land_use_mgt) {
         return Err(format!("{n}: land use {} not found", hd.land_use_mgt));
     }
-    for f in ["plant_cov", "mgt_ops", "urb_lu", "tiledrain", "septic", "fstrip", "grassww", "bmpuser"] {
+    for f in ["mgt_ops", "urb_lu", "tiledrain", "septic", "fstrip", "grassww", "bmpuser"] {
         let v = lu.text(f);
         if lu_found && !is_null(v) && !v.is_empty() {
             return Err(format!("{n}: land use {} has {f} {v}", hd.land_use_mgt));
@@ -349,7 +571,7 @@ fn init_hru(
         return Err(format!("{n}: surface storage {}", hd.surf_stor));
     }
 
-    let mut h = Hru { area_ha: ob.area_ha, km: ob.area_ha / 100.0, elev: ob.elev, ..Hru::default() };
+    let mut h = Hru { area_ha: ob.area_ha, km: ob.area_ha / 100.0, elev: ob.elev, lat: ob.lat, ..Hru::default() };
 
     // topohyd_init
     let (topo, _) = Row::find(project.topography.as_ref(), schema::TOPOGRAPHY, &hd.topo);
@@ -362,6 +584,10 @@ fn init_hru(
         h.lat_len = 50.0;
     }
     h.lat_ttime = hyd.real("lat_ttime");
+    h.canmx = hyd.real("canmx");
+    h.erorgn = hyd.real("erorgn");
+    h.erorgp = hyd.real("erorgp");
+    h.hyd_biomix = hyd.real("biomix");
     h.esco = hyd.real("esco");
     h.cn3_swf = hyd.real("cn3_swf");
     let perco = hyd.real("perco");
@@ -399,6 +625,44 @@ fn init_hru(
         .ok_or_else(|| format!("{n}: soil {} not found", hd.soil))?;
     soil_layers(&mut h, soil)?;
 
+    // plant_init: the community named by the land use (none when the name isn't in plant.ini).
+    let com = if lu_found && !is_null(lu.text("plant_cov")) {
+        project.plant_communities.iter().find(|c| swat_model::table::fortran_eq(&c.name, lu.text("plant_cov")))
+    } else {
+        None
+    };
+    if let Some(com) = com
+        && !com.plants.is_empty()
+    {
+        if com.plants.len() > 1 {
+            return Err(format!("{n}: plant community {} of {} plants (one so far)", com.name, com.plants.len()));
+        }
+        if project.codes.cswat != 0 {
+            return Err(format!("{n}: plants with the carbon model (cswat {})", project.codes.cswat));
+        }
+        if project.co2_yr_dat {
+            return Err("co2_yr.dat".into());
+        }
+        let t = project.plants.as_ref().ok_or_else(|| format!("{n}: plants, but no plants.plt"))?;
+        let init = &com.plants[0];
+        // A name not in plants.plt keeps the default pointer, 1: the first plant.
+        let r = t.find(&init.cpnm).unwrap_or(0);
+        let db = PlantDb::new(t, r, project.params.get("rsdco").unwrap_or(0.05));
+        let months: [(f32, f32); 12] = std::array::from_fn(|m| (g.m[m].tmp_max_ave, g.m[m].tmp_min_ave));
+        let layers: Vec<(f32, f32)> = h.layers.iter().map(|l| (l.d, l.thick)).collect();
+        let pl = plant::plant_init(db, init, &months, ndays, soil.zmx, &layers, hyd.real("epco"))?;
+        h.laimx_sum = 0.0 + pl.db.blai;
+        h.rsd_tot = OrgMass::default().add(pl.rsd);
+        h.plant = Some(pl);
+    }
+
+    // plant_init: USLE P and LS (the slope length capped by the practice isn't used).
+    let (cp, _) = Row::find(project.cons_practice.as_ref(), schema::CONS_PRACTICE, lu.text("cons_prac"));
+    let xm = 0.6 * (1.0 - (-35.835_f32 * h.slope).exp());
+    let sin_sl = h.slope.atan().sin();
+    let usle_ls = (h.slope_len / 22.128).powf(xm) * (65.41 * sin_sl * sin_sl + 4.56 * sin_sl + 0.065);
+    let usle_p = cp.real("pfac");
+
     // plant_init: overland n from the land use's name in ovn_table.lum (0.05 when not found).
     h.ovn = 0.05;
     if let Some(t) = project.ovn_table.as_ref()
@@ -423,6 +687,8 @@ fn init_hru(
     curno(&mut h);
 
     // hydro_init
+    let rock = (-0.053_f32 * h.layers.first().map(|l| l.rock).unwrap_or(0.0)).exp();
+    h.usle_mult = rock * h.layers.first().map(|l| l.usle_k).unwrap_or(0.0) * usle_p * usle_ls * 11.8;
     let tsoil = (g.m[11].tmp_max_ave + g.m[11].tmp_max_ave) / 2.0;
     let sffc = if ffcb <= 0.0 { g.pcp_an / (g.pcp_an + (9.043_f32 - 0.002135 * g.pcp_an).exp()) } else { ffcb };
     h.sw = 0.0;
@@ -430,6 +696,20 @@ fn init_hru(
         l.tmp = tsoil;
         l.st = sffc * l.fc;
         h.sw += l.st;
+    }
+    // Dormancy on the day hydro_init runs: day 0 (time%day isn't set yet).
+    if let Some(pl) = h.plant.as_mut() {
+        let sd = (0.4_f32 * ((0.0_f32 - 82.0) / 58.09).sin()).asin();
+        let sdlat = -g.latsin * sd.tan() / g.latcos;
+        let hlat = if sdlat > 1.0 {
+            0.0
+        } else if sdlat >= -1.0 {
+            sdlat.acos()
+        } else {
+            3.1416
+        };
+        let daylength = 7.6394 * hlat;
+        pl.idorm = pl.gro && daylength - g.daylth < g.daylmn;
     }
     h.zmx = h.layers.last().map(|l| l.d).unwrap_or(0.0);
     h.lat_ttime = if h.lat_ttime <= 0.0 {
@@ -447,6 +727,24 @@ fn init_hru(
     } else {
         1.0 - (-1.0_f32 / h.lat_ttime).exp()
     };
+
+    // soil_nutcarb_init (after proc_hru, from main): the soil-plant entry's nutrients.
+    let spi = project.soil_plant_init.iter().find(|s| swat_model::table::fortran_eq(&s.name, &hd.soil_plant_init));
+    let mut test = SoilTest::default();
+    if let (Some(spi), Some(t)) = (spi, project.soil_test.as_ref())
+        && let Some(r) = t.find(&spi.nutc)
+    {
+        let x = |f: &str| t.real(r, f).unwrap_or(0.0);
+        test = SoilTest {
+            exp_co: if x("exp_co") > 0.005 { 0.001 } else { x("exp_co") },
+            lab_p: x("lab_p"),
+            nitrate: x("nitrate"),
+            fr_hum_act: x("fr_hum_act"),
+            hum_c_n: x("hum_c_n"),
+            hum_c_p: x("hum_c_p"),
+        };
+    }
+    h.nutcarb_init(&test, project.params.get("psp").unwrap_or(0.4));
     Ok(h)
 }
 
@@ -464,6 +762,8 @@ fn soil_layers(h: &mut Hru, soil: &Soil) -> Result<(), String> {
         sand: l.sand,
         rock: l.rock,
         alb: l.alb,
+        cbn: l.cbn,
+        usle_k: l.usle_k,
         ..Layer::default()
     };
     let mut layers = vec![from(first, 10.0)];
@@ -478,6 +778,13 @@ fn soil_layers(h: &mut Hru, soil: &Soil) -> Result<(), String> {
         }
     }
     h.hydgrp = soil.hydgrp.clone();
+    h.anion_excl = soil.anion_excl;
+    if h.anion_excl <= 1.0e-6 {
+        h.anion_excl = 0.5;
+    }
+    if h.anion_excl >= 1.0 {
+        h.anion_excl = 0.99;
+    }
 
     for l in layers.iter_mut() {
         if l.k <= 0.0 {
@@ -537,6 +844,7 @@ fn soil_layers(h: &mut Hru, soil: &Soil) -> Result<(), String> {
         if l.hk < 1.0 {
             l.hk = 1.0;
         }
+        l.wpmm = l.wp * l.thick;
         depth_prev = l.d;
     }
     let dmax = layers.last().map(|l| l.d).unwrap_or(0.0);
@@ -600,6 +908,7 @@ fn time_conc(h: &mut Hru, surlag: f32) {
     let ch_l = 0.5 * (h.area_ha / 2.0).sqrt();
     let t_ch = 0.31 * ch_l * ch_n.powf(0.75) / (h.km.powf(0.125) * (ch_slope + 0.001).powf(0.375));
     let tconc = t_ov + t_ch;
+    h.tconc = tconc;
     h.brt = 1.0 - (-surlag / tconc).exp();
 }
 
@@ -610,26 +919,52 @@ impl Hru {
         self.sno_init = self.sno_mm;
     }
 
-    /// One day of `hru_control` for a bare HRU. `day` is the day of the year, `tmp_an` the
-    /// station generator's average annual temperature and `phutot` its heat units.
-    pub fn day(&mut self, w: &HruWeather, day: i32, tmp_an: f32, phutot: f32, b: &HruBasin) -> HruWb {
+    /// One day of `hru_control`: the HRU's weather `w` (lapse rates applied), the day's context
+    /// `c`, basin settings `b`, and the values the Fortran keeps between calls (`saved`).
+    pub fn day(&mut self, w: &HruWeather, c: &DayCtx, b: &HruBasin, saved: &mut Saved) -> HruDay {
         let mut sw_volume_begin = 0.0_f32;
         for l in &self.layers {
             sw_volume_begin += l.st;
         }
         let mut precip_eff = w.precip;
 
-        if w.tave > 0.0 && phutot > 0.01 {
-            self.phubase += w.tave / phutot;
+        // varinit
+        for l in self.layers.iter_mut() {
+            l.prk = 0.0;
+            l.flat = 0.0;
         }
 
-        // albedo (no plants, no residue)
+        if w.tave > 0.0 && c.phutot > 0.01 {
+            self.phubase += w.tave / c.phutot;
+        }
+        if let Some(pl) = self.plant.as_mut() {
+            pl.strsw = 1.0;
+            pl.strst = 1.0;
+            pl.strsn = 1.0;
+            pl.strsp = 1.0;
+            pl.strsa = 1.0;
+            pl.strss = 1.0;
+        }
+
+        // albedo, with yesterday's leaf area and cover
         let alb1 = self.layers.first().map(|l| l.alb).unwrap_or(0.0);
-        let albday = if self.sno_mm <= 0.5 { alb1 } else { 0.8 };
+        let cover = self.ab_gr_com.m + self.rsd_tot.m;
+        let eaj = (-5.0e-5_f32 * (cover + 0.1)).exp();
+        let albday = if self.sno_mm <= 0.5 { if self.lai_sum > 0.0 { 0.23 * (1.0 - eaj) + alb1 * eaj } else { alb1 } } else { 0.8 };
 
-        self.soil_temperature(w, albday, tmp_an);
+        self.soil_temperature(w, albday, c.tmp_an);
 
-        // sq_canopyint: nothing without leaves.
+        // sq_canopyint
+        if !(self.lai_sum < 0.001 || self.laimx_sum < 0.001) {
+            let canmxl = self.canmx * self.lai_sum / self.laimx_sum;
+            if precip_eff < canmxl - self.canstor {
+                self.canstor += precip_eff;
+                precip_eff = 0.0;
+            } else {
+                precip_eff -= canmxl - self.canstor;
+                self.canstor = canmxl;
+            }
+        }
 
         // sq_snom
         let mut snofall = 0.0_f32;
@@ -642,7 +977,7 @@ impl Hru {
             precip_eff = 0.0;
         }
         if w.tmax > s.melttmp && self.sno_mm > 0.0 {
-            let smfac = (s.meltmx + s.meltmn) / 2.0 + ((day - 81) as f32 / 58.09).sin() * (s.meltmx - s.meltmn) / 2.0;
+            let smfac = (s.meltmx + s.meltmn) / 2.0 + ((c.day - 81) as f32 / 58.09).sin() * (s.meltmx - s.meltmn) / 2.0;
             snomlt = smfac * (((snotmp + w.tmax) / 2.0) - s.melttmp);
             let snocov = if self.sno_mm < s.covmx {
                 let rto_sno = self.sno_mm / s.covmx;
@@ -666,14 +1001,16 @@ impl Hru {
             snomlt = 0.0;
         }
 
-        // et_pot (only Hargreaves so far; init_hrus checks)
+        // et_pot (only Hargreaves so far; init_hrus checks), and the vapour pressure deficit
+        let ea = crate::climate::ee(w.tave);
+        let ed = ea * w.rhum;
+        let vpd = ea - ed;
         let pet_day = self.pet_co * pet_hargreaves(w);
 
         // et_act
-        let (canev, es_day) = self.evaporation(w, pet_day);
-        let ep_day = 0.0_f32;
+        let (canev, es_day, ep_max) = self.evaporation(w, pet_day);
 
-        // surface: daily curve number, then runoff when there is enough water.
+        // surface: daily curve number, runoff when there is enough water, erosion.
         let cnday = self.daily_cn(b.cn_froz);
         let mut surfq = 0.0_f32;
         if precip_eff > 0.1 {
@@ -684,17 +1021,51 @@ impl Hru {
                 surfq = pb * pb / (precip_eff + 0.8 * r2);
             }
         }
+        let mut nd = NutDay::default();
+        self.erosion(surfq.max(0.0), surfq, w.precip, c.precip_half_hr, &b.nut, &mut nd);
 
         let inflpcp = (precip_eff - surfq).max(0.0);
 
         // swr_percmain
         let (latq_gen, sepbtm) = self.percolate(inflpcp, &mut surfq);
 
+        if b.cswat == 0 {
+            self.rsd_decomp(&b.nut);
+            self.nut_nminrl(&b.nut, &mut nd);
+        }
         // mgt_biomix, when carbon is on: it mixes the soil water of the top layers.
         if let Some(bm) = &b.biomix
             && bm.eff > 1.0e-6
         {
             self.biomix(bm);
+        }
+        self.nut_nitvol();
+        self.nut_pminrl(&b.nut, &mut nd);
+
+        // pl_community and pl_grow
+        let mut pd = PlantDay { ep_max, pet_day, vpd, ..PlantDay::default() };
+        self.pl_community(&mut pd, w.solrad, &b.plant);
+        let pw = PlantWeather {
+            tave: w.tave,
+            tmin: w.tmin,
+            solrad: w.solrad,
+            station_tave: c.station_tave,
+            daylength: c.daylength,
+            daylmn: c.daylmn,
+            dormhr: c.dormhr,
+            tmp_an: c.tmp_an,
+            end_yr: c.end_yr,
+        };
+        self.pl_grow(&mut pd, &pw, &b.plant, saved);
+
+        // Stress of the plants growing (as 1 - stress), averaged.
+        let mut strs = [0.0_f32; 6];
+        if let Some(pl) = self.plant.as_ref()
+            && pl.gro
+            && !pl.idorm
+            && pl.phuacc <= 1.0
+        {
+            strs = [1.0 - pl.strsw, 1.0 - pl.strsa, 1.0 - pl.strst, 1.0 - pl.strsn, 1.0 - pl.strsp, 1.0 - pl.strss];
         }
 
         // sw_300
@@ -709,18 +1080,47 @@ impl Hru {
             self.sw_300 += l.st;
         }
 
-        let etday = ep_day + es_day + canev;
+        let etday = pd.ep_day + es_day + canev;
+
+        // Nutrients that leave with sediment, then nitrate and soluble P.
+        if surfq > 0.0 && nd.qp_cms > 1.0e-6 && precip_eff > 0.0 {
+            let (erorgn, erorgp) = (self.erorgn, self.erorgp);
+            self.sediment_nutrients(surfq, erorgn, erorgp, b.cswat == 0, &mut nd, saved);
+        }
+        self.nut_nlch(surfq, &b.nut, &mut nd);
+        self.nut_solp(surfq, &b.nut, &mut nd);
+
+        // stor_surfstor: sediment and its nutrients lag like runoff.
+        let brt = self.brt;
+        let mut lagged = [nd.sedyld, nd.sedorgn, nd.sedorgp, nd.surqno3, nd.surqsolp, nd.sedminpa, nd.sedminps];
+        for (k, v) in lagged.iter_mut().enumerate() {
+            self.surf_bs_sed[k] = (self.surf_bs_sed[k] + *v).max(1.0e-9);
+            *v = self.surf_bs_sed[k] * brt;
+            self.surf_bs_sed[k] -= *v;
+        }
+        // The sediment released is taken from its store twice (once after computing it, once
+        // with the other constituents), so the store goes negative after a sediment day.
+        self.surf_bs_sed[0] -= lagged[0];
 
         // swr_substor
         self.bss += latq_gen;
+        self.bss_no3 += nd.latno3;
         if self.bss < 1.0e-6 {
             self.bss = 0.0;
         }
+        if self.bss_no3 < 1.0e-6 {
+            self.bss_no3 = 0.0;
+        }
         let mut latq = self.bss * self.lat_ttime;
+        let mut latno3 = self.bss_no3 * self.lat_ttime;
         if latq < 1.0e-6 {
             latq = 0.0;
         }
+        if latno3 < 1.0e-6 {
+            latno3 = 0.0;
+        }
         self.bss -= latq;
+        self.bss_no3 -= latno3;
 
         // sq_surfst
         self.surf_bs = (self.surf_bs + surfq).max(1.0e-6);
@@ -733,7 +1133,7 @@ impl Hru {
             qdr = 0.0;
         }
 
-        HruWb {
+        let wb = HruWb {
             precip: w.precip,
             snofall,
             snomlt,
@@ -743,7 +1143,7 @@ impl Hru {
             perc: sepbtm,
             et: etday,
             ecanopy: canev,
-            eplant: ep_day,
+            eplant: pd.ep_day,
             esoil: es_day,
             surq_cont: surfq,
             cn: cnday,
@@ -756,6 +1156,80 @@ impl Hru {
             lagsurf: self.surf_bs,
             laglatq: self.bss,
             ..HruWb::default()
+        };
+        let pw = HruPw {
+            lai: self.lai_sum,
+            bioms: self.tot_com.m,
+            yield_: 0.0,
+            residue: self.rsd_tot.m,
+            sol_tmp: self.layers.get(1).map(|l| l.tmp).unwrap_or(0.0),
+            strsw: strs[0],
+            strsa: strs[1],
+            strstmp: strs[2],
+            strsn: strs[3],
+            strsp: strs[4],
+            strss: strs[5],
+            nplnt: self.tot_com.n,
+            percn: nd.percn,
+            pplnt: self.tot_com.p,
+            phubase0: self.phubase,
+            lai_max: 0.0,
+            bm_max: self.tot_com.m,
+            bm_grow: pd.bm_grow,
+            c_gro: pd.c_gro,
+        };
+        if self.tot_com.m < 0.0 {
+            self.tot_com.m = 0.0;
+        }
+        let nb = HruNb {
+            lab_min_p: nd.lab_min_p,
+            act_sta_p: nd.act_sta_p,
+            fixn: pd.fixn,
+            denit: nd.denit,
+            act_nit_n: nd.act_nit_n,
+            act_sta_n: nd.act_sta_n,
+            org_lab_p: nd.org_lab_p,
+            rsd_nitorg_n: 0.0,
+            rsd_laborg_p: 0.0,
+            nuptake: pd.nuptake,
+            puptake: pd.puptake,
+        };
+        let ls = HruLs {
+            sedyld: lagged[0] / self.area_ha,
+            sedorgn: lagged[1],
+            sedorgp: lagged[2],
+            surqno3: lagged[3],
+            latno3,
+            surqsolp: lagged[4],
+            usle: nd.usle,
+            sedminp: lagged[5] + lagged[6],
+            lchlabp: nd.lchlabp,
+            percn: nd.percn,
+            ..HruLs::default()
+        };
+        HruDay { wb, pw, nb, ls, nutrients: b.cswat == 0 }
+    }
+
+    /// `time_control` at the end of a year: perennials age, the original carbon model's soil is
+    /// mixed (`mgt_newtillmix_cswat0`), and in the northern hemisphere the base heat units reset.
+    pub fn end_year(&mut self, cswat: i32) {
+        if cswat == 0 && self.hyd_biomix > 1.0e-6 {
+            self.year_end_mixing(self.hyd_biomix);
+        }
+        if let Some(pl) = self.plant.as_mut()
+            && pl.db.perennial()
+        {
+            pl.curyr_mat = (pl.curyr_mat + 1).min(pl.db.mat_yrs);
+        }
+        if self.lat >= 0.0 {
+            self.phubase = 0.0;
+        }
+    }
+
+    /// `time_control` on day 181: base heat units reset in the southern hemisphere.
+    pub fn midyear(&mut self) {
+        if self.lat < 0.0 {
+            self.phubase = 0.0;
         }
     }
 
@@ -866,7 +1340,7 @@ impl Hru {
         let q = (1.0 - wc) / (1.0 + wc);
         f = (b * (q * q)).exp();
         let dd = f * dp;
-        let cover = 0.0_f32;
+        let cover = self.ab_gr_com.m + self.rsd_tot.m;
         let mut bcv = cover / (cover + (7.563_f32 - 1.297e-4 * cover).exp());
         if self.sno_mm != 0.0 {
             let xx = if self.sno_mm <= 120.0 { self.sno_mm / (self.sno_mm + (6.055_f32 - 0.3002 * self.sno_mm).exp()) } else { 1.0 };
@@ -887,14 +1361,17 @@ impl Hru {
         }
     }
 
-    /// SWAT+ `et_act` without plants or ponded water: canopy evaporation, sublimation and soil
-    /// evaporation. Returns (canopy evaporation, soil evaporation).
-    fn evaporation(&mut self, w: &HruWeather, pet_day: f32) -> (f32, f32) {
+    /// SWAT+ `et_act` without ponded water: canopy evaporation, sublimation, soil evaporation
+    /// and the nitrate it draws up from the second layer. Returns (canopy evaporation, soil
+    /// evaporation, maximum transpiration).
+    fn evaporation(&mut self, w: &HruWeather, pet_day: f32) -> (f32, f32, f32) {
         let esd = 500.0_f32;
         let etco = 0.80_f32;
+        let effnup = 0.05_f32;
         let mut pet = pet_day;
         let canev;
         let mut es_day = 0.0_f32;
+        let mut ep_max = 0.0_f32;
         pet -= self.canstor;
         if pet < 0.0 {
             self.canstor = -pet;
@@ -905,13 +1382,12 @@ impl Hru {
             self.canstor = 0.0;
         }
         if pet > 1.0e-6 {
-            let lai_sum = 0.0_f32;
-            let mut ep_max = if lai_sum <= 3.0 { lai_sum * pet / 3.0 } else { pet };
+            ep_max = if self.lai_sum <= 3.0 { self.lai_sum * pet / 3.0 } else { pet };
             if ep_max < 0.0 {
                 ep_max = 0.0;
             }
             let cej = -5.0e-5_f32;
-            let cover = 0.0_f32;
+            let cover = self.ab_gr_com.m + self.rsd_tot.m;
             let eaj = if self.sno_mm >= 0.5 { 0.5 } else { (cej * (cover + 0.1)).exp() };
             let mut es_max = pet * eaj;
             let mut eos1 = pet / (es_max + ep_max + 1.0e-10);
@@ -926,8 +1402,6 @@ impl Hru {
                     ep_max = pet * ep_max / (es_max + ep_max);
                 }
             }
-            // ep_max caps plant transpiration, which comes with plants (stage 2b).
-            let _ = ep_max;
             let mut esleft = es_max;
             if w.tave > 0.0 {
                 if self.sno_mm >= esleft {
@@ -940,13 +1414,14 @@ impl Hru {
             }
             let mut evzp = 0.0_f32;
             let eosl = esleft;
+            let mut sev = 0.0_f32;
             for ly in 0..self.layers.len() {
                 let dep = if ly == 0 { self.layers[0].d } else { self.layers[ly - 1].d };
                 if dep < esd {
                     let esco = self.esco;
                     let l = &mut self.layers[ly];
                     let evz = eosl * l.d / (l.d + (2.374_f32 - 0.00713 * l.d).exp());
-                    let mut sev = evz - evzp * (1.0 - esco);
+                    sev = evz - evzp * (1.0 - esco);
                     evzp = evz;
                     if l.st < l.fc {
                         let xx = 2.5 * (l.st - l.fc) / l.fc;
@@ -964,14 +1439,24 @@ impl Hru {
                         l.st = (l.st - sev).max(1.0e-6);
                     } else {
                         esleft = (esleft - l.st).max(0.0);
+                        sev = l.st;
                         l.st = 0.0;
                     }
+                }
+                if ly == 1 {
+                    let st2 = self.layers[1].st;
+                    let mut sev_st = if st2 > 1.0e-3 { sev / st2 } else { 0.0 };
+                    sev_st = sev_st.min(1.0);
+                    let mut no3up = effnup * sev_st * self.layers[1].no3;
+                    no3up = no3up.min(self.layers[1].no3);
+                    self.layers[1].no3 = (self.layers[1].no3 - no3up).max(0.0001);
+                    self.layers[0].no3 = (self.layers[0].no3 + no3up).max(0.0001);
                 }
             }
             es_day = (es_max - esleft).max(0.0);
         }
         self.sum_sw();
-        (canev, es_day)
+        (canev, es_day, ep_max)
     }
 
     fn sum_sw(&mut self) {
@@ -1028,8 +1513,14 @@ impl Hru {
                     sepbtm += sepday;
                 }
                 latq += latlyr;
+                let l = &mut self.layers[j1];
+                l.flat = latlyr + lyrtile;
+                l.prk += sepday;
                 if latq < 1.0e-6 {
                     latq = 0.0;
+                }
+                if l.flat < 1.0e-6 {
+                    l.flat = 0.0;
                 }
             }
             if sep_left <= 0.0 {

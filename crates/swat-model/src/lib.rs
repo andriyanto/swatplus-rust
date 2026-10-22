@@ -19,7 +19,7 @@ pub mod time;
 pub use basin::{BasinCodes, BasinParams};
 pub use cio::{CioSection, FileCio};
 pub use climate::{ClimateRecord, ClimateVar, StationList, StationSeries, WeatherStation, Wgn, WgnMonth};
-pub use hru::{HruData, Soil, SoilLayer, SoilPlantInit};
+pub use hru::{HruData, PlantCommunity, PlantInit, Soil, SoilLayer, SoilPlantInit};
 pub use objects::{ObjectKind, Outflow, SpatialObject};
 pub use print::{PrintObject, PrintSettings};
 pub use table::Table;
@@ -56,6 +56,14 @@ pub struct Project {
     pub tillage: Option<Table>,
     /// `carbon.bsn`, one row.
     pub carbon: Option<Table>,
+    /// `plants.plt`.
+    pub plants: Option<Table>,
+    /// `plant.ini`.
+    pub plant_communities: Vec<PlantCommunity>,
+    /// `nutrients.sol`.
+    pub soil_test: Option<Table>,
+    /// Whether the project has `co2_yr.dat` (yearly CO2, read by `co2_read`; not handled yet).
+    pub co2_yr_dat: bool,
 }
 
 impl Project {

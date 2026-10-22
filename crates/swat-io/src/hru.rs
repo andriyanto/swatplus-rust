@@ -1,7 +1,7 @@
 //! `hru-data.hru` (`hru_read`), `soils.sol` (`soil_db_read`) and `soil_plant.ini`
 //! (`soil_plant_init`).
 
-use swat_model::{HruData, Soil, SoilLayer, SoilPlantInit};
+use swat_model::{HruData, PlantCommunity, PlantInit, Soil, SoilLayer, SoilPlantInit};
 
 use crate::list::Records;
 use crate::{Error, Result};
@@ -158,6 +158,48 @@ pub fn read_soil_plant_init(text: &str, nam1: i32) -> Result<Vec<SoilPlantInit>>
         if eof {
             break;
         }
+    }
+    Ok(out)
+}
+
+/// Reads `plant.ini` (`readpcom`): per community a record of name, number of plants and first
+/// rotation year, then a record per plant. Communities are counted first, as SWAT+ does.
+pub fn read_plant_communities(text: &str) -> Result<Vec<PlantCommunity>> {
+    let mut rec = Records::new("plant.ini", text);
+    rec.skip()?;
+    rec.skip()?;
+    let body = rec.mark();
+    let mut imax = 0;
+    'count: while let Ok(f) = rec.read(2) {
+        let n = f.int(1).ok().flatten().unwrap_or(0).max(0);
+        for _ in 0..n {
+            if rec.skip().is_err() {
+                break 'count;
+            }
+        }
+        imax += 1;
+    }
+    rec.reset(body);
+    let mut out = Vec::with_capacity(imax);
+    for _ in 0..imax {
+        let Some((h, _)) = rec.read_partial(3) else { break };
+        let n = h.int(1)?.unwrap_or(1).clamp(0, 100);
+        let mut com = PlantCommunity { name: h.text_or(0, "frsd_frsd"), rot_yr_ini: h.int(2)?.unwrap_or(1), plants: Vec::new() };
+        for _ in 0..n {
+            let Some((p, _)) = rec.read_partial(8) else { break };
+            let d = PlantInit::default();
+            com.plants.push(PlantInit {
+                cpnm: p.text_or(0, &d.cpnm),
+                igro: p.text_or(1, &d.igro).chars().take(1).collect(),
+                lai: p.real_or(2, d.lai)?,
+                bioms: p.real_or(3, d.bioms)?,
+                phuacc: p.real_or(4, d.phuacc)?,
+                pop: p.real_or(5, d.pop)?,
+                fr_yrmat: p.real_or(6, d.fr_yrmat)?,
+                rsdin: p.real_or(7, d.rsdin)?,
+            });
+        }
+        out.push(com);
     }
     Ok(out)
 }

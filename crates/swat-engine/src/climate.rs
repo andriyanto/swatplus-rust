@@ -746,7 +746,7 @@ impl Weather {
 }
 
 /// SWAT+ `ee`: saturation vapour pressure (kPa) at `tk` °C.
-fn ee(tk: f32) -> f32 {
+pub fn ee(tk: f32) -> f32 {
     if tk + 237.3 != 0.0 { ((16.78 * tk - 116.9) / (tk + 237.3)).exp() } else { 0.0 }
 }
 

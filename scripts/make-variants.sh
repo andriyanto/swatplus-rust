@@ -6,7 +6,10 @@
 #              fallow bare soil). Isolates the soil water balance: snow, soil evaporation, runoff,
 #              percolation, lateral flow, soil temperature.
 #   Ames_past  pasture (past_lum): a perennial plant community without management. Adds plant
-#              growth, canopy interception and transpiration.
+#              growth, canopy interception and transpiration, and with them the soil nutrients
+#              that limit growth (the carbon model as Ames has it, cswat 2).
+#   Ames_past0 the same pasture with the original carbon and nutrient model (codes.bsn carbon 0,
+#              SWAT+ Editor's default).
 #
 # Both drop soil_lyr_depths.sol, so SWAT+ keeps the layers of soils.sol (plus its 10 mm top layer)
 # instead of re-layering every soil to custom depths; that path is validated later.
@@ -36,3 +39,7 @@ printf "%-34s%-18s%-48s%-15s%-18s%-18s%-18s%-18s%-18s%-18s%-18s%-18s%-18s%-18s\n
   >> "$out/Ames_bare/landuse.lum"
 
 variant Ames_past past_lum
+
+rm -rf "$out/Ames_past0"
+cp -r "$out/Ames_past" "$out/Ames_past0"
+awk '{ sub(/\r$/, "") } NR == 3 { $14 = 0 } { print }' "$out/Ames_past/codes.bsn" > "$out/Ames_past0/codes.bsn"
