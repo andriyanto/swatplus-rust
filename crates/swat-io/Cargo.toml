@@ -1,0 +1,14 @@
+[package]
+name = "swat-io"
+description = "Readers for SWAT+ TxtInOut files, following Fortran list-directed input as SWAT+ reads them"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+swat-model.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,25 @@
+swatplus-rust
+Copyright (C) 2026 Andriyanto and contributors
+
+This program is a translation into Rust of SWAT+ (Soil and Water Assessment Tool Plus), developed
+jointly by the USDA Agricultural Research Service (USDA-ARS) and Texas A&M AgriLife Research, part
+of The Texas A&M University System, with contributions from Colorado State University and others.
+
+  SWAT+ source:   https://github.com/swat-model/swatplus
+  Translated at:  commit 6f515368525e7d84089ae0f9d33f4c9115de5679 (2026-10-16)
+  SWAT+ license:  GNU Lesser General Public License, version 2.1 (LGPL-2.1)
+
+Because it is a derivative work of SWAT+, swatplus-rust is distributed under the same license,
+the GNU Lesser General Public License version 2.1 only (see LICENSE). It is not affiliated with
+or endorsed by USDA-ARS or Texas A&M AgriLife Research.
+
+Test data
+  testdata/Osu_1hru and testdata/Ames_sub1 are the input files of the reference scenarios in the
+  SWAT+ repository (refdata/), at the commit above, under the same license. Output files were
+  left out.
+
+Dependencies
+  Every dependency offers a license compatible with LGPL-2.1-only (MIT, BSD, Boost, Unlicense or
+  Unicode), and is used under that license when it is dual-licensed with Apache-2.0. Dependencies
+  licensed only under Apache-2.0 are not used, because the Free Software Foundation considers
+  Apache-2.0 incompatible with LGPL-2.1-only. For now there are no external dependencies at all.

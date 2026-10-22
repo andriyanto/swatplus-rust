@@ -1,0 +1,28 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "LGPL-2.1-only"
+rust-version = "1.90"
+repository = "https://github.com/andriyanto/swatplus-rust"
+
+[workspace.dependencies]
+swat-model = { path = "crates/swat-model" }
+swat-io = { path = "crates/swat-io" }
+
+# No external dependencies yet. Any added later must have a license compatible with
+# LGPL-2.1-only (MIT, BSD, Boost...): Apache-2.0 alone is not. See NOTICE.
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+
+[profile.release]
+opt-level = 3
+lto = "thin"

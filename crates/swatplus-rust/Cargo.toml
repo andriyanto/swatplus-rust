@@ -1,0 +1,19 @@
+[package]
+name = "swatplus-rust"
+description = "SWAT+ in Rust: the command line program RustGIS and others run"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "swatplus-rust"
+path = "src/main.rs"
+
+[dependencies]
+swat-model.workspace = true
+swat-io.workspace = true
+
+[lints]
+workspace = true
