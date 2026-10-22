@@ -89,6 +89,26 @@ pub struct PlantDb {
     pub pup1: f32,
     pub pup2: f32,
     pub cvm: f32,
+    /// Shares of residue going to metabolic, structural and lignin litter, above and below
+    /// ground (`cswat_1_part_fracs`, carbon model only).
+    pub fracs: PartFracs,
+}
+
+/// `lignin_derived_partition_fracs`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PartFracs {
+    pub meta_abg: f32,
+    pub str_abg: f32,
+    pub lig_abg: f32,
+    pub meta_blg: f32,
+    pub str_blg: f32,
+    pub lig_blg: f32,
+}
+
+impl Default for PartFracs {
+    fn default() -> Self {
+        Self { meta_abg: 0.85, str_abg: 0.15, lig_abg: 0.12, meta_blg: 0.85, str_blg: 0.15, lig_blg: 0.12 }
+    }
 }
 
 impl PlantDb {
@@ -140,6 +160,13 @@ impl PlantDb {
         let mut co2hi = x("co2hi");
         let bioehi = x("bioehi");
         let (laimx1, laimx2, frgrw1, frgrw2) = (x("laimx1"), x("laimx2"), x("frgrw1"), x("frgrw2"));
+        // plant_parm_read with the carbon model: the file's above- and below-ground lignin
+        // fractions (read into `str_frac` and `lig_frac`).
+        let lig_blg = x("lig_frac");
+        let lig_abg = x("str_frac");
+        let str_blg = lig_blg / 0.80;
+        let str_abg = lig_abg / 0.80;
+        d.fracs = PartFracs { meta_abg: 1.0 - str_abg, str_abg, lig_abg, meta_blg: 1.0 - str_blg, str_blg, lig_blg };
 
         // plantparm_init
         if d.bm_dieoff <= 1.0e-6 {
@@ -392,6 +419,8 @@ pub struct Saved {
     pub fr_orgp: f32,
     pub fr_actmin: f32,
     pub fr_stamin: f32,
+    /// `nut_orgnc2`'s microbial carbon lost with sediment, taken again on later days.
+    pub c_microb_sed: f32,
 }
 
 /// `plant_init` for the community's single plant. `wgn_months` gives each month's mean maximum

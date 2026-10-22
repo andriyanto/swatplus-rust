@@ -166,3 +166,27 @@ handles it.
   stable pool's size and the "stable" share from the active pool's.
 - **Missing `nutrients.sol`** (Ames names it but doesn't have it) means SWAT+'s defaults:
   7 ppm nitrate and 5 ppm labile P at the surface, decreasing with depth.
+
+## Carbon model (`cswat` 2)
+
+- **Mineralized N never reaches the mineral pools.** `cbn_zhang2` moves N between litter,
+  microbes and humus (`nut_np_flow`) and subtracts the mineralized part from the source pools,
+  but adds it to neither nitrate nor ammonium. Mineral N changes only by denitrification and by
+  a transfer of nitrate to ammonium when the day's N balance has a surplus.
+- **`nut_np_flow` drops the N released with CO2:** it computes it (`EfromCO2`) and adds a
+  different variable, always 0 (`efco2`).
+- **The top layer's microbial N:C ratio ignores residue N above 2 %**: the test for it is
+  followed by an `if/else` whose `else` overrides it with 0.05.
+- **The top layer's decomposition uses the second layer's depths for its oxygen factor**, and
+  layers below the first set the shared allocation `org_allo(2)%abco2` from their own sand.
+- **Organic N and carbon only leave on days with sediment.** `nut_orgnc2`, which also moves
+  microbial carbon down the profile with percolation, runs only when there is runoff, peak flow
+  and precipitation. Its microbial carbon lost with sediment (`c_microb_sed`) is kept from the
+  last time it was computed, for any HRU, and taken again every time it runs. The residue N it
+  removes is that of plant 1, and the basin residue total isn't updated.
+- **Biological mixing mixes texture and pools every day** (`mgt_biomix`): clay, silt and sand,
+  mineral N and P, humus, microbes and litter of the thawed top layers, but not the structural
+  litter's non-lignin part (`nonlig`), which keeps its own value. The surface residue mixed in
+  is counted once per mixed layer. The mixing's effect on decomposition (`mgt_tillfactor`,
+  `idc_till` 3) uses an efficiency that, once reduced for the layer the mixing depth ends in,
+  stays 0 for the layers below.

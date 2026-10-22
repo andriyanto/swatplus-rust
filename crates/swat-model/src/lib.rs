@@ -56,6 +56,8 @@ pub struct Project {
     pub tillage: Option<Table>,
     /// `carbon.bsn`, one row.
     pub carbon: Option<Table>,
+    /// `carbon_lyr.bsn` (its name made from `carbon.bsn`'s), one row per layer kind.
+    pub carbon_lyr: Option<Table>,
     /// `plants.plt`.
     pub plants: Option<Table>,
     /// `plant.ini`.

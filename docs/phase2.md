@@ -21,7 +21,7 @@ scenarios built from Ames_sub1 that remove one dependency at a time
 | --- | --- | --- | --- |
 | 2a ✅ | `Ames_bare`: bare soil, no plants, no management | soil water, snow, soil evaporation, curve-number runoff, percolation, lateral flow, soil temperature, biological mixing | `hru_wb_day` within tolerance, 12 HRUs, 1975–2020: **exact**, 28 columns × 201 624 HRU-days |
 | 2b-1 ✅ | `Ames_past0`: pasture, no management, original carbon model (`cswat` 0) | plant growth, canopy, transpiration, soil N and P, residue, erosion | **exact**: `hru_wb_day`, `hru_pw_day`, `hru_nb_day`, `hru_ls_day`, 77 columns × 201 624 HRU-days |
-| 2b-2 | `Ames_past`: the same with the carbon model on (`cswat` 2, as Ames) | `cbn_zhang2` and the Century pools | the same tables |
+| 2b-2 ✅ | `Ames_past`: the same with the carbon model on (`cswat` 2, as Ames) | `cbn_zhang2` and the Century pools, daily biological mixing of nutrients and texture | **exact**: the same four tables, and every layer's soil carbon (`hru_cbn_lyr`) within print precision |
 | later | `Ames_sub1` itself | management, irrigation, nutrients, carbon | with phase 4 |
 | later | `Osu_1hru` | paddy and wetland storage, decision tables, Penman-Monteith PET | with phases 4 and 6 |
 
@@ -48,6 +48,16 @@ day, with no tolerance used. What it took beyond the plan:
 management, urban land, tiles, septic systems, filter strips, surface storage, other PET methods,
 Green and Ampt, cracks, gwflow, sub-daily steps, water routed into HRUs), skips the water balance
 and says why.
+
+## Stage 2b-2: result
+
+Done (`swat-engine/src/hru/carbon.rs`): `soil_nutcarb_init` for the carbon model,
+`cbn_surfrsd_decomp`, `cbn_rsd_transfer`, `cbn_zhang2` with `nut_np_flow`, `nut_orgnc2`, and
+the nutrient, pool and texture part of `mgt_biomix` with `mgt_tillfactor`; `carbon_lyr.bsn` is
+read. `Ames_past` matches SWAT+ in all four daily HRU tables, and so does `Ames_bare` in its
+nutrient and loss tables, which the port now writes for it too. The carbon pools themselves,
+checked once against SWAT+'s `hru_cbn_lyr.txt` (total soil carbon per layer, printed with nine
+digits), agree to within the last printed digit on every day of every HRU.
 
 ## Stage 2b-1: result
 

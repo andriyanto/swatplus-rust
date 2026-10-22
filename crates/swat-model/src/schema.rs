@@ -198,3 +198,20 @@ pub const SOILTEST: &[Field] = &[
     f("mehlich_p", R, "1.2"),
     f("bray_strong_p", R, ".85"),
 ];
+
+/// `carbon_lyr.bsn`: per-layer rates of the carbon model (`carbon_bsn_read`): layer 1 for the
+/// top soil layer, 2 for the others.
+pub const CARBON_LYR: &[Field] = &[
+    f("layer", I, "0"),
+    f("hp_rate", R, "0."),
+    f("hs_rate", R, "0."),
+    f("microb_rate", R, "0."),
+    f("meta_rate", R, "0."),
+    f("str_rate", R, "0."),
+    f("microb_top_rate", R, "0."),
+    f("hs_hp", R, "0."),
+    f("a1co2", R, "0."),
+    f("asco2", R, "0."),
+    f("apco2", R, "0."),
+    f("abco2", R, "0."),
+];

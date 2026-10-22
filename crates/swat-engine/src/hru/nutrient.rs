@@ -132,7 +132,7 @@ fn residue_ca(r: &OrgMass) -> f32 {
 
 impl Hru {
     /// `soil_nutcarb_init` for `cswat` 0: mineral N and P by depth, and humus pools.
-    pub(super) fn nutcarb_init(&mut self, t: &SoilTest, psp: f32) {
+    pub(super) fn nutcarb_init(&mut self, t: &SoilTest, psp: f32, cswat: i32) {
         for l in self.layers.iter_mut() {
             l.cbn = l.cbn.max(0.001);
         }
@@ -146,6 +146,9 @@ impl Hru {
             l.lab *= wt1;
             l.act = l.lab * (1.0 - psp) / psp;
             l.sta = 4.0 * l.act;
+        }
+        if cswat != 0 {
+            return;
         }
         let fr = if t.fr_hum_act < 1.0e-9 { 0.02 } else { t.fr_hum_act };
         for l in self.layers.iter_mut() {

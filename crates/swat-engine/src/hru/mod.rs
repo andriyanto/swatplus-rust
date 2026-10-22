@@ -4,9 +4,11 @@
 //! So far for HRUs without management: snow, soil temperature, potential and actual
 //! evaporation, curve-number runoff with its lag, percolation, lateral flow and its lag,
 //! saturation excess, erosion, a single-plant community's growth and water use (`plant`), and
-//! the soil nutrients of the original carbon model (`nutrient`). [`init_hrus`] says which inputs
+//! the soil nutrients of the original carbon model (`nutrient`) or of the carbon model
+//! (`carbon`, `cswat` 2). [`init_hrus`] says which inputs
 //! need what isn't ported yet.
 
+pub mod carbon;
 pub mod nutrient;
 pub mod plant;
 
@@ -66,6 +68,11 @@ pub struct Layer {
     pub hact: OrgMass,
     pub hsta: OrgMass,
     pub rsd: OrgMass,
+    /// The carbon model's pools, and the mixing effect on decomposition (`ly%tillagef`,
+    /// `tillagef_biomix`).
+    pub cp: carbon::Pools,
+    pub tillagef: f32,
+    pub tillagef_biomix: f32,
 }
 
 /// Snow parameters (`snow.sno` row).
@@ -277,9 +284,8 @@ impl HruLs {
     }
 }
 
-/// An HRU's day: the four daily tables. `nutrients` is false when the soil nutrients follow the
-/// carbon model (`cswat` 2), not ported yet: then `nb`, `ls` (but sediment) and nitrate
-/// percolation aren't SWAT+'s.
+/// An HRU's day: the four daily tables. `nutrients` is false when the soil nutrients follow a
+/// carbon model not ported (`cswat` 1): then `nb`, `ls` and nitrate percolation aren't SWAT+'s.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct HruDay {
     pub wb: HruWb,
@@ -384,6 +390,7 @@ pub struct HruBasin {
     pub biomix: Option<Biomix>,
     pub plant: PlantBasin,
     pub nut: NutBasin,
+    pub carbon: Option<carbon::CarbonBasin>,
 }
 
 /// Biological mixing settings: the `biomix` row of `tillage.til` and the temperature factor of
@@ -409,6 +416,7 @@ impl HruBasin {
             biomix: if project.codes.cswat == 2 { Some(Biomix::new(project)) } else { None },
             plant: PlantBasin::new(project),
             nut: NutBasin::new(project),
+            carbon: if project.codes.cswat == 2 { Some(carbon::CarbonBasin::new(project)) } else { None },
         }
     }
 }
@@ -507,6 +515,9 @@ pub fn init_hrus(
 ) -> Result<Vec<Hru>, String> {
     let bmix = Biomix::new(project);
     let codes = &project.codes;
+    if codes.cswat != 0 && codes.cswat != 2 {
+        return Err(format!("carbon model {}", codes.cswat));
+    }
     if codes.sol_p_model != 0 {
         return Err("soil phosphorus model 1 (nut_pminrl2)".into());
     }
@@ -637,8 +648,8 @@ fn init_hru(
         if com.plants.len() > 1 {
             return Err(format!("{n}: plant community {} of {} plants (one so far)", com.name, com.plants.len()));
         }
-        if project.codes.cswat != 0 {
-            return Err(format!("{n}: plants with the carbon model (cswat {})", project.codes.cswat));
+        if project.codes.cswat == 1 {
+            return Err(format!("{n}: plants with carbon model 1"));
         }
         if project.co2_yr_dat {
             return Err("co2_yr.dat".into());
@@ -744,7 +755,10 @@ fn init_hru(
             hum_c_p: x("hum_c_p"),
         };
     }
-    h.nutcarb_init(&test, project.params.get("psp").unwrap_or(0.4));
+    h.nutcarb_init(&test, project.params.get("psp").unwrap_or(0.4), project.codes.cswat);
+    if project.codes.cswat == 2 {
+        h.carbon_init(&carbon::CarbonBasin::new(project));
+    }
     Ok(h)
 }
 
@@ -1033,11 +1047,15 @@ impl Hru {
             self.rsd_decomp(&b.nut);
             self.nut_nminrl(&b.nut, &mut nd);
         }
-        // mgt_biomix, when carbon is on: it mixes the soil water of the top layers.
-        if let Some(bm) = &b.biomix
-            && bm.eff > 1.0e-6
-        {
-            self.biomix(bm);
+        // With the carbon model: biological mixing (water, nutrients and pools of the top layers),
+        // residue decomposition and the pool transformations.
+        if let (Some(bm), Some(cb)) = (&b.biomix, &b.carbon) {
+            if bm.eff > 1.0e-6 {
+                self.biomix(bm, cb);
+            }
+            self.cbn_surfrsd_decomp(cb);
+            self.cbn_rsd_transfer();
+            nd.denit = self.cbn_zhang2(cb, bm);
         }
         self.nut_nitvol();
         self.nut_pminrl(&b.nut, &mut nd);
@@ -1086,6 +1104,9 @@ impl Hru {
         if surfq > 0.0 && nd.qp_cms > 1.0e-6 && precip_eff > 0.0 {
             let (erorgn, erorgp) = (self.erorgn, self.erorgp);
             self.sediment_nutrients(surfq, erorgn, erorgp, b.cswat == 0, &mut nd, saved);
+            if let Some(cb) = &b.carbon {
+                nd.sedorgn = self.nut_orgnc2(surfq, nd.sedyld, nd.enratio, cb, saved);
+            }
         }
         self.nut_nlch(surfq, &b.nut, &mut nd);
         self.nut_solp(surfq, &b.nut, &mut nd);
@@ -1207,7 +1228,7 @@ impl Hru {
             percn: nd.percn,
             ..HruLs::default()
         };
-        HruDay { wb, pw, nb, ls, nutrients: b.cswat == 0 }
+        HruDay { wb, pw, nb, ls, nutrients: b.cswat == 0 || b.cswat == 2 }
     }
 
     /// `time_control` at the end of a year: perennials age, the original carbon model's soil is
@@ -1250,7 +1271,7 @@ impl Hru {
 
     /// SWAT+ `mgt_biomix` without tillage, its soil water part: the thawed layers above the mixing
     /// depth exchange a share of their water. The total isn't summed again afterwards.
-    fn biomix(&mut self, b: &Biomix) {
+    fn biomix(&mut self, b: &Biomix, cb: &carbon::CarbonBasin) {
         let nly = self.layers.len();
         let Some(last) = self.layers.last() else { return };
         let mut dtil = last.d.min(b.depth);
@@ -1300,6 +1321,7 @@ impl Hru {
             sol_mass[l] = (ly.thick / 1000.0) * 10000.0 * bd1 * 1000.0 * (1.0 - ly.rock / 100.0);
         }
         let mut mix_sw = 0.0_f32;
+        let mut frac_mixed_v = Vec::with_capacity(lyr_exit);
         for l in 0..lyr_exit {
             let ly = &self.layers[l];
             let prev = d_prev(&self.layers, l);
@@ -1319,12 +1341,14 @@ impl Hru {
             }
             let frac_mixed = sol_msm / sol_mass[l];
             mix_sw += frac_mixed * ly.st;
+            frac_mixed_v.push(frac_mixed);
         }
+        let frac_non_mixed: Vec<f32> = (0..nly).map(|l| sol_msn[l] / sol_mass[l]).collect();
         for l in 0..lyr_exit {
-            let frac_non_mixed = sol_msn[l] / sol_mass[l];
             let ly = &mut self.layers[l];
-            ly.st = frac_non_mixed * ly.st + frac_dep[l] * mix_sw;
+            ly.st = frac_non_mixed[l] * ly.st + frac_dep[l] * mix_sw;
         }
+        self.biomix_pools(&frac_mixed_v, &frac_non_mixed, &frac_dep, &sol_mass, avg_emix, lyr_exit, dtil, cb);
     }
 
     /// SWAT+ `stmp_solt`: daily soil temperature by layer.

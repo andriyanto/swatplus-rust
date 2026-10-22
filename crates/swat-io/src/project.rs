@@ -27,6 +27,7 @@ pub fn load_project(src: &dyn FileSource) -> Result<(Project, LoadReport)> {
     let mut project = Project { cio, ..Project::default() };
 
     // Reads the file in `section`/`slot`, noting it when file.cio names it but it isn't there.
+    let mut late_missing: Vec<String> = Vec::new();
     let mut fetch = |section: &str, slot: &str| -> Result<Option<(String, String)>> {
         let Some(name) = project.cio.file(section, slot).map(str::to_string) else {
             return Ok(None);
@@ -105,6 +106,15 @@ pub fn load_project(src: &dyn FileSource) -> Result<(Project, LoadReport)> {
         && let Some((name, text)) = fetch("basin", "carbon_bsn")?
     {
         project.carbon = Some(table::read_record(&name, &text, schema::CARBON_BSN)?);
+        // carbon_bsn_read: the per-layer file is named after carbon.bsn ("x.bsn" -> "x_lyr.bsn").
+        let lyr = match name.rfind('.') {
+            Some(i) if i > 0 => format!("{}_lyr{}", &name[..i], &name[i..]),
+            _ => format!("{name}_lyr.bsn"),
+        };
+        match src.read(&lyr)? {
+            Some(text) => project.carbon_lyr = Some(table::read_table(&lyr, &text, schema::CARBON_LYR)?),
+            None => late_missing.push(lyr),
+        }
     }
     if let Some((_, text)) = fetch("soils", "soils_sol")? {
         project.soils = hru::read_soils(&text)?;
@@ -156,5 +166,6 @@ pub fn load_project(src: &dyn FileSource) -> Result<(Project, LoadReport)> {
         }
     }
     project.station_lists = lists.into_iter().map(|(var, files)| StationList { var, files }).collect();
+    report.missing.extend(late_missing);
     Ok((project, report))
 }
