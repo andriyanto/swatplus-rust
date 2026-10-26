@@ -32,6 +32,13 @@ handles it.
   counted one value per record (blank lines don't count), then read that many times as whole
   derived types; a short row takes values from the next line. `hru-data.hru` is sized by its
   largest HRU number and each row placed at its own number. (`swat-io/src/table.rs`, `hru.rs`)
+- **A row stops at a value that doesn't convert.** When a value of a row can't be read as its
+  variable's type, gfortran's read ends with an error there, the variables after it keep their
+  defaults, and the next read starts on the next line. Batanghari's `plants.plt` (SWAT+ Editor
+  4.1.0) has 53 values and a description per row where `plant_db` has 56 variables: the
+  description fails as the 54th, so the three lignin fractions keep their defaults and each row
+  is one line. Reading on into the next line instead shifts every plant after the first.
+  (`list::Records::read_checked`)
 - **Lookups by name are linear and take the first match**, compared as Fortran strings (trailing
   blanks ignored); a name not found leaves the pointer 0. (`swat-model/src/table.rs`)
 - **Soil texture is one word.** `soils.sol` texture strings with blanks (`L- L- L- L`) are read
@@ -222,7 +229,19 @@ From `conditions`, `cond_real` and `actions` as `hru_control` calls them (Ames's
 - **Heat units are those of the first plant that has any**, else plant 1's; the condition's
   limit variable (`phu_mat`) isn't used.
 - **The action count starts at 1** and restarts at 1 every year, so `const2` 20 allows 20
-  applications a year. Of two tables with the same name the last is used.
+  applications a year (`const2` is at least 1). Of two tables with the same name the last is used.
+- **Generic plant-and-harvest tables** (`pl_hv_summer1`, `pl_hv_winter1`, `pl_hv_summer2`, as
+  the Editor writes them for Batanghari's crops): `management.sch` gives the crop after the
+  table's name, and `plant` and `harvest_kill` act on that crop instead of the table's option
+  (on the rotation year's for `pl_hv_summer2`).
+- **Planting by a table doesn't reset the plant** (no `mgt_plantop`): it only starts growing.
+  `plant` has no yearly limit; `harvest_kill` harvests and kills the named plants whether they
+  are growing or not, and, unlike a dated `hvkl`, leaves the base-zero heat units alone.
+- **`phu_base0` is the weather station's base-zero heat units**, reset each year; `soil_water`
+  compares the profile's water with field capacity, porosity or 0 combined with the limit
+  (`lim_op` `*`, `+`, `-`, `/`); `jday` and `year_rot` compare integers. The rotation year
+  starts at the community's `rot_yr_ini` and moves on at the end of each year in every HRU with
+  decision tables.
 
 ## Custom soil layers (`soil_lyr_depths.sol`)
 
@@ -314,7 +333,22 @@ their inputs, listed in each `README.md`.
   about 375 mm a year to the air against a PET of about 1,300 mm; almost all rain leaves as
   `wet_oflo`. Reproduced as is.
 
+## Hard calibration (`calibration.cal`)
+
+- **Applied once, after the HRUs are set up** (`proc_cal` → `cal_conditions`), so a new `perco`
+  recomputes `perco_lim` with its own threshold (1e-6, where `hydro_init` uses 1e-9).
+- **The object list** is the count of its entries, then the entries, where a negative number
+  closes a range (`2  1 -1858` is HRUs 1 to 1858; `define_unit_elements`). A count of 0 means
+  every object of the parameter's kind. Changes are held to `cal_parms.cal`'s range.
+
 ## Arithmetic
+
+- **gfortran folds `Sin(Atan(x))` into `x / Sqrt(x*x + 1)`.** The LS factor's `sin_sl`
+  (`plant_init`) is computed that way in the SWAT+ build, which rounds differently from
+  `sinf(atanf(x))` for about two slopes in five (checked on all 7,562 slopes of Batanghari and
+  Pessel). One bit of the USLE factor moves sediment yield by a bit, the organic N it carries off
+  the top layer, and, in a nitrogen-limited crop, growth: two of Batanghari's 1,858 HRUs drifted
+  by up to 2 % in biomass until the port did the same.
 
 - **`x ** 0.5` is the math library's `powf`**, not a square root: gfortran calls `powf`, while
   Rust's optimizer turns `x.powf(0.5)` into `sqrt`, which is correctly rounded where `powf` isn't

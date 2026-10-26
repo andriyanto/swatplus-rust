@@ -769,7 +769,9 @@ fn init_hru(
     // plant_init: USLE P and LS (the slope length capped by the practice isn't used).
     let (cp, _) = Row::find(project.cons_practice.as_ref(), schema::CONS_PRACTICE, lu.text("cons_prac"));
     let xm = 0.6 * (1.0 - (-35.835_f32 * h.slope).exp());
-    let sin_sl = h.slope.atan().sin();
+    // gfortran folds Sin(Atan(slope)) into slope / sqrt(slope * slope + 1), which rounds
+    // differently from sinf(atanf(slope)) on about two slopes in five.
+    let sin_sl = h.slope / (h.slope * h.slope + 1.0).sqrt();
     let usle_ls = (h.slope_len / 22.128).powf(xm) * (65.41 * sin_sl * sin_sl + 4.56 * sin_sl + 0.065);
     let usle_p = cp.real("pfac");
 
