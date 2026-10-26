@@ -68,5 +68,7 @@ project.
   2015–2017 printed from the first day. It matches SWAT+ bit for bit on all seven daily tables.
   It took two quirks: an HRU whose land use (or topography, hydrology, snow, soil-plant data)
   isn't found, the Editor's `null` among them, gets the table's first row; and `varinit` zeroes
-  the peak rate for each HRU, so a wetland never runs `nut_orgn`/`nut_psed`. CI runs it. Next:
-  the whole of Pessel (3,966 HRUs, 1,454 channels), which needs a shorter print to fit.
+  the peak rate for each HRU, so a wetland never runs `nut_orgn`/`nut_psed`. CI runs it.
+- **3e done.** The whole of `Pessel` (3,966 HRUs, 414 wetlands, 1,454 channels, 254 aquifers)
+  matches SWAT+ bit for bit on all seven daily tables in 2015, with nothing more to port. The
+  port runs it in about a minute, SWAT+ in two. CI runs 2015, printed from the first day.

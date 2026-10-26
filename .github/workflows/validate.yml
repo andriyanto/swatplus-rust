@@ -47,7 +47,10 @@ jobs:
           sed -i '3s/2025/2019/' variants/Bh_land/time.sim testdata/Batanghari/time.sim
           # Phase 3e: Pessel's coastal lowland, 2015-2017 (the script cuts it out and shortens it).
           scripts/make-pessel-variants.py testdata/Pessel variants
-          for scenario in Osu_1hru Ames_sub1 Ames_bare Ames_past0 Ames_past Ames_corn Ames_cornf Ames_cosy Ames_cosy2 Ames_dtbl Bh_land Batanghari Ps_coast; do
+          # And the whole of Pessel, 2015 only, printed from the first day.
+          sed -i '3s/2025/2015/' testdata/Pessel/time.sim
+          sed -i '3s/^2 /0 /' testdata/Pessel/print.prt
+          for scenario in Osu_1hru Ames_sub1 Ames_bare Ames_past0 Ames_past Ames_corn Ames_cornf Ames_cosy Ames_cosy2 Ames_dtbl Bh_land Batanghari Ps_coast Pessel; do
             src=testdata/$scenario
             test -d "$src" || src=variants/$scenario
             mkdir -p runs/$scenario
