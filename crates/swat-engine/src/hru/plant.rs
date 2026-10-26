@@ -448,9 +448,6 @@ pub struct Saved {
     /// `pest_enrsb`'s enrichment ratio (`enratio` of the HRU module; `varinit` zeroes a local of
     /// the same name), so `swr_subwq` uses the last one computed for any HRU.
     pub enratio: f32,
-    /// `ero_pkq`'s peak runoff rate (`qp_cms` of the HRU module): kept on days without runoff,
-    /// and for wetlands, which don't compute it.
-    pub qp_cms: f32,
 }
 
 /// `plant_init` for the community's single plant. `wgn_months` gives each month's mean maximum

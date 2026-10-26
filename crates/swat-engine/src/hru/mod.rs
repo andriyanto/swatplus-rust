@@ -529,6 +529,20 @@ struct Row {
 }
 
 impl Row {
+    /// For the data `hru-data.hru` names (`hru_databases`): a name not found, the Editor's `null`
+    /// among them, leaves the pointer at its default, 1, so the HRU gets the table's first row.
+    /// `false` only when the table is empty or missing.
+    fn find_or_first(table: Option<&Table>, fields: &'static [Field], name: &str) -> (Self, bool) {
+        let (row, found) = Self::find(table, fields, name);
+        if found {
+            return (row, true);
+        }
+        match table.and_then(|t| t.rows.first().map(|r| (t, r))) {
+            Some((t, r)) => (Self { values: r.clone(), fields: t.fields }, true),
+            None => (row, false),
+        }
+    }
+
     fn find(table: Option<&Table>, fields: &'static [Field], name: &str) -> (Self, bool) {
         if let Some(t) = table
             && let Some(r) = t.find(name)
@@ -684,10 +698,7 @@ fn init_hru(
     ndays: &[i32; 13],
 ) -> Result<Hru, String> {
     let n = &hd.name;
-    let (lu, lu_found) = Row::find(project.landuse.as_ref(), schema::LANDUSE, &hd.land_use_mgt);
-    if !lu_found && !is_null(&hd.land_use_mgt) {
-        return Err(format!("{n}: land use {} not found", hd.land_use_mgt));
-    }
+    let (lu, lu_found) = Row::find_or_first(project.landuse.as_ref(), schema::LANDUSE, &hd.land_use_mgt);
     for f in ["tiledrain", "septic", "fstrip", "grassww", "bmpuser"] {
         let v = lu.text(f);
         if lu_found && !is_null(v) && !v.is_empty() {
@@ -733,9 +744,9 @@ fn init_hru(
     }
 
     // topohyd_init
-    let (topo, _) = Row::find(project.topography.as_ref(), schema::TOPOGRAPHY, &hd.topo);
-    let (hyd, _) = Row::find(project.hydrology.as_ref(), schema::HYDROLOGY, &hd.hyd);
-    let (sno, _) = Row::find(project.snow.as_ref(), schema::SNOW, &hd.snow);
+    let (topo, _) = Row::find_or_first(project.topography.as_ref(), schema::TOPOGRAPHY, &hd.topo);
+    let (hyd, _) = Row::find_or_first(project.hydrology.as_ref(), schema::HYDROLOGY, &hd.hyd);
+    let (sno, _) = Row::find_or_first(project.snow.as_ref(), schema::SNOW, &hd.snow);
     h.slope = topo.real("slope");
     h.slope_len = topo.real("slope_len");
     h.lat_len = topo.real("lat_len");
@@ -916,7 +927,11 @@ fn init_hru(
     };
 
     // soil_nutcarb_init (after proc_hru, from main): the soil-plant entry's nutrients.
-    let spi = project.soil_plant_init.iter().find(|s| swat_model::table::fortran_eq(&s.name, &hd.soil_plant_init));
+    let spi = project
+        .soil_plant_init
+        .iter()
+        .find(|s| swat_model::table::fortran_eq(&s.name, &hd.soil_plant_init))
+        .or(project.soil_plant_init.first());
     let mut test = SoilTest::default();
     if let (Some(spi), Some(t)) = (spi, project.soil_test.as_ref())
         && let Some(r) = t.find(&spi.nutc)
@@ -1356,7 +1371,9 @@ impl Hru {
                 surfq = surfq * (1.0 - u.fcimp) + surfqimp * u.fcimp;
             }
         }
-        let mut nd = NutDay { qp_cms: saved.qp_cms, ..NutDay::default() };
+        // varinit zeroes the peak rate, so a wetland (which doesn't compute it) has none, and
+        // its loads are what it releases.
+        let mut nd = NutDay::default();
         let inflpcp;
         if is_wet {
             // wetland_control
@@ -1365,7 +1382,6 @@ impl Hru {
         } else {
             surfq += self.irr_runoff;
             self.erosion(surfq.max(0.0), surfq, w.precip, c.precip_half_hr, &b.nut, &mut nd);
-            saved.qp_cms = nd.qp_cms;
             inflpcp = (precip_eff - surfq).max(0.0);
         }
 

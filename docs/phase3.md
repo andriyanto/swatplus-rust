@@ -61,3 +61,12 @@ project.
   fills and releases. CI runs it on 2015–2019. Not ported: paddies, weirs (`weir.res`),
   initial wetland water, the wetland output tables, release options other than `rate`,
   `rate_pct`, `ab_emer`, `days` and `dyrt`.
+- **3e, coastal lowland done.** `Ps_coast` (`scripts/make-pessel-variants.py`): the 20 small
+  catchments of Pessel whose land lies under 20 m and drains straight to the sea, cut out with
+  everything renumbered — 74 channels, 74 routing units, 115 HRUs on peat (oil palm, peat swamp
+  and mangrove wetlands, rice, six HRUs without a land use), 23 shallow and 20 deep aquifers,
+  2015–2017 printed from the first day. It matches SWAT+ bit for bit on all seven daily tables.
+  It took two quirks: an HRU whose land use (or topography, hydrology, snow, soil-plant data)
+  isn't found, the Editor's `null` among them, gets the table's first row; and `varinit` zeroes
+  the peak rate for each HRU, so a wetland never runs `nut_orgn`/`nut_psed`. CI runs it. Next:
+  the whole of Pessel (3,966 HRUs, 1,454 channels), which needs a shorter print to fit.

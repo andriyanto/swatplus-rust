@@ -385,6 +385,13 @@ From `et_pot`, `et_act`, `sq_daycn` and `hru_urban`; the port is in `swat-engine
 - **`usgs_reg`, the USGS regression loads, is not ported**; any other `urb_ro` than it and
   `buildup_washoff` adds no loads.
 
+## Data names in `hru-data.hru` (phase 3e)
+
+- **A name not found leaves the pointer at 1**, the default of `hru_databases`, so the HRU takes
+  the first row of the table: an HRU with land use `null` (as the Editor writes some) gets the
+  first land use of `landuse.lum`, with its plants, management and curve numbers; the same for
+  topography, hydrology, snow and soil-plant data. The port does the same (`Row::find_or_first`).
+
 ## Wetland HRUs (phase 3d)
 
 From `wet_initial`, `et_act`, `wetland_control`, `res_hydro`, `res_sediment`, `res_nutrient`
@@ -395,10 +402,10 @@ and `swr_satexcess`; the port is in `swat-engine/src/hru/wetland.rs`.
   wetland has the type's default, 0.7.
 - **A wetland HRU's curve number is never computed** (`surface` isn't called), so `hru_wb_day`
   prints 0 for it.
-- **Its sediment and nutrient routines run on the runoff it releases with the peak rate
-  `qp_cms` of the last HRU that had runoff**: a module variable `ero_pkq` sets, and wetlands
-  don't. So `nut_orgn`, `nut_psed`, `nut_nlch` and `nut_solp` replace the loads the wetland
-  released with ones from the soil.
+- **Its organic N and sediment P are what it releases**: `nut_orgn` and `nut_psed` need a peak
+  rate (`qp_cms`), which `varinit` zeroes for each HRU and only `surface` sets, so they never
+  run for a wetland. `nut_nlch` and `nut_solp` do run, and replace the released nitrate and
+  soluble P with the soil's.
 - **When an empty wetland spills, its sediment is counted twice**: the flushed sediment becomes
   the outflow's, which is then added to the yield already holding it.
 - **The release's seepage check works on a copy of the soil water**: it limits seepage to
