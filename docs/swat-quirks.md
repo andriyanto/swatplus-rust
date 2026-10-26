@@ -4,6 +4,9 @@ SWAT+ is the reference: where it does something surprising, the port does the sa
 match. Each entry says where it comes from in the Fortran (commit `6f51536`) and where the port
 handles it.
 
+The ones that are plainly bugs can be corrected with `run --fix-swat`; `docs/swat-fixes.md`
+lists them.
+
 ## Reading files
 
 - **List-directed input.** Every reader uses `read (unit, *)`. A read that needs more values than

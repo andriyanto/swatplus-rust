@@ -219,6 +219,8 @@ struct SdCh {
     wat: ChWat,
     ch_in: Hyd,
     ch_out: Hyd,
+    /// The water temperature printed for this channel (corrected mode: its own).
+    wtemp: f32,
 }
 
 /// What a channel's day needs from outside: its station's weather, the station's generator day
@@ -249,6 +251,7 @@ struct Basin {
     qual2e: i32,
     evrch: f32,
     scoef: f32,
+    fixes: bool,
 }
 
 /// The SWAT-DEG channels.
@@ -270,7 +273,7 @@ pub struct Channels {
 impl Channels {
     /// `sd_channel_read` and `sd_hydsed_init` for the channels in `chandeg.con` order (their data
     /// rows in `props`). `Err` names what isn't ported.
-    pub fn new(project: &Project, props: &[i32]) -> Result<Channels, String> {
+    pub fn new(project: &Project, props: &[i32], fixes: bool) -> Result<Channels, String> {
         let codes = &project.codes;
         if codes.lapse == 1 {
             return Err("channels with lapse rates".into());
@@ -282,7 +285,7 @@ impl Channels {
             return Err("sub-daily channel routing".into());
         }
         let p = |n: &str, d: f32| project.params.get(n).unwrap_or(d);
-        let b = Basin { rte: codes.rte, qual2e: codes.qual2e, evrch: p("evrch", 0.6), scoef: p("scoef", 1.0) };
+        let b = Basin { rte: codes.rte, qual2e: codes.qual2e, evrch: p("evrch", 0.6), scoef: p("scoef", 1.0), fixes };
         let hs = project.hyd_sed_lte.as_ref().ok_or("channels without hyd-sed-lte.cha")?;
         let nut_t = project.ch_nut.as_ref();
         let find = |t: Option<&Table>, name: &str| t.and_then(|t| t.find(name));
@@ -348,6 +351,7 @@ impl Channels {
                 wat: ChWat::default(),
                 ch_in: Hyd::default(),
                 ch_out: Hyd::default(),
+                wtemp: 0.0,
             };
             if c.chs < 1.0e-9 {
                 c.chs = 0.000001;
@@ -378,10 +382,19 @@ impl Channels {
                 chss = (c.chw - bw) / (2.0 * c.chd);
             }
             let (mut p_bf, mut a_bf, mut vol_bf) = (0.0_f32, 0.0_f32, 0.0_f32);
+            // SWAT+ takes the side slope as horizontal over vertical for the widths but as
+            // vertical over horizontal for the wetted perimeter, and the area as `b d + d / z`;
+            // corrected, a trapezoid: `b d + z d²` and `b + 2 d √(1 + z²)`.
+            let geom = |dep: f32| -> (f32, f32) {
+                if fixes {
+                    (bw + 2.0 * dep * (1.0 + chss * chss).sqrt(), bw * dep + chss * dep * dep)
+                } else {
+                    (bw + 2.0 * (dep * dep * (1.0 + 1.0 / (chss * chss))).sqrt(), bw * dep + dep / chss)
+                }
+            };
             for i_dep in 0..2 {
                 let dep = if i_dep == 0 { 0.1 * c.chd } else { c.chd };
-                let pp = bw + 2.0 * (dep * dep * (1.0 + 1.0 / (chss * chss))).sqrt();
-                let a = bw * dep + dep / chss;
+                let (pp, a) = geom(dep);
                 let rh = a / pp;
                 let e = &mut c.elev[i_dep];
                 e.dep = dep;
@@ -405,7 +418,8 @@ impl Channels {
                 let frac_abov = if i_dep == 0 { 0.2 } else { 1.0 };
                 let dep = frac_abov * c.chd;
                 let pp = p_bf + 2.0 * (dep * dep * (1.0 + 1.0 / (fps * fps))).sqrt();
-                let a = a_bf + bw * dep + dep * dep / fps;
+                // Above bankfull the water spans the channel's top width, not its bottom.
+                let a = if fixes { a_bf + c.chw * dep + dep * dep / fps } else { a_bf + bw * dep + dep * dep / fps };
                 let rh = a / pp;
                 let e = &mut c.elev[i_dep + 2];
                 e.dep = (1.0 + frac_abov) * c.chd;
@@ -424,8 +438,7 @@ impl Channels {
             let mut stor = [0.0_f32; 2];
             for (i_dep, s) in stor.iter_mut().enumerate() {
                 let dep = if i_dep == 0 { 0.1 * c.chd } else { c.chd };
-                let pp = bw + 2.0 * (dep * dep * (1.0 + 1.0 / (chss * chss))).sqrt();
-                let a = bw * dep + dep / chss;
+                let (pp, a) = geom(dep);
                 let rh = a / pp;
                 let vel = qman(1.0, rh, c.chn, c.chs);
                 let celerity = vel * 5.0 / 3.0;
@@ -491,6 +504,12 @@ impl Channels {
     pub fn output(&self, ich: usize) -> (&Hyd, &Hyd, &Hyd, &ChWat) {
         let c = &self.chs[ich];
         (&c.ch_stor, &c.ch_in, &c.ch_out, &c.wat)
+    }
+
+    /// The water temperature printed for channel `ich`: SWAT+ prints one value for all channels,
+    /// the last one set (`wtemp`); corrected, the channel's own stream temperature.
+    pub fn wtemp_of(&self, ich: usize) -> f32 {
+        if self.b.fixes { self.chs[ich].wtemp } else { self.wtemp }
     }
 
     /// `sd_channel_control3` for channel `ich` (0-based) with inflow `hin`, its drainage area
@@ -653,8 +672,9 @@ impl Channels {
         }
 
         if ht1.flo > 1.0e-6 {
-            // The maximum flow depth uses `ht3%flo`, never set: the curve at no flow.
-            let rc_ht3 = self.interp_flo(ich, 0.0);
+            // The maximum flow depth uses `ht3%flo`, never set: the curve at no flow. Corrected,
+            // the inflow's rate.
+            let rc_ht3 = self.interp_flo(ich, if self.b.fixes { ht1.flo / 86400.0 } else { 0.0 });
             self.ch_watqual4(ich, &ht1, &mut ht2, rc_ht3, cx);
             if self.b.qual2e == 1 {
                 let rc = self.interp_flo(ich, ht1.flo / 86400.0);
@@ -671,8 +691,13 @@ impl Channels {
                 ht2.solp = ht1.solp - sedp;
             }
         }
-        let hd1 = ht2;
-        self.ch_temp(ich, hd1, ht2, ins, cx);
+        let mut hd1 = ht2;
+        let tw = self.ch_temp(ich, hd1, ht2, ins, cx);
+        // SWAT+ sets the outflow before computing the stream temperature, so only the storage
+        // gets it; corrected, the outflow carries it.
+        if self.b.fixes {
+            hd1.temp = tw;
+        }
         self.chs[ich].ch_out = Hyd { flo: hd1.flo / 86400.0, ..hd1 };
         hd1
     }
@@ -874,11 +899,24 @@ impl Channels {
 
     /// SWAT+ `ch_temp`: the stream temperature, which ends up only in the channel's storage
     /// (`ch_stor%temp`). `hd1` is the outflow (`ob%hd(1)`), `ht2` the routed outflow.
-    fn ch_temp(&mut self, ich: usize, hd1: Hyd, ht2: Hyd, ins: &ChanInflows, cx: &ChanCtx) {
+    fn ch_temp(&mut self, ich: usize, hd1: Hyd, ht2: Hyd, ins: &ChanInflows, cx: &ChanCtx) -> f32 {
         let w = cx.weat;
         let tw_def = 5.0 + 0.75 * w.tave;
         let mut ht1 = hd1;
-        for (k, &is_ch) in ins.from_chandeg.iter().enumerate() {
+        if self.b.fixes {
+            // Corrected: the temperature of all upstream channels' water mixed by flow (SWAT+
+            // looks only at the last inflow and the one before it, whatever that is).
+            let (mut tf, mut tt) = (0.0_f32, 0.0_f32);
+            for (k, &is_ch) in ins.from_chandeg.iter().enumerate() {
+                if is_ch {
+                    let f = ins.hin_d[k].flo / 86400.0;
+                    tf += f;
+                    tt += ins.hin_d[k].temp * f;
+                }
+            }
+            ht1.temp = if tf < 1.0e-6 { 5.0 + 0.75 * w.tave } else { tt / tf };
+        }
+        for (k, &is_ch) in ins.from_chandeg.iter().enumerate().filter(|_| !self.b.fixes) {
             if is_ch {
                 // `hin_d(in-1)`: the inflow before (SWAT+ reads out of bounds for the first).
                 let prev = if k > 0 { ins.hin_d[k - 1] } else { Hyd::default() };
@@ -1009,5 +1047,7 @@ impl Channels {
         }
         self.chs[ich].ch_stor.temp = tw_final;
         self.wtemp = 5.0 + 0.75 * w.tave;
+        self.chs[ich].wtemp = if self.b.fixes { tw_final } else { self.wtemp };
+        tw_final
     }
 }

@@ -28,6 +28,8 @@ pub struct TextTables {
     aqu_started: bool,
     cha_started: bool,
     error: Option<String>,
+    /// Correct SWAT+'s mislabelled aquifer columns (`--fix-swat`).
+    pub fixes: bool,
 }
 
 const FILES: [&str; 7] =
@@ -72,6 +74,7 @@ impl TextTables {
             aqu_started: false,
             cha_started: false,
             error: None,
+            fixes: false,
         }
     }
 
@@ -255,7 +258,7 @@ impl OutputSink for TextTables {
             self.aqu_started = true;
             let _ = writeln!(self.aqu, "{}", self.title);
             let _ = write!(self.aqu, "{KEYS}");
-            for (n, _) in a.columns() {
+            for (n, _) in a.columns_as(self.fixes) {
                 let _ = write!(self.aqu, " {n:>14}");
             }
             let _ = writeln!(self.aqu);

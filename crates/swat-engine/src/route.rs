@@ -104,6 +104,12 @@ impl AquDay {
     /// The columns of `aquifer_day.txt`. The header has `orgn` and `orgp` where the values are
     /// the carbon and organic N (`aqu_hdr` against `aquifer_dynamic`).
     pub fn columns(&self) -> [(&'static str, f32); 17] {
+        self.columns_as(false)
+    }
+
+    /// The columns, with the header labels corrected (`cbn`, `orgn`) when `fixes` is set.
+    pub fn columns_as(&self, fixes: bool) -> [(&'static str, f32); 17] {
+        let (l1, l2) = if fixes { ("cbn", "orgn") } else { ("orgn", "orgp") };
         [
             ("flo", self.flo),
             ("dep_wt", self.dep_wt),
@@ -113,8 +119,8 @@ impl AquDay {
             ("revap", self.revap),
             ("no3_st", self.no3_st),
             ("minp", self.minp),
-            ("orgn", self.cbn),
-            ("orgp", self.orgn),
+            (l1, self.cbn),
+            (l2, self.orgn),
             ("no3_rchg", self.no3_rchg),
             ("no3_loss", self.no3_loss),
             ("no3_lat", self.no3_lat),
@@ -148,6 +154,8 @@ pub struct Network {
     aqus: Vec<Aqu>,
     /// Today's routing unit outputs (`ru_d`), by routing unit.
     pub ru_d: Vec<Hyd>,
+    /// Correct SWAT+'s bugs instead of reproducing them.
+    fixes: bool,
     /// SWAT-DEG channels (by object index), with their inflows' origins for the stream
     /// temperature, unless they aren't ported for this project (then they pass water on).
     channels: Option<crate::channel::Channels>,
@@ -178,7 +186,13 @@ impl Network {
     /// times of concentration come in `tconc` (h) with their Manning's n and area (km2) in
     /// `ovn_km`. `Ok(None)` when the project has nothing past its HRUs; `Err` names what isn't
     /// ported.
-    pub fn new(project: &Project, stations: &[String], tconc: &[f32], ovn_km: &[(f32, f32)]) -> Result<Option<Network>, String> {
+    pub fn new(
+        project: &Project,
+        stations: &[String],
+        tconc: &[f32],
+        ovn_km: &[(f32, f32)],
+        fixes: bool,
+    ) -> Result<Option<Network>, String> {
         let mut obs: Vec<Ob> = Vec::new();
         let mut first = std::collections::HashMap::new();
         for (kind, nhyds) in KINDS {
@@ -326,7 +340,9 @@ impl Network {
             let mut d = AquDay { flo: db.flo, dep_wt: db.dep_wt, cbn: db.cbn, ..AquDay::default() };
             // The storage uses the water table of the aquifer numbered as the database row
             // (`aqu_d(iaqdb)`), set only once that aquifer has been initialized.
-            let dep_wt_db = if iaqdb >= 1 && iaqdb - 1 < iaq {
+            let dep_wt_db = if fixes {
+                d.dep_wt
+            } else if iaqdb >= 1 && iaqdb - 1 < iaq {
                 aqus[iaqdb - 1].d.dep_wt
             } else if iaqdb >= 1 && iaqdb - 1 == iaq {
                 d.dep_wt
@@ -380,7 +396,7 @@ impl Network {
         let ch0 = first[&ObjectKind::ChannelDeg];
         let n_ch = project.objects_of(ObjectKind::ChannelDeg).count();
         let props: Vec<i32> = (0..n_ch).map(|k| obs[ch0 + k].props).collect();
-        let (channels, channel_skipped) = match crate::channel::Channels::new(project, &props) {
+        let (channels, channel_skipped) = match crate::channel::Channels::new(project, &props, fixes) {
             Ok(c) if n_ch > 0 => (Some(c), None),
             Ok(_) => (None, None),
             Err(e) => (None, Some(e)),
@@ -403,6 +419,7 @@ impl Network {
             aqu_of,
             aqus,
             ru_d: vec![Hyd::default(); n_ru],
+            fixes,
             channels,
             chan_of,
             chan_in,
@@ -484,7 +501,11 @@ impl Network {
                 let ht1 = if k != 1 { h.times(e.dr) } else { *h };
                 let ht1 = Hyd::scale(ef, ht1);
                 hd[k] = hd[k].plus(ht1);
-                ru_d = ru_d.plus(ht1);
+                // SWAT+ sums all five hydrographs, counting the total twice; corrected, the
+                // total and the recharge.
+                if !self.fixes || k <= 1 {
+                    ru_d = ru_d.plus(ht1);
+                }
             }
         }
         self.obs[ob].hd.copy_from_slice(&hd);
@@ -578,7 +599,7 @@ impl Network {
         for (ob, k) in self.chan_of.iter().enumerate() {
             if let Some(k) = *k {
                 let (st, i, o, w) = chs.output(k);
-                out.push((k + 1, self.obs[ob].gis_id, self.obs[ob].name.as_str(), *w, *st, *i, *o, chs.wtemp));
+                out.push((k + 1, self.obs[ob].gis_id, self.obs[ob].name.as_str(), *w, *st, *i, *o, chs.wtemp_of(k)));
             }
         }
         out

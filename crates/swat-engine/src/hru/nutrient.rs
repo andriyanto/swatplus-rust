@@ -25,6 +25,8 @@ pub struct NutBasin {
     pub sed_det: i32,
     /// `n_act_frac` (carbon module, 0.02 unless `carbon.bsn` sets it).
     pub n_act_frac: f32,
+    /// Correct SWAT+'s bugs instead of reproducing them (`RunOptions::fixes`).
+    pub fixes: bool,
 }
 
 impl NutBasin {
@@ -44,6 +46,7 @@ impl NutBasin {
             rsd_covco: p("rsd_covco"),
             sed_det: project.codes.sed_det,
             n_act_frac,
+            fixes: false,
         }
     }
 }
@@ -375,8 +378,15 @@ impl Hru {
                 sedyld = 0.0;
             }
             // The snow test is the wrong way round: snow only zeroes tiny yields, and without
-            // snow the yield is divided by exp(0).
-            if self.sno_mm > 0.0 {
+            // snow the yield is divided by exp(0). Corrected: snow over 100 mm stops erosion,
+            // less reduces it (as in SWAT 2012).
+            if b.fixes {
+                if self.sno_mm > 100.0 {
+                    sedyld = 0.0;
+                } else if self.sno_mm > 0.0 {
+                    sedyld /= (self.sno_mm * 3.0 / 25.4).exp();
+                }
+            } else if self.sno_mm > 0.0 {
                 if sedyld < 1.0e-6 {
                     sedyld = 0.0;
                 }
@@ -394,7 +404,17 @@ impl Hru {
     /// P that leave with the sediment.
     /// `orgn` is false with the carbon model on, which has its own routine (`nut_orgnc2`, not
     /// ported yet) instead of `nut_orgn`.
-    pub(super) fn sediment_nutrients(&mut self, surfq: f32, erorgn: f32, erorgp: f32, orgn: bool, nd: &mut NutDay, saved: &mut Saved) {
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn sediment_nutrients(
+        &mut self,
+        surfq: f32,
+        erorgn: f32,
+        erorgp: f32,
+        orgn: bool,
+        fixes: bool,
+        nd: &mut NutDay,
+        saved: &mut Saved,
+    ) {
         if nd.sedyld < 1.0e-4 {
             nd.sedyld = 0.0;
         }
@@ -432,8 +452,14 @@ impl Hru {
         let sedp_attach = l.hsta.p + man_p + man_p + l.sta + l.act;
         if sedp_attach > 1.0e-9 {
             saved.fr_orgp = (l.hsta.p + man_p + man_p) / sedp_attach;
-            saved.fr_actmin = l.sta / sedp_attach;
-            saved.fr_stamin = l.act / sedp_attach;
+            // Swapped in SWAT+; corrected, each share from its own pool.
+            if fixes {
+                saved.fr_actmin = l.act / sedp_attach;
+                saved.fr_stamin = l.sta / sedp_attach;
+            } else {
+                saved.fr_actmin = l.sta / sedp_attach;
+                saved.fr_stamin = l.act / sedp_attach;
+            }
         }
         let er = if erorgp > 0.001 { erorgp } else { nd.enratio };
         let frac = sedp_attach * er / wt1;

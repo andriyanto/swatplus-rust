@@ -20,7 +20,7 @@ use swat_model::{ClimateVar, ObjectKind};
 
 const USAGE: &str = "usage:
   swatplus-rust inspect <TxtInOut folder>
-  swatplus-rust run <TxtInOut folder> [--out <folder>]
+  swatplus-rust run <TxtInOut folder> [--out <folder>] [--fix-swat]
   swatplus-rust compare <SWAT+ table> <our table> [--abs 0.001] [--rel 1e-4]";
 
 fn main() -> ExitCode {
@@ -28,8 +28,25 @@ fn main() -> ExitCode {
     let rest: Vec<&str> = args.iter().map(String::as_str).collect();
     match rest.as_slice() {
         ["inspect", dir] => inspect(dir),
-        ["run", dir] => run(dir, dir),
-        ["run", dir, "--out", out] => run(dir, out),
+        ["run", dir, opts @ ..] => {
+            let mut out = *dir;
+            let mut fixes = false;
+            let mut it = opts.iter();
+            while let Some(o) = it.next() {
+                match (*o, it.clone().next()) {
+                    ("--out", Some(v)) => {
+                        out = v;
+                        it.next();
+                    }
+                    ("--fix-swat", _) => fixes = true,
+                    _ => {
+                        eprintln!("{USAGE}");
+                        return ExitCode::from(2);
+                    }
+                }
+            }
+            run(dir, out, fixes)
+        }
         ["compare", expected, actual, opts @ ..] => compare_cmd(expected, actual, opts),
         ["--version"] | ["-V"] => {
             println!("swatplus-rust {}", env!("CARGO_PKG_VERSION"));
@@ -89,7 +106,7 @@ fn inspect(dir: &str) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn run(dir: &str, out: &str) -> ExitCode {
+fn run(dir: &str, out: &str, fixes: bool) -> ExitCode {
     let (project, _) = match load_project(&DirSource::new(dir)) {
         Ok(v) => v,
         Err(e) => {
@@ -104,7 +121,11 @@ fn run(dir: &str, out: &str) -> ExitCode {
         return ExitCode::FAILURE;
     }
     let mut tables = output::TextTables::new(&title, out);
-    match swat_engine::run::run(&project, &mut tables) {
+    tables.fixes = fixes;
+    if fixes {
+        eprintln!("note: --fix-swat: SWAT+'s bugs corrected, results will differ from SWAT+ (docs/swat-fixes.md)");
+    }
+    match swat_engine::run::run_with(&project, &mut tables, swat_engine::run::RunOptions { fixes }) {
         Ok(report) => {
             if let Some(why) = report.hru_skipped {
                 eprintln!("note: HRU water balance not simulated ({why}); hru_wb_day.txt has precipitation only");

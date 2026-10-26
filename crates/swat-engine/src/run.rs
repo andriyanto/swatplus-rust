@@ -129,8 +129,21 @@ pub struct RunReport {
     pub channel_skipped: Option<String>,
 }
 
+/// How to run.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RunOptions {
+    /// Correct the bugs found in SWAT+ (see `docs/swat-fixes.md`) instead of reproducing them.
+    /// The results then differ from SWAT+'s; off, they match it.
+    pub fixes: bool,
+}
+
 /// Runs the simulation over `time.sim`, handing each printed day to `out`.
 pub fn run(project: &Project, out: &mut dyn OutputSink) -> Result<RunReport, String> {
+    run_with(project, out, RunOptions::default())
+}
+
+/// [`run`] with options.
+pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -> Result<RunReport, String> {
     let mut clock = Clock::new(&project.time);
     let mut weather = Weather::new(project, &mut clock);
     let mut report = RunReport::default();
@@ -167,7 +180,7 @@ pub fn run(project: &Project, out: &mut dyn OutputSink) -> Result<RunReport, Str
         Some(l) => {
             let tconc: Vec<f32> = l.iter().map(|h| h.tconc).collect();
             let ovn_km: Vec<(f32, f32)> = l.iter().map(|h| (h.ovn, h.km)).collect();
-            match crate::route::Network::new(project, &station_names, &tconc, &ovn_km) {
+            match crate::route::Network::new(project, &station_names, &tconc, &ovn_km, opts.fixes) {
                 Ok(n) => n,
                 Err(e) => {
                     report.routing_skipped = Some(e);
@@ -181,7 +194,7 @@ pub fn run(project: &Project, out: &mut dyn OutputSink) -> Result<RunReport, Str
         report.channel_skipped = Some(why);
     }
     let mut hru_wb = vec![[0.0_f32; 4]; hrus.len()];
-    let basin = HruBasin::new(project);
+    let basin = HruBasin::new(project).with_fixes(opts.fixes);
     let mut balance_started = false;
     let mut saved = Saved::default();
 
@@ -297,7 +310,7 @@ pub fn run(project: &Project, out: &mut dyn OutputSink) -> Result<RunReport, Str
             }
         }
         for h in land.iter_mut().flatten() {
-            h.end_year(basin.cswat);
+            h.end_year(basin.cswat, opts.fixes);
         }
         clock.yrc += 1;
     }

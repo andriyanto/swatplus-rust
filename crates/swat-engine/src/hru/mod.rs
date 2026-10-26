@@ -426,6 +426,8 @@ pub struct HruBasin {
     pub plant: PlantBasin,
     pub nut: NutBasin,
     pub carbon: Option<carbon::CarbonBasin>,
+    /// Correct SWAT+'s bugs instead of reproducing them (`RunOptions::fixes`).
+    pub fixes: bool,
 }
 
 /// Biological mixing settings: the `biomix` row of `tillage.til` and the temperature factor of
@@ -452,7 +454,16 @@ impl HruBasin {
             plant: PlantBasin::new(project),
             nut: NutBasin::new(project),
             carbon: if project.codes.cswat == 2 { Some(carbon::CarbonBasin::new(project)) } else { None },
+            fixes: false,
         }
+    }
+
+    /// The same settings, correcting SWAT+'s bugs when `fixes` is set.
+    pub fn with_fixes(mut self, fixes: bool) -> Self {
+        self.fixes = fixes;
+        self.plant.fixes = fixes;
+        self.nut.fixes = fixes;
+        self
     }
 }
 
@@ -1345,7 +1356,7 @@ impl Hru {
         // Nutrients that leave with sediment, then nitrate and soluble P.
         if surfq > 0.0 && nd.qp_cms > 1.0e-6 && precip_eff > 0.0 {
             let (erorgn, erorgp) = (self.erorgn, self.erorgp);
-            self.sediment_nutrients(surfq, erorgn, erorgp, b.cswat == 0, &mut nd, saved);
+            self.sediment_nutrients(surfq, erorgn, erorgp, b.cswat == 0, b.fixes, &mut nd, saved);
             if let Some(cb) = &b.carbon {
                 nd.sedorgn = self.nut_orgnc2(surfq, nd.sedyld, nd.enratio, cb, saved);
             }
@@ -1363,7 +1374,9 @@ impl Hru {
         }
         // The sediment released is taken from its store twice (once after computing it, once
         // with the other constituents), so the store goes negative after a sediment day.
-        self.surf_bs_sed[0] -= lagged[0];
+        if !b.fixes {
+            self.surf_bs_sed[0] -= lagged[0];
+        }
         // The detached sediment classes come only from lateral flow (`swr_latsed`, none so far):
         // their stores start at 1e-6 and release that share every day.
         let mut cls = [0.0_f32; 5];
@@ -1416,7 +1429,10 @@ impl Hru {
             wtmp += 273.15;
             let tp = 100.0 * (lagged[1] + lagged[3]) / qdr;
             chl_a = 0.1 * tp;
-            let org_c = (self.layers[0].cbn / 100.0) * saved.enratio * lagged[0] * 1000.0;
+            // The enrichment ratio is the last any HRU computed (`varinit` zeroes a local of the
+            // same name); corrected, this HRU's own today.
+            let enratio = if b.fixes { nd.enratio } else { saved.enratio };
+            let org_c = (self.layers[0].cbn / 100.0) * enratio * lagged[0] * 1000.0;
             cbodu = 2.7 * org_c / (qdr * self.km) / 10000.0;
             let ww = -139.3441_f32 + (1.575701e05 / wtmp);
             let w2 = wtmp * wtmp;
@@ -1550,7 +1566,11 @@ impl Hru {
 
     /// `time_control` at the end of a year: perennials age, the original carbon model's soil is
     /// mixed (`mgt_newtillmix_cswat0`), and in the northern hemisphere the base heat units reset.
-    pub fn end_year(&mut self, cswat: i32) {
+    pub fn end_year(&mut self, cswat: i32, fixes: bool) {
+        // The yearly irrigation total's reset is commented out in SWAT+; corrected, it restarts.
+        if fixes {
+            self.irr_yr = 0.0;
+        }
         if cswat == 0 && self.hyd_biomix > 1.0e-6 {
             self.year_end_mixing(self.hyd_biomix);
         }

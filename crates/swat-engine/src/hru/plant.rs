@@ -327,6 +327,8 @@ pub struct PlantBasin {
     pub water_norm: f32,
     pub n_norm: f32,
     pub p_norm: f32,
+    /// Correct SWAT+'s bugs instead of reproducing them (`RunOptions::fixes`).
+    pub fixes: bool,
 }
 
 impl PlantBasin {
@@ -343,6 +345,7 @@ impl PlantBasin {
             water_norm: 1.0 - (-10.0_f32).exp(),
             n_norm: 1.0 - (-n_updis).exp(),
             p_norm: 1.0 - exp_w(-p_updis),
+            fixes: false,
         }
     }
 }
@@ -1013,8 +1016,18 @@ impl Hru {
     pub(super) fn pl_grow(&mut self, d: &mut PlantDay, w: &PlantWeather, b: &PlantBasin, saved: &mut Saved) {
         // pl_nut_demand zeroes the element of the loop counter left by pl_community (one past
         // the last plant) instead of the plants'.
+        // Corrected: every plant's demand starts at zero, so a plant that isn't growing doesn't
+        // take another HRU's.
+        if b.fixes {
+            for k in 1..=self.plants.len().min(saved.uno3d.len() - 1) {
+                saved.uno3d[k] = 0.0;
+                saved.uapd[k] = 0.0;
+                saved.un2[k] = 0.0;
+                saved.up2[k] = 0.0;
+            }
+        }
         let stale = self.plants.len() + 1;
-        if stale < saved.uno3d.len() {
+        if !b.fixes && stale < saved.uno3d.len() {
             saved.uno3d[stale] = 0.0;
             saved.uapd[stale] = 0.0;
         }
