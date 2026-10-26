@@ -14,6 +14,7 @@ pub mod hru;
 pub mod mgt;
 pub mod objects;
 pub mod print;
+pub mod routing;
 pub mod schema;
 pub mod table;
 pub mod time;
@@ -26,6 +27,7 @@ pub use hru::{HruData, PlantCommunity, PlantInit, Soil, SoilLayer, SoilPlantInit
 pub use mgt::{DecisionTable, DtblAct, DtblCond, MgtOp, MgtSchedule};
 pub use objects::{ObjectKind, Outflow, SpatialObject};
 pub use print::{PrintObject, PrintSettings};
+pub use routing::{AquiferDb, RuData, RuDef, RuElement};
 pub use table::Table;
 pub use time::{SimDay, TimeSim};
 
@@ -79,6 +81,12 @@ pub struct Project {
     pub chem_app: Option<Table>,
     /// `soil_lyr_depths.sol` (custom layer depths, mm, as listed), when the project has it.
     pub soil_lyr_depths: Option<Vec<i32>>,
+    /// `rout_unit.ele` (by row number, element 0 unused), `rout_unit.def` and `rout_unit.rtu`.
+    pub ru_elements: Vec<RuElement>,
+    pub ru_defs: Vec<RuDef>,
+    pub ru_data: Vec<RuData>,
+    /// `aquifer.aqu`, by row number (element 0 holds the defaults).
+    pub aquifer_db: Vec<AquiferDb>,
     /// `cal_parms.cal` and `calibration.cal`.
     pub cal_parms: Vec<CalParm>,
     pub cal_upd: Vec<CalUpdate>,

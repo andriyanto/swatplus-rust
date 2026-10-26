@@ -15,6 +15,7 @@ pub mod hru;
 pub mod list;
 pub mod print;
 pub mod project;
+pub mod routing;
 pub mod source;
 pub mod table;
 pub mod time;

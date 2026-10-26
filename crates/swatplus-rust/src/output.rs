@@ -19,12 +19,16 @@ pub struct TextTables {
     pw: String,
     nb: String,
     ls: String,
-    files: [Option<File>; 4],
+    ru: String,
+    aqu: String,
+    files: [Option<File>; 6],
     started: bool,
+    ru_started: bool,
+    aqu_started: bool,
     error: Option<String>,
 }
 
-const FILES: [&str; 4] = ["hru_wb_day.txt", "hru_pw_day.txt", "hru_nb_day.txt", "hru_ls_day.txt"];
+const FILES: [&str; 6] = ["hru_wb_day.txt", "hru_pw_day.txt", "hru_nb_day.txt", "hru_ls_day.txt", "ru_day.txt", "aquifer_day.txt"];
 
 /// What the buffers hold before they go to their files.
 const CHUNK: usize = 8 << 20;
@@ -42,15 +46,19 @@ impl TextTables {
             pw: String::new(),
             nb: String::new(),
             ls: String::new(),
-            files: [None, None, None, None],
+            ru: String::new(),
+            aqu: String::new(),
+            files: [None, None, None, None, None, None],
             started: false,
+            ru_started: false,
+            aqu_started: false,
             error: None,
         }
     }
 
     /// Writes what the buffers hold to the files, creating them on the first write.
     fn flush(&mut self) {
-        let bufs = [&mut self.wb, &mut self.pw, &mut self.nb, &mut self.ls];
+        let bufs = [&mut self.wb, &mut self.pw, &mut self.nb, &mut self.ls, &mut self.ru, &mut self.aqu];
         for ((buf, file), name) in bufs.into_iter().zip(self.files.iter_mut()).zip(FILES) {
             if buf.is_empty() || self.error.is_some() {
                 continue;
@@ -154,6 +162,48 @@ impl OutputSink for TextTables {
             }
         }
         if self.wb.len() + self.pw.len() + self.nb.len() + self.ls.len() > CHUNK {
+            self.flush();
+        }
+    }
+
+    fn ru_day(&mut self, d: Day, name: &str, hd: &swat_engine::hyd::Hyd) {
+        if !self.ru_started {
+            self.ru_started = true;
+            let _ = writeln!(self.ru, "{}", self.title);
+            let _ = write!(self.ru, "{:>6}{:>6}{:>6}{:>6}  {:<16}{:>6}", "jday", "mon", "day", "yr", "name", "type");
+            for (n, _) in hd.columns() {
+                let _ = write!(self.ru, " {n:>15}");
+            }
+            let _ = writeln!(self.ru);
+            let _ = writeln!(self.ru);
+        }
+        let _ = write!(self.ru, "{:6}{:6}{:6}{:6}  {:<16}{:>6}", d.jday, d.mon, d.day, d.yr, name, "ru");
+        for (_, v) in hd.columns() {
+            let _ = write!(self.ru, " {v:15.8e}");
+        }
+        let _ = writeln!(self.ru);
+        if self.ru.len() > CHUNK {
+            self.flush();
+        }
+    }
+
+    fn aqu_day(&mut self, d: Day, iaq: usize, gis_id: i32, name: &str, a: &swat_engine::route::AquDay) {
+        if !self.aqu_started {
+            self.aqu_started = true;
+            let _ = writeln!(self.aqu, "{}", self.title);
+            let _ = write!(self.aqu, "{KEYS}");
+            for (n, _) in a.columns() {
+                let _ = write!(self.aqu, " {n:>14}");
+            }
+            let _ = writeln!(self.aqu);
+            let _ = writeln!(self.aqu);
+        }
+        keys(&mut self.aqu, d, iaq, gis_id, name);
+        for (_, v) in a.columns() {
+            let _ = write!(self.aqu, "{v:15.3}");
+        }
+        let _ = writeln!(self.aqu);
+        if self.aqu.len() > CHUNK {
             self.flush();
         }
     }

@@ -436,6 +436,9 @@ pub struct Saved {
     pub fr_stamin: f32,
     /// `nut_orgnc2`'s microbial carbon lost with sediment, taken again on later days.
     pub c_microb_sed: f32,
+    /// `pest_enrsb`'s enrichment ratio (`enratio` of the HRU module; `varinit` zeroes a local of
+    /// the same name), so `swr_subwq` uses the last one computed for any HRU.
+    pub enratio: f32,
 }
 
 /// `plant_init` for the community's single plant. `wgn_months` gives each month's mean maximum

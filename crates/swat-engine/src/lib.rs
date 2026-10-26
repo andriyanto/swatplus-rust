@@ -12,4 +12,6 @@ pub mod climate;
 pub mod clock;
 pub mod fortran;
 pub mod hru;
+pub mod hyd;
+pub mod route;
 pub mod run;

@@ -126,6 +126,20 @@ pub fn load_project(src: &dyn FileSource) -> Result<(Project, LoadReport)> {
     if let Some((_, text)) = fetch("init", "plant")? {
         project.plant_communities = hru::read_plant_communities(&text)?;
     }
+    // hyd_connect: ru_read and ru_read_elements; proc_aqu: aqu_read.
+    if let Some((name, text)) = fetch("routing_unit", "ru_ele")? {
+        project.ru_elements = crate::routing::read_ru_elements(&name, &text)?;
+    }
+    if let Some((name, text)) = fetch("routing_unit", "ru")? {
+        project.ru_data = crate::routing::read_ru_data(&name, &text)?;
+    }
+    let n_ru = project.objects_of(swat_model::ObjectKind::RoutingUnit).count();
+    if let Some((name, text)) = fetch("routing_unit", "ru_def")? {
+        project.ru_defs = crate::routing::read_ru_defs(&name, &text, n_ru)?;
+    }
+    if let Some((name, text)) = fetch("aquifer", "aqu")? {
+        project.aquifer_db = crate::routing::read_aquifers(&name, &text)?;
+    }
     // proc_cal
     if let Some((name, text)) = fetch("chg", "cal_parms")? {
         project.cal_parms = crate::cal::read_cal_parms(&name, &text)?;

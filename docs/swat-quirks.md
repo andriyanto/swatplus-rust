@@ -333,6 +333,35 @@ their inputs, listed in each `README.md`.
   about 375 mm a year to the air against a PET of about 1,300 mm; almost all rain leaves as
   `wet_oflo`. Reproduced as is.
 
+## Routing units and aquifers (phase 3a)
+
+From `hyd_connect`, `command`, `hru_hyds`, `ru_control`, `dr_ru`, `time_conc_init`,
+`aqu_initial` and `aqu_1d_control`; the port is in `swat-engine/src/route.rs`.
+
+- **Objects run in passes over the object array**, HRUs first, then routing units, aquifers
+  and channels; an object runs once everything sending to it has (and, for a routing unit, all
+  its elements). Inflows are summed in the order of the sending objects.
+- **Hydrograph sums mix temperatures by flow** (`hydout_add`); scaling and `**` keep the first
+  hydrograph's temperature. An HRU's water is at `5 + 0.75 tave`, recharge and lateral flow at 0.
+- **A delivery ratio of `0` (what the Editor writes) is computed** (`dr_ru`): the square root
+  of the HRU's time of concentration over the routing unit's, at most 1, on everything but the
+  flow. The recharge hydrograph gets none. A name `delratio.del` doesn't have would give a ratio
+  of 0 on everything.
+- **`ru_day` sums all five hydrographs**: total, recharge, surface, lateral and tile flow, so
+  the total is counted twice.
+- **The sediment classes are never zero**: their lag stores start at 1e-6 every day
+  (`stor_surfstor`), so an HRU releases 1e-6 × the lag factor of sand, silt, clay and both
+  aggregates daily without any erosion.
+- **The enrichment ratio is shared by all HRUs.** `varinit` zeroes a local variable of the same
+  name, so `swr_subwq` uses the last ratio computed for any HRU (often another HRU's, or another
+  day's) for CBOD.
+- **An aquifer's initial storage uses the water table of the aquifer numbered as its database
+  row** (`aqu_d(iaqdb)`), 0 if that aquifer comes later. With one row per aquifer, as the Editor
+  writes them, it is the aquifer's own.
+- **`aquifer_day` is labelled one column off**: the header says `orgn`, `orgp` where the values
+  are the (constant) carbon and organic N; return flow sent to another aquifer counts as `flo_ls`.
+- **Revap uses the weather station's Hargreaves PET**, whatever PET method the HRUs use.
+
 ## Hard calibration (`calibration.cal`)
 
 - **Applied once, after the HRUs are set up** (`proc_cal` → `cal_conditions`), so a new `perco`
