@@ -18,7 +18,7 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
 
@@ -41,7 +41,10 @@ jobs:
         run: |
           status=0
           scripts/make-variants.sh testdata/Ames_sub1 variants
-          for scenario in Osu_1hru Ames_sub1 Ames_bare Ames_past0 Ames_past Ames_corn Ames_cornf Ames_cosy Ames_cosy2 Ames_dtbl; do
+          # Phase 3: Batanghari's HRUs, 2015-2019 (three printed years) to keep the tables small.
+          scripts/make-phase3-variants.py testdata/Batanghari variants
+          sed -i '3s/2025/2019/' variants/Bh_land/time.sim
+          for scenario in Osu_1hru Ames_sub1 Ames_bare Ames_past0 Ames_past Ames_corn Ames_cornf Ames_cosy Ames_cosy2 Ames_dtbl Bh_land; do
             src=testdata/$scenario
             test -d "$src" || src=variants/$scenario
             mkdir -p runs/$scenario
@@ -61,5 +64,7 @@ jobs:
               fi
               cat runs/$scenario/$table.cmp
             done
+            # Batanghari's daily tables run to gigabytes.
+            rm -f runs/$scenario/fortran/*_day.txt runs/$scenario/rust/*_day.txt
           done
           exit $status

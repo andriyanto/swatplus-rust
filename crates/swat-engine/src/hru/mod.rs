@@ -101,6 +101,9 @@ pub struct Hru {
     pub lat_len: f32,
     pub esco: f32,
     pub cn3_swf: f32,
+    /// Percolation coefficient (`hydrology.hyd`), and the share of a layer's water above field
+    /// capacity it lets percolate in a day.
+    pub perco: f32,
     pub perco_lim: f32,
     pub latq_co: f32,
     pub pet_co: f32,
@@ -583,7 +586,52 @@ pub fn init_hrus(
         time_conc(&mut h, surlag);
         out.push(h);
     }
+    cal_conditions(project, &mut out)?;
     Ok(out)
+}
+
+/// SWAT+ `cal_conditions` (from `proc_cal`, after the HRUs are set up): the changes of
+/// `calibration.cal`, so far those of HRU parameters without conditions.
+fn cal_conditions(project: &Project, hrus: &mut [Hru]) -> Result<(), String> {
+    for u in &project.cal_upd {
+        let p = project.cal_parms.iter().find(|p| swat_model::table::fortran_eq(&p.name, &u.name)).cloned().unwrap_or_default();
+        if !u.conds.is_empty() {
+            return Err(format!("calibration of {} with conditions ({})", u.name, u.conds.join(", ")));
+        }
+        if p.ob_typ != "hru" {
+            return Err(format!("calibration of {} ({} parameter)", u.name, p.ob_typ));
+        }
+        if !matches!(u.chg_typ.as_str(), "absval" | "abschg" | "pctchg" | "relchg") {
+            return Err(format!("calibration of {}: change {}", u.name, u.chg_typ));
+        }
+        let chg_par = |cur: f32| -> f32 {
+            let v = match u.chg_typ.as_str() {
+                "absval" => u.val,
+                "abschg" => cur + u.val,
+                "pctchg" => (1.0 + u.val / 100.0) * cur,
+                _ => (1.0 + u.val) * cur,
+            };
+            v.max(p.absmin).min(p.absmax)
+        };
+        let elems: Vec<usize> = if u.elems.is_empty() { (1..=hrus.len()).collect() } else { u.elems.clone() };
+        for e in elems {
+            let h = hrus.get_mut(e.wrapping_sub(1)).ok_or_else(|| format!("calibration of {}: HRU {e}", u.name))?;
+            match u.name.as_str() {
+                "perco" => {
+                    // Not for tile-drained HRUs (none are, so far).
+                    h.perco = chg_par(h.perco);
+                    h.perco_lim = if h.perco > 1.0e-6 {
+                        let perc_ln_func = 1.0052_f32 * (-(h.perco - 1.0e-6).ln()).ln() + 5.6862;
+                        (-perc_ln_func).exp().min(1.0)
+                    } else {
+                        0.0
+                    };
+                }
+                other => return Err(format!("calibration of {other}")),
+            }
+        }
+    }
+    Ok(())
 }
 
 fn init_hru(
@@ -629,6 +677,7 @@ fn init_hru(
     h.esco = hyd.real("esco");
     h.cn3_swf = hyd.real("cn3_swf");
     let perco = hyd.real("perco");
+    h.perco = perco;
     h.sno = Snow {
         falltmp: sno.real("falltmp"),
         melttmp: sno.real("melttmp"),
@@ -705,13 +754,14 @@ fn init_hru(
         && !mgt_name.is_empty()
         && let Some(s) = project.management.iter().find(|s| swat_model::table::fortran_eq(&s.name, mgt_name))
     {
-        let rot = com.map(|c| c.rot_yr_ini).unwrap_or(1);
+        // plant_init sets the rotation year in its loop over the plants.
+        let rot = com.filter(|c| !c.plants.is_empty()).map(|c| c.rot_yr_ini).unwrap_or(1);
         let mut m = mgt::Mgt::new(project, s, ndays, rot, project.time.normalized().day_start)?;
         // Without plants, plant_init leaves the HRU's first operation at its default, 1.
         if com.is_none_or(|c| c.plants.is_empty()) {
             m.cur_op = 0;
         }
-        if !m.ops.is_empty() {
+        if !m.ops.is_empty() || !m.dtbls.is_empty() {
             h.mgt = Some(m);
         }
     }
@@ -719,7 +769,9 @@ fn init_hru(
     // plant_init: USLE P and LS (the slope length capped by the practice isn't used).
     let (cp, _) = Row::find(project.cons_practice.as_ref(), schema::CONS_PRACTICE, lu.text("cons_prac"));
     let xm = 0.6 * (1.0 - (-35.835_f32 * h.slope).exp());
-    let sin_sl = h.slope.atan().sin();
+    // gfortran folds Sin(Atan(slope)) into slope / sqrt(slope * slope + 1), which rounds
+    // differently from sinf(atanf(slope)) on about two slopes in five.
+    let sin_sl = h.slope / (h.slope * h.slope + 1.0).sqrt();
     let usle_ls = (h.slope_len / 22.128).powf(xm) * (65.41 * sin_sl * sin_sl + 4.56 * sin_sl + 0.065);
     let usle_p = cp.real("pfac");
 
@@ -1106,7 +1158,7 @@ impl Hru {
             }
         }
         // The schedule's decision tables, on yesterday's stresses.
-        self.dtbl_day(c.end_yr);
+        self.dtbl_day(c, w.phubase0);
         let mut sw_volume_begin = 0.0_f32;
         for l in &self.layers {
             sw_volume_begin += l.st;

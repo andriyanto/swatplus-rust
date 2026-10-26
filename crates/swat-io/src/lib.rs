@@ -7,6 +7,7 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::unreachable))]
 
 pub mod basin;
+pub mod cal;
 pub mod cio;
 pub mod climate;
 pub mod con;

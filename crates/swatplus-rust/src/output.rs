@@ -1,28 +1,86 @@
 //! Daily output written as SWAT+ text tables, with the columns the port computes so far.
 
 use std::fmt::Write as _;
+use std::fs::File;
+use std::io::Write as _;
+use std::path::{Path, PathBuf};
 
 use swat_engine::hru::HruDay;
 use swat_engine::run::{Day, HruWeather, OutputSink};
 
 /// Collects `hru_wb_day.txt`, `hru_pw_day.txt`, `hru_nb_day.txt` and `hru_ls_day.txt` in SWAT+'s
-/// layout. Without the HRU simulation, the water balance has precipitation only, the plant table
-/// the weather only, and the other two aren't written.
+/// layout into folder `dir`, a few megabytes at a time (a large project's tables run to
+/// gigabytes). Without the HRU simulation, the water balance has precipitation only, the plant
+/// table the weather only, and the other two aren't written.
 pub struct TextTables {
     title: String,
-    pub wb: String,
-    pub pw: String,
-    pub nb: String,
-    pub ls: String,
+    dir: PathBuf,
+    wb: String,
+    pw: String,
+    nb: String,
+    ls: String,
+    files: [Option<File>; 4],
+    started: bool,
+    error: Option<String>,
 }
+
+const FILES: [&str; 4] = ["hru_wb_day.txt", "hru_pw_day.txt", "hru_nb_day.txt", "hru_ls_day.txt"];
+
+/// What the buffers hold before they go to their files.
+const CHUNK: usize = 8 << 20;
 
 const KEYS: &str = "  jday   mon   day    yr    unit  gis_id  name            ";
 
 const WEATHER: [&str; 6] = ["tmx", "tmn", "tmpav", "solarad", "wndspd", "rhum"];
 
 impl TextTables {
-    pub fn new(title: &str) -> Self {
-        Self { title: title.to_string(), wb: String::new(), pw: String::new(), nb: String::new(), ls: String::new() }
+    pub fn new(title: &str, dir: &Path) -> Self {
+        Self {
+            title: title.to_string(),
+            dir: dir.to_path_buf(),
+            wb: String::new(),
+            pw: String::new(),
+            nb: String::new(),
+            ls: String::new(),
+            files: [None, None, None, None],
+            started: false,
+            error: None,
+        }
+    }
+
+    /// Writes what the buffers hold to the files, creating them on the first write.
+    fn flush(&mut self) {
+        let bufs = [&mut self.wb, &mut self.pw, &mut self.nb, &mut self.ls];
+        for ((buf, file), name) in bufs.into_iter().zip(self.files.iter_mut()).zip(FILES) {
+            if buf.is_empty() || self.error.is_some() {
+                continue;
+            }
+            let path = self.dir.join(name);
+            if file.is_none() {
+                match File::create(&path) {
+                    Ok(f) => *file = Some(f),
+                    Err(e) => {
+                        self.error = Some(format!("{}: {e}", path.display()));
+                        continue;
+                    }
+                }
+            }
+            if let Some(f) = file.as_mut()
+                && let Err(e) = f.write_all(buf.as_bytes())
+            {
+                self.error = Some(format!("{}: {e}", path.display()));
+            }
+            buf.clear();
+        }
+    }
+
+    /// Writes the rest; `Err` names the file that couldn't be written.
+    pub fn finish(mut self) -> Result<(), String> {
+        self.flush();
+        match self.error {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 }
 
@@ -55,7 +113,8 @@ fn pw_columns(h: &HruDay) -> Vec<(&'static str, f32)> {
 impl OutputSink for TextTables {
     fn hru_day(&mut self, d: Day, hru: usize, gis_id: i32, name: &str, w: &HruWeather, h: Option<&HruDay>) {
         let weather = [w.tmax, w.tmin, w.tave, w.solrad, w.windsp, w.rhum];
-        if self.wb.is_empty() {
+        if !self.started {
+            self.started = true;
             match h {
                 Some(h) => {
                     let names: Vec<&str> = h.wb.columns().iter().map(|(n, _)| *n).collect();
@@ -93,6 +152,9 @@ impl OutputSink for TextTables {
                 row(&mut self.wb, [w.precip]);
                 row(&mut self.pw, weather);
             }
+        }
+        if self.wb.len() + self.pw.len() + self.nb.len() + self.ls.len() > CHUNK {
+            self.flush();
         }
     }
 }

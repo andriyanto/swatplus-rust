@@ -32,3 +32,11 @@ stage is exact before the next starts.
 
 `scripts/make-phase3-variants.py` builds the variants; SWAT+ Fortran runs them like any other
 project.
+
+## Progress
+
+- **3a-0 done.** `Bh_land` matches SWAT+ on every value of the four daily HRU tables (water
+  balance, plants, nutrient balance, losses: 80 columns, 6,107,246 HRU-days, 2017–2025 after two
+  warm-up years). It took the generic plant-and-harvest decision tables, hard calibration of
+  `perco`, gfortran's handling of a short `plants.plt` row, and gfortran's folding of
+  `Sin(Atan(x))` (see `docs/swat-quirks.md`). CI runs it on 2015–2019.

@@ -107,6 +107,13 @@ impl<'a> Records<'a> {
     /// A read of `n` values that keeps what it got when the file ends first, as Fortran assigns
     /// the values read before an end-of-file. `None` when no value was read at all.
     pub fn read_partial(&mut self, n: usize) -> Option<(Fields, bool)> {
+        self.read_checked(n, |_, _| true)
+    }
+
+    /// [`read_partial`](Self::read_partial) where value `i` must also pass `ok(i, text)` (convert
+    /// to its variable's type): a value that doesn't ends the read with the record it is in, as
+    /// gfortran's read stops there with an error and the next read starts on the next record.
+    pub fn read_checked(&mut self, n: usize, ok: impl Fn(usize, &str) -> bool) -> Option<(Fields, bool)> {
         let start = self.line();
         let mut items: Vec<Item> = Vec::with_capacity(n);
         let mut eof = false;
@@ -115,9 +122,11 @@ impl<'a> Records<'a> {
                 eof = true;
                 break;
             };
-            match tokenize(line, n - items.len(), &mut items) {
-                Some(Stop::Slash) | Some(Stop::Full) => break,
-                None => {}
+            let first = items.len();
+            let stop = tokenize(line, n - items.len(), &mut items);
+            let bad = items.iter().enumerate().skip(first).any(|(i, v)| v.as_deref().is_some_and(|t| !ok(i, t)));
+            if bad || matches!(stop, Some(Stop::Slash) | Some(Stop::Full)) {
+                break;
             }
             if items.len() >= n {
                 break;

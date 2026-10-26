@@ -17,7 +17,7 @@ original carbon model (`Ames_past0`) and with the Century carbon model Ames uses
 **Ames_sub1 itself**, unchanged: corn and soybean in one community, its 305 scheduled
 operations, irrigation by decision table and custom soil layers. CI checks this on every push.
 
-Phase 3 (routing units, aquifers, SWAT-DEG channels) works on two real projects from West Sumatra, Indonesia, in `testdata/`: `Batanghari` (upland, 284 channels, 1,858 HRUs) and `Pessel` (coastal, 1,454 channels, 3,966 HRUs, peat and paddy), each with its Fortran reference; the stages are in [`docs/phase3.md`](docs/phase3.md).
+Phase 3 (routing units, aquifers, SWAT-DEG channels) works on two real projects from West Sumatra, Indonesia, in `testdata/`: `Batanghari` (upland, 284 channels, 1,858 HRUs) and `Pessel` (coastal, 1,454 channels, 3,966 HRUs, peat and paddy), each with its Fortran reference; the stages are in [`docs/phase3.md`](docs/phase3.md). Stage 3a-0 is done: Batanghari's 1,858 HRUs (`Bh_land`: Hargreaves PET, urban and wetland HRUs as forest) match SWAT+ on all four daily HRU tables over nine years.
 
 The design, decisions and phases are in RustGIS: [`docs/swat/design.md`](https://github.com/andriyanto/rustgis/blob/swat-plus-design/docs/swat/design.md).
 
@@ -53,7 +53,7 @@ branch (`SWAT+ Fortran build` workflow).
 The aim is the same results as SWAT+, so its behaviour is reproduced even where it surprises.
 What has been found so far is in [`docs/swat-quirks.md`](docs/swat-quirks.md).
 
-Next: routing (phase 3) — see [`docs/phase2.md`](docs/phase2.md). For a project the port can't
+Next: routing (phase 3a, the command loop with routing units and aquifers) — see [`docs/phase3.md`](docs/phase3.md). For a project the port can't
 simulate yet (other decision table conditions and actions, other operations, other PET
 methods…), `run` says why and writes the weather and precipitation only.
 
