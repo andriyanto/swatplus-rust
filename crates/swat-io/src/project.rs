@@ -153,6 +153,25 @@ pub fn load_project(src: &dyn FileSource) -> Result<(Project, LoadReport)> {
     if let Some((_, text)) = fetch("init", "plant")? {
         project.plant_communities = hru::read_plant_communities(&text)?;
     }
+    // basin_read_objs: the basin's name and areas.
+    if let Some((name, text)) = fetch("simulation", "object_cnt")? {
+        let mut rec = crate::list::Records::new(&name, &text);
+        rec.skip()?;
+        rec.skip()?;
+        if let Ok(f) = rec.read(3) {
+            project.basin_name = f.text_or(0, "");
+            project.area_ls_ha = f.real_or(1, 0.0)?;
+            project.area_tot_ha = f.real_or(2, 0.0)?;
+        }
+    }
+    // lsu_read_elements: landscape units.
+    if let Some((name, text)) = fetch("regions", "def_lsu")? {
+        project.lsu_defs = crate::routing::read_lsu_defs(&name, &text)?;
+    }
+    if let Some((name, text)) = fetch("regions", "ele_lsu")? {
+        project.lsu_elems = crate::routing::read_lsu_elements(&name, &text)?;
+    }
+    project.aqu_elems = fetch("regions", "ele_aqu")?.is_some();
     // hyd_connect: ru_read and ru_read_elements; proc_aqu: aqu_read.
     if let Some((name, text)) = fetch("routing_unit", "ru_ele")? {
         project.ru_elements = crate::routing::read_ru_elements(&name, &text)?;

@@ -59,7 +59,75 @@ pub trait OutputSink {
 
     /// One aquifer's day (`aquifer_day.txt`): its 1-based number, GIS id, name and state.
     fn aqu_day(&mut self, _day: Day, _iaq: usize, _gis_id: i32, _name: &str, _d: &crate::route::AquDay) {}
+
+    /// An HRU's month, year or average annual (`hru_*_mon`, `_yr`, `_aa`), on the period's last
+    /// day; `nutrients` as for the daily tables.
+    #[allow(clippy::too_many_arguments)]
+    fn hru_period(&mut self, _p: Period, _day: Day, _hru: usize, _gis_id: i32, _name: &str, _rows: &HruRows, _nutrients: bool) {}
+
+    /// A routing unit's period (`ru_mon`, …).
+    fn ru_period(&mut self, _p: Period, _day: Day, _name: &str, _hd: &crate::hyd::Hyd) {}
+
+    /// A SWAT-DEG channel's period (`channel_sd_mon`, …): storage and water temperature are the
+    /// day's.
+    #[allow(clippy::too_many_arguments)]
+    fn cha_period(
+        &mut self,
+        _p: Period,
+        _day: Day,
+        _ich: usize,
+        _gis_id: i32,
+        _name: &str,
+        _w: &crate::channel::ChWat,
+        _stor: &crate::hyd::Hyd,
+        _hin: &crate::hyd::Hyd,
+        _hout: &crate::hyd::Hyd,
+        _wtemp: f32,
+    ) {
+    }
+
+    /// An aquifer's period (`aquifer_mon`, …).
+    fn aqu_period(&mut self, _p: Period, _day: Day, _iaq: usize, _gis_id: i32, _name: &str, _d: &crate::route::AquDay) {}
+
+    /// The basin's or a landscape unit's day (`basin_wb_day`, `lsunit_wb_day`, …; `p` None) or
+    /// period.
+    #[allow(clippy::too_many_arguments)]
+    fn region(&mut self, _r: Region, _p: Option<Period>, _day: Day, _unit: usize, _gis_id: i32, _name: &str, _rows: &HruRows) {}
+
+    /// An HRU plant's average yield per harvest over the simulation (`crop_yld_aa.txt`: mass,
+    /// carbon, N, P in kg/ha), on the last day.
+    fn crop_yld_aa(&mut self, _day: Day, _hru: usize, _plant: &str, _y: [f32; 4]) {}
+
+    /// The basin's crops (`basin_crop_yld_yr`, `_aa`): harvested area (ha), yield (t) and t/ha.
+    #[allow(clippy::too_many_arguments)]
+    fn basin_crop_yld(&mut self, _p: Period, _yrc: i32, _iplt: usize, _plant: &str, _area: f32, _yld: f32, _t_ha: f32) {}
+
+    /// The basin's aquifers (`basin_aqu_*`), weighted by area.
+    fn basin_aqu(&mut self, _p: Option<Period>, _day: Day, _name: &str, _d: &crate::route::AquDay) {}
+
+    /// The basin's SWAT-DEG channels (`basin_sd_cha_*`), added.
+    #[allow(clippy::too_many_arguments)]
+    fn basin_cha(
+        &mut self,
+        _p: Option<Period>,
+        _day: Day,
+        _name: &str,
+        _w: &crate::channel::ChWat,
+        _stor: &crate::hyd::Hyd,
+        _hin: &crate::hyd::Hyd,
+        _hout: &crate::hyd::Hyd,
+    ) {
+    }
 }
+
+/// A region of the basin-level tables.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Region {
+    Basin,
+    Lsu,
+}
+
+pub use crate::periods::{HruRows, Period};
 
 /// SWAT+'s daily print switches (`pco%day_print`, `day_print_over`, `int_day_cur`) and the print
 /// window as `basin_print_codes_read` completes it: a first day of 0 is 1, a last day of 0 is 366,
@@ -204,8 +272,48 @@ pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -
     let mut gate = PrintGate::new(&project.print, &clock);
     let nyskip = project.print.nyskip;
     let nbyr = clock.nbyr;
+    let mut prt = crate::periods::PrintYears::default();
+    let mut hru_acc = vec![crate::periods::HruAcc::default(); hrus.len()];
+    let mut ru_acc: Vec<crate::periods::RuAcc> = Vec::new();
+    let mut cha_acc: Vec<crate::periods::ChaAcc> = Vec::new();
+    let mut aqu_acc: Vec<crate::periods::AquAcc> = Vec::new();
+    // basin_output needs ls_unit.ele, lsu_output ls_unit.def, basin_aquifer_output aqu_catunit.ele.
+    let basin_on = project.lsu_elems.len() > 1;
+    let mut basin_acc = crate::periods::RegionAcc::new(false);
+    let mut lsu_acc: Vec<crate::periods::RegionAcc> = project.lsu_defs.iter().map(|_| crate::periods::RegionAcc::new(true)).collect();
+    let mut day_rows: Vec<Option<HruRows>> = vec![None; hrus.len()];
+    let mut basin_aqu_acc = crate::periods::AquAcc::default();
+    let mut basin_cha_acc = crate::periods::BasinChaAcc::default();
+    let aqu_area: Vec<f32> = project.objects_of(swat_model::ObjectKind::Aquifer).map(|o| o.area_ha).collect();
+    let ru_gis: Vec<i32> = project.objects_of(swat_model::ObjectKind::RoutingUnit).map(|o| o.gis_id).collect();
+    let bsn_name = project.basin_name.clone();
+    // plant_all_init: the basin's plants, in the order they first appear in the HRUs'
+    // communities, and each HRU plant's place among them.
+    let mut plts_bsn: Vec<String> = Vec::new();
+    let bsn_num: Vec<Vec<usize>> = land
+        .as_ref()
+        .map(|l| {
+            l.iter()
+                .map(|h| {
+                    h.plants
+                        .iter()
+                        .map(|p| match plts_bsn.iter().position(|n| *n == p.cpnm) {
+                            Some(k) => k,
+                            None => {
+                                plts_bsn.push(p.cpnm.clone());
+                                plts_bsn.len() - 1
+                            }
+                        })
+                        .collect()
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut bsn_yld = vec![(0.0_f32, 0.0_f32); plts_bsn.len()];
+    let mut bsn_yld_aa = vec![(0.0_f32, 0.0_f32); plts_bsn.len()];
     for curyr in 1..=nbyr {
         clock.start_year(curyr);
+        prt.start_year(clock.yrs, nyskip, nbyr, swat_model::time::is_leap(clock.yrc), clock.day_start, clock.day_end_yr);
         if !balance_started && clock.yrs > nyskip {
             for h in land.iter_mut().flatten() {
                 h.start_balance();
@@ -220,6 +328,20 @@ pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -
             let output = clock.yrs > nyskip;
             let printing = output && gate.prints();
             let day = Day { jday: clock.day, mon: clock.mo, day: clock.day_mo, yr: clock.yrc };
+            let end_sim = clock.end_yr && clock.yrs == nbyr;
+            if end_sim {
+                prt.end_sim(nbyr);
+            }
+            let mo = clock.mo.clamp(1, 12) as usize;
+            let pday = crate::periods::PeriodDay {
+                end_mo: clock.day == clock.ndays[mo],
+                end_yr: clock.end_yr,
+                end_sim,
+                mon_days: (clock.ndays[mo] - clock.ndays[mo - 1]) as f32,
+                day_end_yr: clock.day_end_yr as f32,
+                yrs_prt: prt.yrs_prt,
+                days_prt: prt.days_prt,
+            };
             for (j, (ist, o, plaps, tlaps)) in hrus.iter().enumerate() {
                 let Some(st) = weather.stations.get(ist - 1) else { continue };
                 let s = &st.weat;
@@ -262,6 +384,12 @@ pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -
                         end_yr: clock.day == clock.day_end_yr,
                     };
                     let mut d = h.day(&w, &ctx, &basin, &mut saved);
+                    for &(ipl, y) in &d.harvests {
+                        if let Some(&k) = bsn_num.get(j).and_then(|b| b.get(ipl)) {
+                            bsn_yld[k].0 += h.area_ha;
+                            bsn_yld[k].1 += y * h.area_ha / 1000.0;
+                        }
+                    }
                     if output {
                         h.close_day(&mut d.wb, printing);
                     }
@@ -274,6 +402,27 @@ pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -
                 if printing {
                     out.hru_day(day, j + 1, o.gis_id, &o.name, &w, hd.as_ref());
                 }
+                if output && let Some(d) = hd.as_ref() {
+                    let weather = [w.tmax, w.tmin, w.tave, w.solrad, w.windsp, w.rhum];
+                    hru_acc[j].day(d, weather, &pday, |p, rows| out.hru_period(p, day, j + 1, o.gis_id, &o.name, rows, d.nutrients));
+                    day_rows[j] = Some(crate::periods::region_values(d, weather));
+                }
+                if end_sim
+                    && output
+                    && let Some(h) = land.as_ref().and_then(|l| l.get(j))
+                {
+                    for pl in &h.plants {
+                        let mut y = pl.yield_tot;
+                        if pl.harv_num > 0 {
+                            let k = pl.harv_num as f32;
+                            y = crate::hru::plant::OrgMass { m: y.m / k, c: y.c / k, n: y.n / k, p: y.p / k };
+                        }
+                        out.crop_yld_aa(day, j + 1, &pl.db.name, [y.m, y.c, y.n, y.p]);
+                    }
+                }
+            }
+            if output && land.is_some() {
+                regions(project, &day_rows, basin_on, &mut basin_acc, &mut lsu_acc, &ru_gis, &bsn_name, &pday, printing, day, out);
             }
             if let Some(n) = network.as_mut() {
                 let nd = crate::route::NetDay {
@@ -296,15 +445,64 @@ pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -
                     jday: clock.day,
                 };
                 n.day(&nd);
-                if printing {
-                    for (ich, gis_id, name, w, st, i, o, wtemp) in n.channels() {
-                        out.cha_day(day, ich, gis_id, name, &w, &st, &i, &o, wtemp);
+                if output {
+                    let mut bw = crate::channel::ChWat::default();
+                    let (mut bs, mut bi, mut bo) = (crate::hyd::Hyd::default(), crate::hyd::Hyd::default(), crate::hyd::Hyd::default());
+                    let mut any_cha = false;
+                    let mut ba = crate::route::AquDay::default();
+                    let mut any_aqu = false;
+                    for (_, _, _, w, st, i, o, _) in n.channels() {
+                        any_cha = true;
+                        bs = bs.plus(st);
+                        bi = bi.plus(i);
+                        bo = bo.plus(o);
+                        crate::periods::wat_sum(&mut bw, &w);
                     }
-                    for (iaq, gis_id, name, d) in n.aquifers() {
-                        out.aqu_day(day, iaq, gis_id, name, d);
+                    if any_cha {
+                        if printing {
+                            out.basin_cha(None, day, &bsn_name, &bw, &bs, &bi, &bo);
+                        }
+                        basin_cha_acc.day(&bw, &bi, &bo, &pday, |p, w, i, o| out.basin_cha(Some(p), day, &bsn_name, w, &bs, i, o));
                     }
-                    for (name, h) in n.routing_units() {
-                        out.ru_day(day, name, h);
+                    if project.aqu_elems {
+                        for (k, (_, _, _, d)) in n.aquifers().enumerate() {
+                            any_aqu = true;
+                            let c = aqu_area.get(k).copied().unwrap_or(0.0) / project.area_tot_ha;
+                            crate::periods::aqu_sum(&mut ba, d, c);
+                        }
+                    }
+                    if any_aqu {
+                        if printing {
+                            out.basin_aqu(None, day, &bsn_name, &ba);
+                        }
+                        basin_aqu_acc.day(&ba, &pday, |p, d| out.basin_aqu(Some(p), day, &bsn_name, d));
+                    }
+                    for (k, (ich, gis_id, name, w, st, i, o, wtemp)) in n.channels().into_iter().enumerate() {
+                        if printing {
+                            out.cha_day(day, ich, gis_id, name, &w, &st, &i, &o, wtemp);
+                        }
+                        if cha_acc.len() <= k {
+                            cha_acc.resize(k + 1, Default::default());
+                        }
+                        cha_acc[k].day(&w, &i, &o, &pday, |p, w, i, o| out.cha_period(p, day, ich, gis_id, name, w, &st, i, o, wtemp));
+                    }
+                    for (k, (iaq, gis_id, name, d)) in n.aquifers().enumerate() {
+                        if printing {
+                            out.aqu_day(day, iaq, gis_id, name, d);
+                        }
+                        if aqu_acc.len() <= k {
+                            aqu_acc.resize(k + 1, Default::default());
+                        }
+                        aqu_acc[k].day(d, &pday, |p, d| out.aqu_period(p, day, iaq, gis_id, name, d));
+                    }
+                    for (k, (name, h)) in n.routing_units().enumerate() {
+                        if printing {
+                            out.ru_day(day, name, h);
+                        }
+                        if ru_acc.len() <= k {
+                            ru_acc.resize(k + 1, Default::default());
+                        }
+                        ru_acc[k].day(h, &pday, |p, h| out.ru_period(p, day, name, h));
                     }
                 }
             }
@@ -314,12 +512,93 @@ pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -
                 }
             }
         }
+        // time_control at the year's end: the basin's crop yields.
+        for (k, name) in plts_bsn.iter().enumerate() {
+            if clock.yrs > nyskip {
+                let (area, yld) = bsn_yld[k];
+                out.basin_crop_yld(Period::Yr, clock.yrc, k + 1, name, area, yld, yld / (area + 1.0e-6));
+                bsn_yld_aa[k].0 += area;
+                bsn_yld_aa[k].1 += yld;
+            }
+            bsn_yld[k] = (0.0, 0.0);
+            if clock.yrs == nbyr {
+                let (area, yld) = bsn_yld_aa[k];
+                let t_ha = yld / (area + 1.0e-6);
+                out.basin_crop_yld(Period::Aa, clock.yrc, k + 1, name, area / prt.yrs_prt, yld / prt.yrs_prt, t_ha);
+            }
+        }
         for h in land.iter_mut().flatten() {
             h.end_year(basin.cswat, opts.fixes);
         }
         clock.yrc += 1;
     }
     Ok(report)
+}
+
+/// `basin_output` and `lsu_output` for a printed day: the HRUs' day weighted by their share of
+/// the basin (`bsn_frac`) and of their landscape unit (`ru_frac`), in SWAT+'s order.
+#[allow(clippy::too_many_arguments)]
+fn regions(
+    project: &Project,
+    rows: &[Option<HruRows>],
+    basin_on: bool,
+    basin: &mut crate::periods::RegionAcc,
+    lsus: &mut [crate::periods::RegionAcc],
+    ru_gis: &[i32],
+    bsn_name: &str,
+    pday: &crate::periods::PeriodDay,
+    printing: bool,
+    day: Day,
+    out: &mut dyn OutputSink,
+) {
+    use crate::periods::{region_add, region_start};
+    let elems = &project.lsu_elems;
+    let empty = HruRows { wb: [0.0; 32], nb: [0.0; 13], ls: [0.0; 13], pw: [0.0; 25] };
+    if basin_on {
+        let mut r = region_start(&empty);
+        let mut init = [0.0_f32; 2];
+        for ihru in 1..=rows.len() {
+            // lsu_elem(ihru)%obtypno, then that element's share.
+            let iihru = elems.get(ihru).map_or(0, |e| e.obtypno.max(0) as usize);
+            let Some(e) = elems.get(iihru) else { continue };
+            if e.bsn_frac > 1.0e-12
+                && e.obtyp == "hru"
+                && let Some(Some(h)) = rows.get(iihru.wrapping_sub(1))
+            {
+                region_add(&mut r, h, e.bsn_frac);
+                init[0] += h.wb[13] * e.bsn_frac;
+                init[1] += h.wb[17] * e.bsn_frac;
+            }
+        }
+        basin.start(init);
+        if printing {
+            let d = basin.daily_row(&r);
+            out.region(Region::Basin, None, day, 1, 1, bsn_name, &d);
+        }
+        basin.day(&r, pday, |p, rows| out.region(Region::Basin, Some(p), day, 1, 1, bsn_name, rows));
+    }
+    for (ilsu, (def, acc)) in project.lsu_defs.iter().zip(lsus.iter_mut()).enumerate() {
+        let mut r = region_start(&empty);
+        let mut init = [0.0_f32; 2];
+        for &ihru in &def.elems {
+            let Some(e) = elems.get(ihru) else { continue };
+            if e.ru_frac > 1.0e-9
+                && e.obtyp == "hru"
+                && let Some(Some(h)) = rows.get(ihru.wrapping_sub(1))
+            {
+                region_add(&mut r, h, e.ru_frac);
+                init[0] += h.wb[13] * e.ru_frac;
+                init[1] += h.wb[17] * e.ru_frac;
+            }
+        }
+        acc.start(init);
+        let gis = ru_gis.get(ilsu).copied().unwrap_or(0);
+        if printing {
+            let d = acc.daily_row(&r);
+            out.region(Region::Lsu, None, day, ilsu + 1, gis, &def.name, &d);
+        }
+        acc.day(&r, pday, |p, rows| out.region(Region::Lsu, Some(p), day, ilsu + 1, gis, &def.name, rows));
+    }
 }
 
 /// SWAT+ `cli_lapse` for one object at elevation `elev` using station `ist`.

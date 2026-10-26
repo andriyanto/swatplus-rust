@@ -262,6 +262,10 @@ pub struct Plant {
     pub db: PlantDb,
     /// The name `plant.ini` gives it, which operations refer to.
     pub cpnm: String,
+    /// What its harvests yielded since the simulation started (`yield_tot`), and how many
+    /// harvests counted (`harv_num`; the decision tables' harvest only doesn't count).
+    pub yield_tot: OrgMass,
+    pub harv_num: i32,
     /// Growing (`gro`) and dormant (`idorm`).
     pub gro: bool,
     pub idorm: bool,

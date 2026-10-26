@@ -192,8 +192,11 @@ pub struct Hru {
     pub irr_yr: f32,
     pub fertn: f32,
     pub fertp: f32,
-    /// The yield of today's harvest (`pl_yield%m`), printed and zeroed with the day's output.
-    pub pl_yield: f32,
+    /// The yield of today's harvest (`pl_yield`), printed and zeroed with the day's output.
+    pub pl_yield: plant::OrgMass,
+    /// Today's harvests: the plant's number in the community and the yield (kg/ha) the basin
+    /// crop table adds (`bsn_crop_yld`).
+    pub harvests: Vec<(usize, f32)>,
 }
 
 /// One day of `hru_pw_day` (plants and weather), the columns the port computes.
@@ -324,7 +327,7 @@ impl HruLs {
 
 /// An HRU's day: the four daily tables. `nutrients` is false when the soil nutrients follow a
 /// carbon model not ported (`cswat` 1): then `nb`, `ls` and nitrate percolation aren't SWAT+'s.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct HruDay {
     pub wb: HruWb,
     pub pw: HruPw,
@@ -334,6 +337,8 @@ pub struct HruDay {
     /// What leaves the HRU (`hru_hyds`): total, recharge, surface, lateral and tile flow
     /// (`ob%hd(1..5)`).
     pub hd: [crate::hyd::Hyd; 5],
+    /// Today's harvests (plant number in the community, yield in kg/ha for the basin's crops).
+    pub harvests: Vec<(usize, f32)>,
 }
 
 /// What an HRU's day needs besides its weather: the day of the year, its station's unadjusted
@@ -1621,7 +1626,7 @@ impl Hru {
         let pw = HruPw {
             lai: self.lai_sum,
             bioms: self.tot_com.m,
-            yield_: self.pl_yield,
+            yield_: self.pl_yield.m,
             residue: self.rsd_tot.m,
             sol_tmp: self.layers.get(1).map(|l| l.tmp).unwrap_or(0.0),
             strsw: strs[0],
@@ -1639,7 +1644,7 @@ impl Hru {
             bm_grow: pd.bm_grow,
             c_gro: pd.c_gro,
         };
-        self.pl_yield = 0.0;
+        self.pl_yield = plant::OrgMass::default();
         if self.tot_com.m < 0.0 {
             self.tot_com.m = 0.0;
         }
@@ -1671,7 +1676,7 @@ impl Hru {
             percn: nd.percn,
             ..HruLs::default()
         };
-        HruDay { wb, pw, nb, ls, nutrients: b.cswat == 0 || b.cswat == 2, hd }
+        HruDay { wb, pw, nb, ls, nutrients: b.cswat == 0 || b.cswat == 2, hd, harvests: std::mem::take(&mut self.harvests) }
     }
 
     /// `time_control` at the end of a year: perennials age, the original carbon model's soil is

@@ -459,6 +459,11 @@ impl super::Hru {
                                         self.harvgrain(&mut pl, *eff);
                                     }
                                     self.killop(&mut pl, i);
+                                    // Summed even when the harvest didn't happen (the day's
+                                    // yield so far, usually none).
+                                    pl.yield_tot = pl.yield_tot + self.pl_yield;
+                                    pl.harv_num += 1;
+                                    self.harvests.push((i, self.pl_yield.m));
                                 }
                                 self.plants[i] = pl;
                             }
@@ -533,6 +538,9 @@ impl super::Hru {
                                 self.harvgrain(&mut pl, eff);
                             }
                             self.killop(&mut pl, i);
+                            pl.yield_tot = pl.yield_tot + self.pl_yield;
+                            pl.harv_num += 1;
+                            self.harvests.push((i, self.pl_yield.m));
                         }
                         pl.reset_stress();
                         pl.phuacc = 0.0;
@@ -593,7 +601,7 @@ impl super::Hru {
         pl.harv_idx = pl.harv_idx.max(pl.db.wsyf);
         pl.tot = pl.tot - pl.seed;
         pl.ab_gr = pl.ab_gr - pl.seed;
-        self.pl_yield = eff * pl.seed.m;
+        self.pl_yield = OrgMass::scale(eff, pl.seed);
         let harveff1 = 1.0 - eff;
         if let Some(l) = self.layers.first_mut() {
             l.hact = OrgMass::scale(harveff1, pl.seed) + l.hact;

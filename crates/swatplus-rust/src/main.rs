@@ -120,7 +120,7 @@ fn run(dir: &str, out: &str, fixes: bool) -> ExitCode {
         eprintln!("error: {}: {e}", out.display());
         return ExitCode::FAILURE;
     }
-    let mut tables = output::TextTables::new(&title, out);
+    let mut tables = output::TextTables::new(&title, out, &project.print);
     tables.fixes = fixes;
     if fixes {
         eprintln!("note: --fix-swat: SWAT+'s bugs corrected, results will differ from SWAT+ (docs/swat-fixes.md)");
@@ -146,7 +146,7 @@ fn run(dir: &str, out: &str, fixes: bool) -> ExitCode {
         eprintln!("error: {e}");
         return ExitCode::FAILURE;
     }
-    println!("wrote the daily HRU tables to {}", out.display());
+    println!("wrote the output tables to {}", out.display());
     ExitCode::SUCCESS
 }
 

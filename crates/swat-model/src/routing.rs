@@ -13,6 +13,26 @@ pub struct RuElement {
     pub dr_name: String,
 }
 
+/// A landscape unit (`ls_unit.def`, `lsu_out`): its name, area and elements (numbers of
+/// `ls_unit.ele`, which SWAT+ then reads as HRU numbers).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LsuDef {
+    pub name: String,
+    pub area_ha: f32,
+    pub elems: Vec<usize>,
+}
+
+/// An element of `ls_unit.ele` (`lsu_elem`): its object, and its share of the basin and of its
+/// landscape unit.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LsuElem {
+    pub name: String,
+    pub obtyp: String,
+    pub obtypno: i32,
+    pub bsn_frac: f32,
+    pub ru_frac: f32,
+}
+
 /// A routing unit's definition (`rout_unit.def`): its elements, as numbers of `rout_unit.ele`
 /// rows (1-based).
 #[derive(Clone, Debug, Default, PartialEq)]

@@ -92,6 +92,15 @@ pub struct Project {
     pub chem_app: Option<Table>,
     /// `soil_lyr_depths.sol` (custom layer depths, mm, as listed), when the project has it.
     pub soil_lyr_depths: Option<Vec<i32>>,
+    /// `object.cnt`'s basin name and land and total areas (`bsn`).
+    pub basin_name: String,
+    pub area_ls_ha: f32,
+    pub area_tot_ha: f32,
+    /// `ls_unit.def` and `ls_unit.ele` (by row number, element 0 unused; empty without the
+    /// file), and whether `aqu_catunit.ele` is there (the basin aquifer table needs it).
+    pub lsu_defs: Vec<routing::LsuDef>,
+    pub lsu_elems: Vec<routing::LsuElem>,
+    pub aqu_elems: bool,
     /// `rout_unit.ele` (by row number, element 0 unused), `rout_unit.def` and `rout_unit.rtu`.
     pub ru_elements: Vec<RuElement>,
     pub ru_defs: Vec<RuDef>,

@@ -93,6 +93,74 @@ pub fn read_ru_defs(file: &str, text: &str, n_ru: usize) -> Result<Vec<RuDef>> {
     Ok(out)
 }
 
+/// `ls_unit.def` (`lsu_read_elements`): a title, the number of units, a header, then per unit
+/// its number, name, area, the length of its element list and the list.
+pub fn read_lsu_defs(file: &str, text: &str) -> Result<Vec<swat_model::routing::LsuDef>> {
+    let mut rec = Records::new(file, text);
+    rec.skip()?;
+    let mlsu = rec.read(1)?.int_or(0, 0)?.max(0) as usize;
+    rec.skip()?;
+    let mut out = Vec::with_capacity(mlsu);
+    for _ in 0..mlsu {
+        let mark = rec.mark();
+        let f = match rec.read(4) {
+            Ok(f) => f,
+            Err(Error::Eof { .. }) => break,
+            Err(e) => return Err(e),
+        };
+        let nspu = f.int_or(3, 0)?.max(0) as usize;
+        let mut d = swat_model::routing::LsuDef { name: f.text_or(1, ""), area_ha: f.real_or(2, 0.0)?, elems: Vec::new() };
+        if nspu > 0 {
+            rec.reset(mark);
+            let f = rec.read(4 + nspu)?;
+            let cnt = (0..nspu).map(|k| f.int_or(4 + k, 0)).collect::<Result<Vec<i32>>>()?;
+            d.elems = define_unit_elements(&cnt);
+        }
+        out.push(d);
+    }
+    Ok(out)
+}
+
+/// `ls_unit.ele` (`lsu_read_elements`): by row number, element 0 unused.
+pub fn read_lsu_elements(file: &str, text: &str) -> Result<Vec<swat_model::routing::LsuElem>> {
+    let mut rec = Records::new(file, text);
+    rec.skip()?;
+    rec.skip()?;
+    let body = rec.mark();
+    let mut imax = 0usize;
+    let mut n = 0usize;
+    loop {
+        match rec.read(1) {
+            Ok(f) => {
+                imax = imax.max(f.int_or(0, 0)?.max(0) as usize);
+                n += 1;
+            }
+            Err(Error::Eof { .. }) => break,
+            Err(e) => return Err(e),
+        }
+    }
+    rec.reset(body);
+    let mut out = vec![swat_model::routing::LsuElem::default(); imax + 1];
+    for _ in 0..n {
+        let f = match rec.read(6) {
+            Ok(f) => f,
+            Err(Error::Eof { .. }) => break,
+            Err(e) => return Err(e),
+        };
+        let i = f.int_or(0, 0)?.max(0) as usize;
+        if let Some(e) = out.get_mut(i) {
+            *e = swat_model::routing::LsuElem {
+                name: f.text_or(1, ""),
+                obtyp: f.text_or(2, ""),
+                obtypno: f.int_or(3, 0)?,
+                bsn_frac: f.real_or(4, 0.0)?,
+                ru_frac: f.real_or(5, 0.0)?,
+            };
+        }
+    }
+    Ok(out)
+}
+
 /// `rout_unit.rtu`: each routing unit's names of definition, delivery ratio, topography and field.
 pub fn read_ru_data(file: &str, text: &str) -> Result<Vec<RuData>> {
     let mut rec = Records::new(file, text);
