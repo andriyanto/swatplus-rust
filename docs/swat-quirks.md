@@ -362,6 +362,34 @@ From `hyd_connect`, `command`, `hru_hyds`, `ru_control`, `dr_ru`, `time_conc_ini
   are the (constant) carbon and organic N; return flow sent to another aquifer counts as `flo_ls`.
 - **Revap uses the weather station's Hargreaves PET**, whatever PET method the HRUs use.
 
+## SWAT-DEG channels (phases 3b and 3c)
+
+From `sd_hydsed_init`, `sd_rating_curve`, `sd_channel_control3`, `sd_channel_sediment3`,
+`ch_rtmusk`, `ch_watqual4` and `ch_temp`; the port is in `swat-engine/src/channel.rs`.
+
+- **The rating curve's channel area is `b·d + d/z`** (bottom width, depth, side slope), not
+  `b·d + z·d²`; the flood plain's uses `d²/fps`.
+- **Each day `sd_channel_sediment3` sets** bankfull flow to 1.5 times the curve's, flood plain
+  inundation to 1 day, `d50` and the bed exponent to 1, whatever `hyd-sed-lte.cha` says. Without
+  `sed_nut.cha` the type's defaults hold (peak ratio 1, N and P exchange 0.01, deposition
+  enrichment 0.5, bed share of bank erosion 0.1).
+- **Water quality ignores the routing.** `ch_watqual4` turns the inflow's concentrations, over
+  the travel time of the curve's shallowest point (it interpolates at `ht3%flo`, which is never
+  set), into the outflow's nutrients, algae, CBOD and oxygen, as masses of the *inflow's* water;
+  then (`qual2e` 1) organic N and P are taken back from the inflow and exchanged with nitrate
+  and soluble P over the travel time at the inflow rate. Only flow and sediment are routed.
+- **The stream temperature (`ch_temp`) only reaches the storage's temperature**: the outflow
+  hydrograph is set before it runs. Its "previous day" is the outflow's temperature, and it
+  averages measured air temperatures over 2 to 250 days.
+- **`channel_sd_day`'s last column is the same for every channel**: `wtemp`, the station
+  temperature of the last channel routed that day.
+- **A channel's QUAL2E rates and the width and depth `ch_watqual4` and `ch_temp` use come from
+  the data rows numbered as the channel** (`sd_dat(ich)`, `sd_chd(ich)`), not from its
+  `channel-lte.cha` pointer; the same when, as the Editor writes them, there is one row per
+  channel.
+- **Before any flow, a channel's last outflow curve keeps the shallowest point's travel time**
+  (from `rcurv_interp_dep` at depth 0), which sets the first day's storage coefficient.
+
 ## Hard calibration (`calibration.cal`)
 
 - **Applied once, after the HRUs are set up** (`proc_cal` → `cal_conditions`), so a new `perco`

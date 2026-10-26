@@ -40,6 +40,23 @@ pub trait OutputSink {
     /// One routing unit's day (`ru_day.txt`): its name and what it passed on (`ru_d`).
     fn ru_day(&mut self, _day: Day, _name: &str, _hd: &crate::hyd::Hyd) {}
 
+    /// One SWAT-DEG channel's day (`channel_sd_day.txt`): its 1-based number, GIS id and name,
+    /// water body, storage, inflow and outflow, and the day's water temperature.
+    #[allow(clippy::too_many_arguments)]
+    fn cha_day(
+        &mut self,
+        _day: Day,
+        _ich: usize,
+        _gis_id: i32,
+        _name: &str,
+        _w: &crate::channel::ChWat,
+        _stor: &crate::hyd::Hyd,
+        _hin: &crate::hyd::Hyd,
+        _hout: &crate::hyd::Hyd,
+        _wtemp: f32,
+    ) {
+    }
+
     /// One aquifer's day (`aquifer_day.txt`): its 1-based number, GIS id, name and state.
     fn aqu_day(&mut self, _day: Day, _iaq: usize, _gis_id: i32, _name: &str, _d: &crate::route::AquDay) {}
 }
@@ -108,6 +125,8 @@ pub struct RunReport {
     pub hru_skipped: Option<String>,
     /// Why routing units and aquifers weren't simulated, when the project has them.
     pub routing_skipped: Option<String>,
+    /// Why the channels weren't routed (they pass their inflow on), when the project has them.
+    pub channel_skipped: Option<String>,
 }
 
 /// Runs the simulation over `time.sim`, handing each printed day to `out`.
@@ -158,6 +177,10 @@ pub fn run(project: &Project, out: &mut dyn OutputSink) -> Result<RunReport, Str
         }
         None => None,
     };
+    if let Some(why) = network.as_ref().and_then(|n| n.channel_skipped.clone()) {
+        report.channel_skipped = Some(why);
+    }
+    let mut hru_wb = vec![[0.0_f32; 4]; hrus.len()];
     let basin = HruBasin::new(project);
     let mut balance_started = false;
     let mut saved = Saved::default();
@@ -228,15 +251,37 @@ pub fn run(project: &Project, out: &mut dyn OutputSink) -> Result<RunReport, Str
                 }
                 if let (Some(n), Some(d)) = (network.as_mut(), hd.as_ref()) {
                     n.set_hru(j, &d.hd);
+                    hru_wb[j] = [d.wb.snomlt, d.wb.surq_gen, d.wb.latq, d.wb.wateryld];
                 }
                 if printing {
                     out.hru_day(day, j + 1, o.gis_id, &o.name, &w, hd.as_ref());
                 }
             }
             if let Some(n) = network.as_mut() {
-                let pet: Vec<f32> = weather.stations.iter().map(|s| s.weat.pet).collect();
-                n.day(&pet);
+                let nd = crate::route::NetDay {
+                    weat: weather.stations.iter().map(|s| &s.weat).collect(),
+                    daylth: weather
+                        .stations
+                        .iter()
+                        .map(|s| weather.wgn.get(s.wgn.wrapping_sub(1)).map(|g| g.daylth).unwrap_or(0.0))
+                        .collect(),
+                    tgage: weather
+                        .stations
+                        .iter()
+                        .map(|s| match s.tmp {
+                            Source::Gage(i) => weather.tmp.get(i),
+                            Source::Sim => None,
+                        })
+                        .collect(),
+                    hru_wb: &hru_wb,
+                    yrs: clock.yrs,
+                    jday: clock.day,
+                };
+                n.day(&nd);
                 if printing {
+                    for (ich, gis_id, name, w, st, i, o, wtemp) in n.channels() {
+                        out.cha_day(day, ich, gis_id, name, &w, &st, &i, &o, wtemp);
+                    }
                     for (iaq, gis_id, name, d) in n.aquifers() {
                         out.aqu_day(day, iaq, gis_id, name, d);
                     }

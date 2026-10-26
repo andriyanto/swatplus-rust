@@ -17,7 +17,7 @@ original carbon model (`Ames_past0`) and with the Century carbon model Ames uses
 **Ames_sub1 itself**, unchanged: corn and soybean in one community, its 305 scheduled
 operations, irrigation by decision table and custom soil layers. CI checks this on every push.
 
-Phase 3 (routing units, aquifers, SWAT-DEG channels) works on two real projects from West Sumatra, Indonesia, in `testdata/`: `Batanghari` (upland, 284 channels, 1,858 HRUs) and `Pessel` (coastal, 1,454 channels, 3,966 HRUs, peat and paddy), each with its Fortran reference; the stages are in [`docs/phase3.md`](docs/phase3.md). Stage 3a-0 is done: Batanghari's 1,858 HRUs (`Bh_land`: Hargreaves PET, urban and wetland HRUs as forest) match SWAT+ on all four daily HRU tables over nine years. Stage 3a is done too: its 284 routing units and 44 aquifers match SWAT+ bit for bit (`ru_day`, `aquifer_day`).
+Phase 3 (routing units, aquifers, SWAT-DEG channels) works on two real projects from West Sumatra, Indonesia, in `testdata/`: `Batanghari` (upland, 284 channels, 1,858 HRUs) and `Pessel` (coastal, 1,454 channels, 3,966 HRUs, peat and paddy), each with its Fortran reference; the stages are in [`docs/phase3.md`](docs/phase3.md). Stage 3a-0 is done: Batanghari's 1,858 HRUs (`Bh_land`: Hargreaves PET, urban and wetland HRUs as forest) match SWAT+ on all four daily HRU tables over nine years. Stages 3a to 3c are done too: its 284 routing units, 44 aquifers and 284 SWAT-DEG channels (with QUAL2E and stream temperature) match SWAT+ bit for bit (`ru_day`, `aquifer_day`, `channel_sd_day`).
 
 The design, decisions and phases are in RustGIS: [`docs/swat/design.md`](https://github.com/andriyanto/rustgis/blob/swat-plus-design/docs/swat/design.md).
 
@@ -33,7 +33,7 @@ relative difference of 1e-4 or one unit in the last printed decimal (decision K1
 | --- | --- |
 | `swat-model` | The data of a project: `file.cio`, basin codes and parameters, simulation period, print settings, spatial objects and their outflows, weather, HRUs, soils, and the database tables (topography, hydrology, land use, curve numbers, snow…). No I/O. |
 | `swat-io` | Readers for TxtInOut files. Each follows the SWAT+ routine that reads the file, with Fortran list-directed input rules, from a folder or from files in memory (the browser). |
-| `swat-engine` | The simulation. So far the clock, the daily weather (measured and generated), the print schedule, HRUs (water balance, plant growth, soil nutrients with the original and Century carbon models, erosion, dated and decision-table management), and the objects they feed: routing units and aquifers in SWAT+'s command order. |
+| `swat-engine` | The simulation. So far the clock, the daily weather (measured and generated), the print schedule, HRUs (water balance, plant growth, soil nutrients with the original and Century carbon models, erosion, dated and decision-table management), and the objects they feed in SWAT+'s command order: routing units, aquifers and SWAT-DEG channels. |
 | `swatplus-rust` | The command line program: `inspect`, `run`, `compare`. |
 
 No external dependencies, so the core builds anywhere, WebAssembly included.
@@ -53,7 +53,7 @@ branch (`SWAT+ Fortran build` workflow).
 The aim is the same results as SWAT+, so its behaviour is reproduced even where it surprises.
 What has been found so far is in [`docs/swat-quirks.md`](docs/swat-quirks.md).
 
-Next: SWAT-DEG channels (phase 3b) — see [`docs/phase3.md`](docs/phase3.md). For a project the port can't
+Next: Batanghari itself (phase 3d: Penman-Monteith PET, urban and wetland HRUs), then Pessel — see [`docs/phase3.md`](docs/phase3.md). For a project the port can't
 simulate yet (other decision table conditions and actions, other operations, other PET
 methods…), `run` says why and writes the weather and precipitation only.
 

@@ -1,7 +1,7 @@
 //! Readers for routing units (`ru_read`, `ru_read_elements`) and aquifers (`aqu_read`).
 
 use swat_model::cal::define_unit_elements;
-use swat_model::routing::{AquiferDb, RuData, RuDef, RuElement};
+use swat_model::routing::{AquiferDb, RuData, RuDef, RuElement, SdChannelData};
 
 use crate::list::Records;
 use crate::{Error, Result};
@@ -154,6 +154,32 @@ pub fn read_aquifers(file: &str, text: &str) -> Result<Vec<AquiferDb>> {
         if eof {
             break;
         }
+    }
+    Ok(out)
+}
+
+/// `channel-lte.cha`: each row put at its own number (`sd_channel_read`).
+pub fn read_sd_channels(file: &str, text: &str) -> Result<Vec<SdChannelData>> {
+    let mut rec = Records::new(file, text);
+    let n = count_rows(&mut rec)?;
+    let mut out = vec![SdChannelData::default()];
+    for _ in 0..n {
+        let f = match rec.read(6) {
+            Ok(f) => f,
+            Err(Error::Eof { .. }) => break,
+            Err(e) => return Err(e),
+        };
+        let i = f.int_or(0, 0)?.max(0) as usize;
+        if out.len() <= i {
+            out.resize(i + 1, SdChannelData::default());
+        }
+        out[i] = SdChannelData {
+            name: f.text_or(1, ""),
+            init: f.text_or(2, ""),
+            hyd: f.text_or(3, ""),
+            sed: f.text_or(4, ""),
+            nut: f.text_or(5, ""),
+        };
     }
     Ok(out)
 }

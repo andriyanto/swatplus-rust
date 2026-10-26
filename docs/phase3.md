@@ -42,4 +42,11 @@ project.
   `Sin(Atan(x))` (see `docs/swat-quirks.md`). CI runs it on 2015–2019.
 - **3a done.** The command loop, HRU hydrographs, 284 routing units and 44 aquifers (42
   shallow, 2 deep) of `Bh_land` match SWAT+ bit for bit on every column of `ru_day` and
-  `aquifer_day`, 2015–2025. Channels pass their inflow on until 3b.
+  `aquifer_day`, 2015–2025.
+- **3b and 3c done.** `Bh_land`'s 284 SWAT-DEG channels, the whole network, match SWAT+ bit
+  for bit on all 59 columns of `channel_sd_day` (storage, inflow and outflow hydrographs with
+  sediment, nutrients, algae, CBOD and oxygen; seepage, evaporation, water temperature),
+  2015–2025: rating curves, variable storage routing, flood plain deposition, bank erosion,
+  QUAL2E and the stream temperature model. Not exercised yet: Muskingum routing (`rte_cha` 1),
+  channels shorter than 1 m, initial channel water, flood plain wetlands. `Bh_sub` wasn't
+  needed.

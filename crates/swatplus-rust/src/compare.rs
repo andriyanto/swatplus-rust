@@ -28,7 +28,12 @@ impl<R: BufRead> Rows<R> {
         let mut lines = r.lines();
         lines.next();
         let header = lines.next().ok_or("no header line")?.map_err(|e| e.to_string())?;
-        let names: Vec<String> = header.split_whitespace().map(str::to_string).collect();
+        // Repeated names (`null` for each hydrograph's temperature) are told apart by order.
+        let mut names: Vec<String> = Vec::new();
+        for n in header.split_whitespace() {
+            let k = names.iter().filter(|x| x.split('#').next() == Some(n)).count();
+            names.push(if k == 0 { n.to_string() } else { format!("{n}#{}", k + 1) });
+        }
         let col = |n: &str| names.iter().position(|x| x == n);
         let (Some(iy), Some(id)) = (col("yr"), col("jday")) else {
             return Err("the header has no yr and jday columns".into());
