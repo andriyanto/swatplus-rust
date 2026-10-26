@@ -98,7 +98,12 @@ fn run(dir: &str, out: &str) -> ExitCode {
         }
     };
     let title = format!(" {:<24} swatplus-rust {}", project.cio.title.trim_end_matches(':'), env!("CARGO_PKG_VERSION"));
-    let mut tables = output::TextTables::new(&title);
+    let out = std::path::Path::new(out);
+    if let Err(e) = std::fs::create_dir_all(out) {
+        eprintln!("error: {}: {e}", out.display());
+        return ExitCode::FAILURE;
+    }
+    let mut tables = output::TextTables::new(&title, out);
     match swat_engine::run::run(&project, &mut tables) {
         Ok(report) => {
             if let Some(why) = report.hru_skipped {
@@ -110,22 +115,9 @@ fn run(dir: &str, out: &str) -> ExitCode {
             return ExitCode::FAILURE;
         }
     }
-    let out = std::path::Path::new(out);
-    if let Err(e) = std::fs::create_dir_all(out) {
-        eprintln!("error: {}: {e}", out.display());
+    if let Err(e) = tables.finish() {
+        eprintln!("error: {e}");
         return ExitCode::FAILURE;
-    }
-    for (name, text) in
-        [("hru_wb_day.txt", &tables.wb), ("hru_pw_day.txt", &tables.pw), ("hru_nb_day.txt", &tables.nb), ("hru_ls_day.txt", &tables.ls)]
-    {
-        if text.is_empty() {
-            continue;
-        }
-        let path = out.join(name);
-        if let Err(e) = std::fs::write(&path, text) {
-            eprintln!("error: {}: {e}", path.display());
-            return ExitCode::FAILURE;
-        }
     }
     println!("wrote the daily HRU tables to {}", out.display());
     ExitCode::SUCCESS
@@ -146,11 +138,10 @@ fn compare_cmd(expected: &str, actual: &str, opts: &[&str]) -> ExitCode {
             }
         }
     }
-    let read = |path: &str| -> Result<compare::Table, String> {
-        let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
-        compare::read_table(&text).map_err(|e| format!("{path}: {e}"))
+    let open = |path: &str| -> Result<std::io::BufReader<std::fs::File>, String> {
+        std::fs::File::open(path).map(std::io::BufReader::new).map_err(|e| format!("{path}: {e}"))
     };
-    let (e, a) = match (read(expected), read(actual)) {
+    let (e, a) = match (open(expected), open(actual)) {
         (Ok(e), Ok(a)) => (e, a),
         (Err(err), _) | (_, Err(err)) => {
             eprintln!("error: {err}");
@@ -158,5 +149,12 @@ fn compare_cmd(expected: &str, actual: &str, opts: &[&str]) -> ExitCode {
         }
     };
     let label = std::path::Path::new(actual).file_name().and_then(|n| n.to_str()).unwrap_or(actual);
-    if compare::compare(&e, &a, abs, rel, label) { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+    match compare::compare(e, a, abs, rel, label) {
+        Ok(true) => ExitCode::SUCCESS,
+        Ok(false) => ExitCode::FAILURE,
+        Err(err) => {
+            eprintln!("error: {err}");
+            ExitCode::FAILURE
+        }
+    }
 }

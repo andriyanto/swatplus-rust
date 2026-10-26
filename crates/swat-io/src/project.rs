@@ -126,6 +126,13 @@ pub fn load_project(src: &dyn FileSource) -> Result<(Project, LoadReport)> {
     if let Some((_, text)) = fetch("init", "plant")? {
         project.plant_communities = hru::read_plant_communities(&text)?;
     }
+    // proc_cal
+    if let Some((name, text)) = fetch("chg", "cal_parms")? {
+        project.cal_parms = crate::cal::read_cal_parms(&name, &text)?;
+    }
+    if let Some((name, text)) = fetch("chg", "cal_upd")? {
+        project.cal_upd = crate::cal::read_calibration(&name, &text)?;
+    }
     project.co2_yr_dat = src.read("co2_yr.dat").ok().flatten().is_some();
     // soils_init opens it by this name, whatever file.cio says.
     if let Some(text) = src.read("soil_lyr_depths.sol")? {

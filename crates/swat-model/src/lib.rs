@@ -7,6 +7,7 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::unreachable))]
 
 pub mod basin;
+pub mod cal;
 pub mod cio;
 pub mod climate;
 pub mod hru;
@@ -18,6 +19,7 @@ pub mod table;
 pub mod time;
 
 pub use basin::{BasinCodes, BasinParams};
+pub use cal::{CalParm, CalUpdate};
 pub use cio::{CioSection, FileCio};
 pub use climate::{ClimateRecord, ClimateVar, StationList, StationSeries, WeatherStation, Wgn, WgnMonth};
 pub use hru::{HruData, PlantCommunity, PlantInit, Soil, SoilLayer, SoilPlantInit};
@@ -77,6 +79,9 @@ pub struct Project {
     pub chem_app: Option<Table>,
     /// `soil_lyr_depths.sol` (custom layer depths, mm, as listed), when the project has it.
     pub soil_lyr_depths: Option<Vec<i32>>,
+    /// `cal_parms.cal` and `calibration.cal`.
+    pub cal_parms: Vec<CalParm>,
+    pub cal_upd: Vec<CalUpdate>,
     /// Whether the project has `co2_yr.dat` (yearly CO2, read by `co2_read`; not handled yet).
     pub co2_yr_dat: bool,
 }

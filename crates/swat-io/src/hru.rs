@@ -234,10 +234,23 @@ pub fn read_management(text: &str) -> Result<Vec<MgtSchedule>> {
         let nops = h.int(1)?.unwrap_or(0).max(0);
         let nauto = h.int(2)?.unwrap_or(0).max(0);
         for _ in 0..nauto {
-            match rec.skip() {
-                Ok(name) => sched.autos.push(name.unwrap_or_default()),
+            let mark = rec.mark();
+            let name = match rec.skip() {
+                Ok(name) => name.unwrap_or_default(),
                 Err(_) => break,
+            };
+            // A generic plant-and-harvest table: the record again, with its crops.
+            let ncrop = match name.as_str() {
+                "pl_hv_summer1" | "pl_hv_winter1" => 1,
+                "pl_hv_summer2" => 2,
+                _ => 0,
+            };
+            if ncrop > 0 {
+                rec.reset(mark);
+                let f = rec.read(1 + ncrop)?;
+                sched.auto_crops = (0..ncrop).map(|k| f.text_or(1 + k, "")).collect();
             }
+            sched.autos.push(name);
         }
         for _ in 0..nops {
             let f = rec.read(7)?;

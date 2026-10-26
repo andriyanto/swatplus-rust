@@ -2,7 +2,9 @@
 //! irrigation and fertilizer on their dates, and the skip to the next year.
 //!
 //! So far for dated operations of these kinds, and decision tables (`conditions`, `actions`)
-//! that irrigate on water stress, heat units, leaf area and the irrigation so far.
+//! that irrigate on water stress, heat units, leaf area and the irrigation so far, or plant,
+//! harvest and kill on heat units, soil water, the day and the rotation year (the generic
+//! `pl_hv_summer1`, `pl_hv_winter1` and `pl_hv_summer2` tables among them).
 
 use swat_model::table::{Table, fortran_eq};
 use swat_model::{MgtSchedule, Project};
@@ -64,6 +66,10 @@ pub struct Mgt {
     pub yr_skip: bool,
     /// The schedule's decision tables, checked every day (`sched%num_autos`).
     pub dtbls: Vec<Dtbl>,
+    /// The crops of a generic plant-and-harvest table (`sched%auto_crop`).
+    pub auto_crops: Vec<String>,
+    /// The rotation year (`pcom%rot_yr`), which decision tables test and reset.
+    pub rot_yr: i32,
 }
 
 /// A condition variable of a decision table.
@@ -77,14 +83,38 @@ pub enum CondVar {
     PhuPlant,
     /// The community's leaf area.
     LeafArea,
+    /// Base-zero heat units of the HRU's station this year.
+    PhuBase0,
+    /// Soil water against a share of the wilting point (0), field capacity or porosity
+    /// (`lim_var`), the share applied with `lim_op`.
+    SoilWater { targ: SwTarget, op: u8 },
+    /// The day of the year (an integer test).
+    Jday,
+    /// The rotation year (an integer test).
+    YearRot,
+}
+
+/// The soil water a `soil_water` condition is measured against.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SwTarget {
+    Wp,
+    Fc,
+    Ul,
 }
 
 /// An action of a decision table.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Action {
     /// `irrigate` from an unlimited source: `amt` mm with the `irr.ops` efficiency and runoff
     /// share, at most `max_yr` times a year.
     Irrigate { amt: f32, eff: f32, surq: f32, max_yr: i32 },
+    /// `plant` the community's plant named `crop` if it isn't growing (no `mgt_plantop`).
+    Plant { crop: String },
+    /// `harvest_kill` the plants named `crop` (or `all`), growing or not, at most `max_yr` times
+    /// a year: a grain harvest above `bm_min` of biomass, with the `harv.ops` efficiency.
+    HarvKill { crop: String, grain: bool, eff: f32, bm_min: f32, max_yr: i32 },
+    /// `rot_reset`: the rotation year becomes `yr`.
+    RotReset { yr: i32 },
 }
 
 /// A decision table as an HRU uses it: conditions with each alternative's operator ("-" for
@@ -92,6 +122,9 @@ pub enum Action {
 /// (`pcom%dtbl%num_actions`, starting at 1).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Dtbl {
+    /// The crops come from the schedule: 1 for the first crop, 2 for the rotation year's
+    /// (`pl_hv_summer1` / `pl_hv_winter1`, `pl_hv_summer2`), 0 for the table's own option.
+    pub generic: u8,
     pub alts: usize,
     pub conds: Vec<(CondVar, f32, Vec<String>)>,
     pub acts: Vec<(Action, Vec<bool>)>,
@@ -99,7 +132,12 @@ pub struct Dtbl {
 }
 
 impl Dtbl {
-    fn new(project: &Project, t: &swat_model::DecisionTable) -> Result<Dtbl, String> {
+    fn new(project: &Project, t: &swat_model::DecisionTable, auto_name: &str) -> Result<Dtbl, String> {
+        let generic = match auto_name {
+            "pl_hv_summer1" | "pl_hv_winter1" => 1,
+            "pl_hv_summer2" => 2,
+            _ => 0,
+        };
         let mut conds = Vec::new();
         for (c, alt) in t.conds.iter().zip(&t.alt) {
             let v = match c.var.as_str() {
@@ -107,6 +145,27 @@ impl Dtbl {
                 "irr_year" => CondVar::IrrYear,
                 "phu_plant" => CondVar::PhuPlant,
                 "leaf_area" => CondVar::LeafArea,
+                "phu_base0" => {
+                    if c.ob != "hru" {
+                        return Err(format!("decision table {}: phu_base0 of {}", t.name, c.ob));
+                    }
+                    CondVar::PhuBase0
+                }
+                "soil_water" => {
+                    let targ = match c.lim_var.as_str() {
+                        "wp" => SwTarget::Wp,
+                        "fc" => SwTarget::Fc,
+                        "ul" => SwTarget::Ul,
+                        other => return Err(format!("decision table {}: soil water against {other}", t.name)),
+                    };
+                    let op = match c.lim_op.as_str() {
+                        "*" | "+" | "-" | "/" => c.lim_op.as_bytes()[0],
+                        other => return Err(format!("decision table {}: soil water target operator {other}", t.name)),
+                    };
+                    CondVar::SoilWater { targ, op }
+                }
+                "jday" => CondVar::Jday,
+                "year_rot" => CondVar::YearRot,
                 other => return Err(format!("decision table {}: condition {other}", t.name)),
             };
             if c.ob_num != 0 {
@@ -134,12 +193,37 @@ impl Dtbl {
                         max_yr: a.const2 as i32,
                     }
                 }
+                "plant" | "harvest_kill" | "rot_reset" if a.ob_num != 0 => {
+                    return Err(format!("decision table {}: {} on object {}", t.name, a.typ, a.ob_num));
+                }
+                "plant" => {
+                    // A transplant (`transplant.plt`) isn't read yet.
+                    if !a.file_pointer.is_empty() && !fortran_eq(&a.file_pointer, "null") {
+                        return Err(format!("decision table {}: transplant {}", t.name, a.file_pointer));
+                    }
+                    Action::Plant { crop: a.option.clone() }
+                }
+                "harvest_kill" => {
+                    let h = project.harv_ops.as_ref();
+                    let typ = h.and_then(|h| h.find(&a.file_pointer).and_then(|r| h.text(r, "typ"))).unwrap_or("");
+                    if matches!(typ, "biomass" | "residue" | "tuber" | "peanuts") {
+                        return Err(format!("decision table {}: {typ} harvest", t.name));
+                    }
+                    Action::HarvKill {
+                        crop: a.option.clone(),
+                        grain: matches!(typ, "grain" | "stripper" | "picker"),
+                        eff: row_real(h, &a.file_pointer, "eff", 0.0),
+                        bm_min: row_real(h, &a.file_pointer, "bm_min", 0.0),
+                        max_yr: a.const2 as i32,
+                    }
+                }
+                "rot_reset" => Action::RotReset { yr: a.const_.max(1.0) as i32 },
                 other => return Err(format!("decision table {}: action {other}", t.name)),
             };
             acts.push((act, out.iter().map(|o| o == "y").collect()));
         }
         let n = acts.len();
-        Ok(Dtbl { alts: t.alts, conds, acts, num_actions: vec![1; n] })
+        Ok(Dtbl { generic, alts: t.alts, conds, acts, num_actions: vec![1; n] })
     }
 }
 
@@ -147,6 +231,28 @@ fn row_real(t: Option<&Table>, name: &str, field: &str, default: f32) -> f32 {
     match t.and_then(|t| t.find(name).map(|r| (t, r))) {
         Some((t, r)) => t.real(r, field).unwrap_or(default),
         None => default,
+    }
+}
+
+/// `cond_real` and `cond_integer`: alternatives still hit whose operator fails for `cur`
+/// against `tbl` are no longer hit.
+fn cond_test<T: PartialOrd>(hit: &mut [bool], alt: &[String], cur: T, tbl: T) {
+    for (h, op) in hit.iter_mut().zip(alt) {
+        if op == "-" || !*h {
+            continue;
+        }
+        let fails = match op.as_str() {
+            "<" => cur >= tbl,
+            ">" => cur <= tbl,
+            "<=" => cur > tbl,
+            ">=" => cur < tbl,
+            "=" => cur != tbl,
+            "/=" => cur == tbl,
+            _ => false,
+        };
+        if fails {
+            *h = false;
+        }
     }
 }
 
@@ -174,7 +280,7 @@ impl Mgt {
                 .iter()
                 .rfind(|t| fortran_eq(&t.name, a))
                 .ok_or_else(|| format!("schedule {}: decision table {a} not in lum.dtl", s.name))?;
-            dtbls.push(Dtbl::new(project, t)?);
+            dtbls.push(Dtbl::new(project, t, a)?);
         }
         let mut ops = Vec::with_capacity(s.ops.len());
         let mut jdays = Vec::with_capacity(s.ops.len());
@@ -249,14 +355,18 @@ impl Mgt {
             }
             cur_op = (iop - 1).min(n).max(1);
         }
-        Ok(Mgt { ops, cur_op: cur_op - 1, yr_skip: false, dtbls })
+        if dtbls.iter().any(|t| t.generic > 0 && s.auto_crops.len() < t.generic as usize) {
+            return Err(format!("schedule {}: generic decision table without its crops", s.name));
+        }
+        Ok(Mgt { ops, cur_op: cur_op - 1, yr_skip: false, dtbls, auto_crops: s.auto_crops.clone(), rot_yr: rot_yr_ini })
     }
 }
 
 impl super::Hru {
     /// The decision tables of the HRU's schedule (`hru_control`: `conditions`, then `actions`),
-    /// before the day's stresses are reset. At the end of the year the action counts restart.
-    pub(super) fn dtbl_day(&mut self, end_yr: bool) {
+    /// before the day's stresses are reset, with the station's base-zero heat units `phubase0`.
+    /// At the end of the year the action counts restart and the rotation moves on a year.
+    pub(super) fn dtbl_day(&mut self, c: &super::DayCtx, phubase0: f32) {
         let Some(mut m) = self.mgt.take() else { return };
         for t in m.dtbls.iter_mut() {
             let mut hit = vec![true; t.alts];
@@ -265,6 +375,7 @@ impl super::Hru {
                     hit.iter_mut().for_each(|h| *h = false);
                     continue;
                 }
+                let mut targ = *lim;
                 let cur = match var {
                     CondVar::WStress => {
                         let (mut n, mut sum) = (0, 0.0_f32);
@@ -279,44 +390,90 @@ impl super::Hru {
                     CondVar::IrrYear => self.irr_yr,
                     CondVar::PhuPlant => self.plants.iter().find(|p| p.phuacc > 1.0e-6).unwrap_or(&self.plants[0]).phuacc,
                     CondVar::LeafArea => self.lai_sum,
-                };
-                // cond_real
-                for (h, op) in hit.iter_mut().zip(alt) {
-                    if op == "-" || !*h {
+                    CondVar::PhuBase0 => phubase0,
+                    CondVar::SoilWater { targ: tv, op } => {
+                        let v = match tv {
+                            SwTarget::Wp => 0.0,
+                            SwTarget::Fc => self.sumfc,
+                            SwTarget::Ul => self.sumul,
+                        };
+                        targ = match op {
+                            b'*' => v * *lim,
+                            b'+' => v + *lim,
+                            b'-' => v - *lim,
+                            _ => v / *lim,
+                        };
+                        self.sw
+                    }
+                    // cond_integer
+                    CondVar::Jday => {
+                        cond_test(&mut hit, alt, c.day, *lim as i32);
                         continue;
                     }
-                    let fails = match op.as_str() {
-                        "<" => cur >= *lim,
-                        ">" => cur <= *lim,
-                        "<=" => cur > *lim,
-                        ">=" => cur < *lim,
-                        "=" => cur != *lim,
-                        "/=" => cur == *lim,
-                        _ => false,
-                    };
-                    if fails {
-                        *h = false;
+                    CondVar::YearRot => {
+                        cond_test(&mut hit, alt, m.rot_yr, *lim as i32);
+                        continue;
                     }
-                }
+                };
+                // cond_real
+                cond_test(&mut hit, alt, cur, targ);
             }
             for (iac, (act, out)) in t.acts.iter().enumerate() {
                 if !hit.iter().zip(out).any(|(h, o)| *h && *o) {
                     continue;
                 }
-                match *act {
+                // A generic table's crop comes from the schedule.
+                let crop = |own: &str| -> String {
+                    match t.generic {
+                        1 => m.auto_crops[0].clone(),
+                        2 => m.auto_crops[(m.rot_yr.clamp(1, 2) - 1) as usize].clone(),
+                        _ => own.to_string(),
+                    }
+                };
+                match act {
                     Action::Irrigate { amt, eff, surq, max_yr } => {
-                        if t.num_actions[iac] <= max_yr {
+                        if t.num_actions[iac] <= *max_yr {
                             self.irr_applied = amt * eff * (1.0 - surq);
                             self.irr_runoff = amt * surq;
                             self.irr_yr += self.irr_applied;
                             t.num_actions[iac] += 1;
                         }
                     }
+                    Action::Plant { crop: own } => {
+                        let crop = crop(own);
+                        for pl in self.plants.iter_mut() {
+                            if fortran_eq(&crop, &pl.cpnm) && !pl.gro {
+                                pl.gro = true;
+                                pl.idorm = false;
+                            }
+                        }
+                        t.num_actions[iac] += 1;
+                    }
+                    Action::HarvKill { crop: own, grain, eff, bm_min, max_yr } => {
+                        if t.num_actions[iac] <= *max_yr {
+                            let crop = crop(own);
+                            for i in 0..self.plants.len() {
+                                let mut pl = std::mem::take(&mut self.plants[i]);
+                                if fortran_eq(&crop, &pl.cpnm) || fortran_eq(&crop, "all") {
+                                    if pl.tot.m > *bm_min && *grain {
+                                        self.harvgrain(&mut pl, *eff);
+                                    }
+                                    self.killop(&mut pl, i);
+                                }
+                                self.plants[i] = pl;
+                            }
+                            t.num_actions[iac] += 1;
+                        }
+                    }
+                    Action::RotReset { yr } => m.rot_yr = *yr,
                 }
             }
-            if end_yr {
+            if c.end_yr {
                 t.num_actions.iter_mut().for_each(|n| *n = 1);
             }
+        }
+        if c.end_yr && !m.dtbls.is_empty() {
+            m.rot_yr += 1;
         }
         self.mgt = Some(m);
     }

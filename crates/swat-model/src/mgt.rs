@@ -22,6 +22,9 @@ pub struct MgtOp {
 pub struct MgtSchedule {
     pub name: String,
     pub autos: Vec<String>,
+    /// The crops of a generic plant-and-harvest table (`auto_crop`: one for `pl_hv_summer1` and
+    /// `pl_hv_winter1`, two for `pl_hv_summer2`), given after its name.
+    pub auto_crops: Vec<String>,
     pub ops: Vec<MgtOp>,
 }
 

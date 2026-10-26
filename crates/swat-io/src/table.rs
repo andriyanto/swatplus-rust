@@ -23,8 +23,14 @@ pub fn read_table(file: &str, text: &str, fields: &'static [Field]) -> Result<Ta
     }
     rec.reset(body);
     let width: usize = fields.iter().map(|f| f.count).sum();
+    let kinds: Vec<Kind> = fields.iter().flat_map(|f| std::iter::repeat_n(f.kind, f.count)).collect();
+    let converts = |i: usize, t: &str| match kinds.get(i) {
+        Some(Kind::Int) => parse_int(t).is_some(),
+        Some(Kind::Real) => parse_real(t).is_some(),
+        _ => true,
+    };
     for _ in 0..imax {
-        let Some((items, eof)) = rec.read_partial(width) else { break };
+        let Some((items, eof)) = rec.read_checked(width, converts) else { break };
         table.rows.push(fill(fields, &items));
         if eof {
             break;
