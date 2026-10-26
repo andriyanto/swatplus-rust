@@ -66,6 +66,12 @@ impl Hyd {
         Hyd::from_amounts(s, temp)
     }
 
+    /// `hyd1 - hyd2` (`hydout_subtract`); the temperature is the first's.
+    pub fn minus(self, o: Hyd) -> Hyd {
+        let (a, b) = (self.amounts(), o.amounts());
+        Hyd::from_amounts(std::array::from_fn(|k| a[k] - b[k]), self.temp)
+    }
+
     /// `const * hyd` (`hydout_mult_const`); the temperature is kept.
     pub fn scale(k: f32, h: Hyd) -> Hyd {
         let a = h.amounts();

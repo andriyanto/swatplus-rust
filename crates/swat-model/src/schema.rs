@@ -247,3 +247,104 @@ pub const CHEM_APP: &[Field] = &[
     f("drift_pot", R, "0."),
     f("aerial_unif", R, "0."),
 ];
+
+/// `hyd-sed-lte.cha`: `swatdeg_hydsed_data` (`sd_hydsed_read`), a SWAT-DEG channel's geometry,
+/// hydraulics and bank and bed properties. The file's `erod_fact`, `cov_fact` and `eq_slp` are
+/// `bank_exp`, `cov` and `vcr_coef`; the description at the end of a row is skipped.
+pub const HYD_SED_LTE: &[Field] = &[
+    f("name", T, ""),
+    f("order", I, "0"),
+    f("chw", R, "0."),
+    f("chd", R, "0."),
+    f("chs", R, "0."),
+    f("chl", R, "0."),
+    f("chn", R, "0."),
+    f("chk", R, "0."),
+    f("bank_exp", R, "0."),
+    f("cov", R, "0."),
+    f("sinu", R, "0."),
+    f("vcr_coef", R, "0."),
+    f("d50", R, "0."),
+    f("ch_clay", R, "0."),
+    f("carbon", R, "0."),
+    f("ch_bd", R, "0."),
+    f("chss", R, "0."),
+    f("bankfull_flo", R, "0."),
+    f("fps", R, "0.000001"),
+    f("fpn", R, "0.1"),
+    f("n_conc", R, "0."),
+    f("p_conc", R, "0."),
+    f("p_bio", R, "0."),
+];
+
+/// `nutrients.cha`: `channel_nut_data` (`ch_read_nut`), QUAL2E rates and coefficients.
+pub const CH_NUT: &[Field] = &[
+    f("name", T, ""),
+    f("onco", R, "0."),
+    f("opco", R, "0."),
+    f("rs1", R, "1."),
+    f("rs2", R, ".05"),
+    f("rs3", R, ".5"),
+    f("rs4", R, ".05"),
+    f("rs5", R, ".05"),
+    f("rs6", R, "2.5"),
+    f("rs7", R, "2.5"),
+    f("rk1", R, "1.71"),
+    f("rk2", R, "1."),
+    f("rk3", R, "2."),
+    f("rk4", R, "0."),
+    f("rk5", R, "1.71"),
+    f("rk6", R, "1.71"),
+    f("bc1", R, ".55"),
+    f("bc2", R, "1.1"),
+    f("bc3", R, ".21"),
+    f("bc4", R, ".35"),
+    f("lao", R, "2"),
+    f("igropt", I, "2"),
+    f("ai0", R, "50."),
+    f("ai1", R, "0.08"),
+    f("ai2", R, "0.015"),
+    f("ai3", R, "1.60"),
+    f("ai4", R, "2.0"),
+    f("ai5", R, "3.5"),
+    f("ai6", R, "1.07"),
+    f("mumax", R, "2.0"),
+    f("rhoq", R, "2.5"),
+    f("tfact", R, "0.3"),
+    f("k_l", R, "0.75"),
+    f("k_n", R, "0.02"),
+    f("k_p", R, "0.025"),
+    f("lambda0", R, "1.0"),
+    f("lambda1", R, "0.03"),
+    f("lambda2", R, "0.054"),
+    f("p_n", R, "0.5"),
+];
+
+/// `initial.cha` and the other `initial.*` files: the initial organic-mineral and constituent
+/// data by name (`ch_init`).
+pub const INIT_CHA: &[Field] =
+    &[f("name", T, ""), f("org_min", T, ""), f("pest", T, ""), f("path", T, ""), f("hmet", T, ""), f("salt", T, "")];
+
+/// `om_water.ini`: initial water and its organic-mineral content (`om_init_water`, a
+/// `hyd_output` by name).
+pub const OM_WATER: &[Field] = &[
+    f("name", T, ""),
+    f("flo", R, "0."),
+    f("sed", R, "0."),
+    f("orgn", R, "0."),
+    f("sedp", R, "0."),
+    f("no3", R, "0."),
+    f("solp", R, "0."),
+    f("chla", R, "0."),
+    f("nh3", R, "0."),
+    f("no2", R, "0."),
+    f("cbod", R, "0."),
+    f("dox", R, "0."),
+    f("san", R, "0."),
+    f("sil", R, "0."),
+    f("cla", R, "0."),
+    f("sag", R, "0."),
+    f("lag", R, "0."),
+    f("grv", R, "0."),
+    f("temp", R, "0."),
+];

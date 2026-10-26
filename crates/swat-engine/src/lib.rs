@@ -8,6 +8,7 @@
 #![allow(clippy::needless_range_loop, clippy::approx_constant, clippy::manual_clamp)]
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::unreachable))]
 
+pub mod channel;
 pub mod climate;
 pub mod clock;
 pub mod fortran;

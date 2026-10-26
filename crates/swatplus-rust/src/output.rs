@@ -21,14 +21,31 @@ pub struct TextTables {
     ls: String,
     ru: String,
     aqu: String,
-    files: [Option<File>; 6],
+    cha: String,
+    files: [Option<File>; 7],
     started: bool,
     ru_started: bool,
     aqu_started: bool,
+    cha_started: bool,
     error: Option<String>,
 }
 
-const FILES: [&str; 6] = ["hru_wb_day.txt", "hru_pw_day.txt", "hru_nb_day.txt", "hru_ls_day.txt", "ru_day.txt", "aquifer_day.txt"];
+const FILES: [&str; 7] =
+    ["hru_wb_day.txt", "hru_pw_day.txt", "hru_nb_day.txt", "hru_ls_day.txt", "ru_day.txt", "aquifer_day.txt", "channel_sd_day.txt"];
+
+/// Fortran `Ew.d` with `d` 4 and width 15: `0.dddd` and a two-digit exponent.
+fn e15_4(v: f32) -> String {
+    if v == 0.0 {
+        return format!("{:>15}", "0.0000E+00");
+    }
+    let s = format!("{:.3e}", v.abs());
+    let (m, e) = s.split_once('e').unwrap_or((&s, "0"));
+    let e: i32 = e.parse::<i32>().unwrap_or(0) + 1;
+    let digits: String = m.chars().filter(|c| c.is_ascii_digit()).collect();
+    let sign = if v < 0.0 { "-" } else { "" };
+    let es = if e < 0 { '-' } else { '+' };
+    format!("{:>15}", format!("{sign}0.{digits}E{es}{:02}", e.abs()))
+}
 
 /// What the buffers hold before they go to their files.
 const CHUNK: usize = 8 << 20;
@@ -48,17 +65,19 @@ impl TextTables {
             ls: String::new(),
             ru: String::new(),
             aqu: String::new(),
-            files: [None, None, None, None, None, None],
+            cha: String::new(),
+            files: [None, None, None, None, None, None, None],
             started: false,
             ru_started: false,
             aqu_started: false,
+            cha_started: false,
             error: None,
         }
     }
 
     /// Writes what the buffers hold to the files, creating them on the first write.
     fn flush(&mut self) {
-        let bufs = [&mut self.wb, &mut self.pw, &mut self.nb, &mut self.ls, &mut self.ru, &mut self.aqu];
+        let bufs = [&mut self.wb, &mut self.pw, &mut self.nb, &mut self.ls, &mut self.ru, &mut self.aqu, &mut self.cha];
         for ((buf, file), name) in bufs.into_iter().zip(self.files.iter_mut()).zip(FILES) {
             if buf.is_empty() || self.error.is_some() {
                 continue;
@@ -183,6 +202,50 @@ impl OutputSink for TextTables {
         }
         let _ = writeln!(self.ru);
         if self.ru.len() > CHUNK {
+            self.flush();
+        }
+    }
+
+    fn cha_day(
+        &mut self,
+        d: Day,
+        ich: usize,
+        gis_id: i32,
+        name: &str,
+        w: &swat_engine::channel::ChWat,
+        stor: &swat_engine::hyd::Hyd,
+        hin: &swat_engine::hyd::Hyd,
+        hout: &swat_engine::hyd::Hyd,
+        wtemp: f32,
+    ) {
+        if !self.cha_started {
+            self.cha_started = true;
+            let _ = writeln!(self.cha, "{}", self.title);
+            let _ = write!(self.cha, "{KEYS}");
+            for n in ["area", "precip", "evap", "seep"] {
+                let _ = write!(self.cha, " {n:>14}");
+            }
+            for suffix in ["_stor", "_in", "_out"] {
+                for (n, _) in stor.columns() {
+                    let n = if n == "null" { n.to_string() } else { format!("{n}{suffix}") };
+                    let _ = write!(self.cha, " {n:>14}");
+                }
+            }
+            let _ = writeln!(self.cha, " {:>14}", "water_temp");
+            let _ = writeln!(self.cha);
+        }
+        keys(&mut self.cha, d, ich, gis_id, name);
+        for v in [w.area_ha, w.precip, w.evap, w.seep] {
+            self.cha.push_str(&e15_4(v));
+        }
+        for h in [stor, hin, hout] {
+            for (_, v) in h.columns() {
+                self.cha.push_str(&e15_4(v));
+            }
+        }
+        self.cha.push_str(&e15_4(wtemp));
+        self.cha.push('\n');
+        if self.cha.len() > CHUNK {
             self.flush();
         }
     }

@@ -27,7 +27,7 @@ pub use hru::{HruData, PlantCommunity, PlantInit, Soil, SoilLayer, SoilPlantInit
 pub use mgt::{DecisionTable, DtblAct, DtblCond, MgtOp, MgtSchedule};
 pub use objects::{ObjectKind, Outflow, SpatialObject};
 pub use print::{PrintObject, PrintSettings};
-pub use routing::{AquiferDb, RuData, RuDef, RuElement};
+pub use routing::{AquiferDb, RuData, RuDef, RuElement, SdChannelData};
 pub use table::Table;
 pub use time::{SimDay, TimeSim};
 
@@ -87,6 +87,14 @@ pub struct Project {
     pub ru_data: Vec<RuData>,
     /// `aquifer.aqu`, by row number (element 0 holds the defaults).
     pub aquifer_db: Vec<AquiferDb>,
+    /// `channel-lte.cha` (by row number, element 0 unused), `hyd-sed-lte.cha`, `nutrients.cha`,
+    /// `initial.cha`, `om_water.ini`, and whether `temperature.cha` is named.
+    pub sd_channel_data: Vec<SdChannelData>,
+    pub hyd_sed_lte: Option<Table>,
+    pub ch_nut: Option<Table>,
+    pub ch_init: Option<Table>,
+    pub om_water: Option<Table>,
+    pub ch_temp_file: bool,
     /// `cal_parms.cal` and `calibration.cal`.
     pub cal_parms: Vec<CalParm>,
     pub cal_upd: Vec<CalUpdate>,

@@ -140,6 +140,23 @@ pub fn load_project(src: &dyn FileSource) -> Result<(Project, LoadReport)> {
     if let Some((name, text)) = fetch("aquifer", "aqu")? {
         project.aquifer_db = crate::routing::read_aquifers(&name, &text)?;
     }
+    // proc_cha: sd_hydsed_read, ch_read_nut, ch_read_init, sd_channel_read.
+    if let Some((name, text)) = fetch("channel", "hyd_sed")? {
+        project.hyd_sed_lte = Some(table::read_table(&name, &text, schema::HYD_SED_LTE)?);
+    }
+    if let Some((name, text)) = fetch("channel", "nut")? {
+        project.ch_nut = Some(table::read_table(&name, &text, schema::CH_NUT)?);
+    }
+    if let Some((name, text)) = fetch("channel", "init")? {
+        project.ch_init = Some(table::read_table(&name, &text, schema::INIT_CHA)?);
+    }
+    if let Some((name, text)) = fetch("init", "om_water")? {
+        project.om_water = Some(table::read_table(&name, &text, schema::OM_WATER)?);
+    }
+    if let Some((name, text)) = fetch("channel", "chan_ez")? {
+        project.sd_channel_data = crate::routing::read_sd_channels(&name, &text)?;
+    }
+    project.ch_temp_file = project.cio.file("channel", "temp").is_some();
     // proc_cal
     if let Some((name, text)) = fetch("chg", "cal_parms")? {
         project.cal_parms = crate::cal::read_cal_parms(&name, &text)?;

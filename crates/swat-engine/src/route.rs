@@ -148,6 +148,29 @@ pub struct Network {
     aqus: Vec<Aqu>,
     /// Today's routing unit outputs (`ru_d`), by routing unit.
     pub ru_d: Vec<Hyd>,
+    /// SWAT-DEG channels (by object index), with their inflows' origins for the stream
+    /// temperature, unless they aren't ported for this project (then they pass water on).
+    channels: Option<crate::channel::Channels>,
+    chan_of: Vec<Option<usize>>,
+    chan_in: Vec<(Vec<bool>, Vec<usize>)>,
+    /// Why the channels aren't routed, when they aren't.
+    pub channel_skipped: Option<String>,
+}
+
+/// A channel's printed day: number (1-based), GIS id, name, water body, storage, inflow,
+/// outflow and the water temperature.
+pub type ChannelDay<'a> = (usize, i32, &'a str, crate::channel::ChWat, Hyd, Hyd, Hyd, f32);
+
+/// What the command loop needs from the day: the stations' weather, their generators' day
+/// lengths and measured temperature gages, the HRUs' water balance (snowmelt, surface runoff,
+/// lateral flow, water yield; mm) and the date (`time%yrs`, `time%day`).
+pub struct NetDay<'a> {
+    pub weat: Vec<&'a crate::climate::Weat>,
+    pub daylth: Vec<f32>,
+    pub tgage: Vec<Option<&'a crate::climate::Gage>>,
+    pub hru_wb: &'a [[f32; 4]],
+    pub yrs: i32,
+    pub jday: i32,
 }
 
 impl Network {
@@ -353,8 +376,38 @@ impl Network {
             }
             iord += 1;
         }
+        // sd_channel_read, sd_hydsed_init
+        let ch0 = first[&ObjectKind::ChannelDeg];
+        let n_ch = project.objects_of(ObjectKind::ChannelDeg).count();
+        let props: Vec<i32> = (0..n_ch).map(|k| obs[ch0 + k].props).collect();
+        let (channels, channel_skipped) = match crate::channel::Channels::new(project, &props) {
+            Ok(c) if n_ch > 0 => (Some(c), None),
+            Ok(_) => (None, None),
+            Err(e) => (None, Some(e)),
+        };
+        let mut chan_of = vec![None; obs.len()];
+        let mut chan_in = Vec::with_capacity(n_ch);
+        for k in 0..n_ch {
+            chan_of[ch0 + k] = Some(k);
+            let ins = &obs[ch0 + k].ins;
+            let from_ch: Vec<bool> = ins.iter().map(|i| obs[i.from].kind == ObjectKind::ChannelDeg).collect();
+            let rus_in: Vec<usize> = ins.iter().filter_map(|i| ru_of[i.from]).collect();
+            chan_in.push((from_ch, rus_in));
+        }
         let n_ru = rus.len();
-        Ok(Some(Network { obs, order, rus, ru_of, aqu_of, aqus, ru_d: vec![Hyd::default(); n_ru] }))
+        Ok(Some(Network {
+            obs,
+            order,
+            rus,
+            ru_of,
+            aqu_of,
+            aqus,
+            ru_d: vec![Hyd::default(); n_ru],
+            channels,
+            chan_of,
+            chan_in,
+            channel_skipped,
+        }))
     }
 
     /// Sets HRU `j`'s hydrographs for today (0-based).
@@ -364,17 +417,21 @@ impl Network {
         }
     }
 
-    /// The command loop past the HRUs, with today's weather station PET (mm) for revap.
-    pub fn day(&mut self, station_pet: &[f32]) {
+    /// The command loop past the HRUs.
+    pub fn day(&mut self, nd: &NetDay) {
+        let mut hin_d: Vec<Hyd> = Vec::new();
         for oi in 0..self.order.len() {
             let icmd = self.order[oi];
             let mut hin = Hyd::default();
+            hin_d.clear();
             for k in 0..self.obs[icmd].ins.len() {
                 let In { from, ihtyp, frac } = self.obs[icmd].ins[k];
                 let ht1 = Hyd::scale(frac, self.obs[from].hd[ihtyp - 1]);
                 hin = hin.plus(ht1);
+                hin_d.push(ht1);
             }
             self.obs[icmd].hin = hin;
+            let wst = self.obs[icmd].wst.wrapping_sub(1);
             match self.obs[icmd].kind {
                 ObjectKind::RoutingUnit => {
                     if let Some(iru) = self.ru_of[icmd] {
@@ -383,9 +440,25 @@ impl Network {
                 }
                 ObjectKind::Aquifer => {
                     if let Some(iaq) = self.aqu_of[icmd] {
-                        let pet = station_pet.get(self.obs[icmd].wst.wrapping_sub(1)).copied().unwrap_or(0.0);
+                        let pet = nd.weat.get(wst).map(|w| w.pet).unwrap_or(0.0);
                         self.aqu_1d_control(iaq, pet);
                     }
+                }
+                ObjectKind::ChannelDeg if self.channels.is_some() => {
+                    let ich = self.chan_of[icmd].unwrap_or(0);
+                    let (Some(w), Some(chs)) = (nd.weat.get(wst), self.channels.as_mut()) else { continue };
+                    let cx = crate::channel::ChanCtx {
+                        weat: w,
+                        daylth: nd.daylth.get(wst).copied().unwrap_or(0.0),
+                        tgage: nd.tgage.get(wst).copied().flatten(),
+                        yrs: nd.yrs,
+                        jday: nd.jday,
+                        hru_wb: nd.hru_wb,
+                    };
+                    let (from_ch, rus) = &self.chan_in[ich];
+                    let ins = crate::channel::ChanInflows { from_chandeg: from_ch, hin_d: &hin_d, rus };
+                    let area = self.obs[icmd].area_ha;
+                    self.obs[icmd].hd[0] = chs.control(ich, hin, area, &ins, &cx);
                 }
                 _ => {
                     // Outlets, and channels not routed yet.
@@ -495,6 +568,20 @@ impl Network {
     /// Today's aquifers, in order: number (1-based), GIS id, name and state.
     pub fn aquifers(&self) -> impl Iterator<Item = (usize, i32, &str, &AquDay)> {
         self.aqus.iter().enumerate().map(|(i, a)| (i + 1, self.obs[a.ob].gis_id, self.obs[a.ob].name.as_str(), &a.d))
+    }
+
+    /// Today's channels: number (1-based), GIS id, name, water body, storage, inflow and outflow
+    /// (flows in m3/s), and the one water temperature printed for all.
+    pub fn channels(&self) -> Vec<ChannelDay<'_>> {
+        let Some(chs) = self.channels.as_ref() else { return Vec::new() };
+        let mut out = Vec::new();
+        for (ob, k) in self.chan_of.iter().enumerate() {
+            if let Some(k) = *k {
+                let (st, i, o, w) = chs.output(k);
+                out.push((k + 1, self.obs[ob].gis_id, self.obs[ob].name.as_str(), *w, *st, *i, *o, chs.wtemp));
+            }
+        }
+        out
     }
 
     /// Today's routing units: name and `ru_d`.

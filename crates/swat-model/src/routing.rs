@@ -83,3 +83,13 @@ impl Default for AquiferDb {
         }
     }
 }
+
+/// A SWAT-DEG channel's data names (`swatdeg_datafiles`, a row of `channel-lte.cha`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SdChannelData {
+    pub name: String,
+    pub init: String,
+    pub hyd: String,
+    pub sed: String,
+    pub nut: String,
+}
