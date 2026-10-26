@@ -24,8 +24,8 @@ stage is exact before the next starts.
 | Stage | Scenario | Adds | Exit |
 | --- | --- | --- | --- |
 | 3a-0 | `Bh_land`: Batanghari's HRUs with Hargreaves PET, urban and wetland HRUs given an ordinary land use | the land phase on tropical data: evergreen perennials, oil palm, decision-table crops, 1,858 HRUs | `hru_wb`, `hru_pw` daily within tolerance |
-| 3a | `Bh_sub`: one headwater subbasin of `Bh_land`, its routing units, shallow and deep aquifer, channels as zero-length pass-throughs | the command loop, HRU hydrographs, routing units (`ru_control`), the 1-D aquifer (`aqu_1d_control`) | `ru` and `aquifer` daily flows within tolerance |
-| 3b | `Bh_sub` with its SWAT-DEG channels | `sd_channel_control3`: storage routing, rating curves, evaporation and seepage, floodplain link | `channel_sd` daily flow columns within tolerance |
+| 3a | `Bh_land` (routing units and aquifers depend only on the HRUs, so no subset is needed) | the command loop, HRU hydrographs, routing units (`ru_control`), the 1-D aquifer (`aqu_1d_control`) | `ru` and `aquifer` daily tables within tolerance |
+| 3b | `Bh_sub`: one headwater subbasin of `Bh_land` with its SWAT-DEG channels | `sd_channel_control3`: storage routing, rating curves, evaporation and seepage, floodplain link | `channel_sd` daily flow columns within tolerance |
 | 3c | `Bh_land`, the whole network | many subbasins, sediment and nutrients in channels and aquifers, QUAL2E | `channel_sd`, `aquifer` all columns |
 | 3d | `Batanghari` itself | Penman-Monteith PET, urban HRUs, wetland HRUs | all daily tables |
 | 3e | `Pessel` | scale (1,454 channels, 3,966 HRUs), peat, paddy, outlets on the coast | all daily tables |
@@ -40,3 +40,6 @@ project.
   warm-up years). It took the generic plant-and-harvest decision tables, hard calibration of
   `perco`, gfortran's handling of a short `plants.plt` row, and gfortran's folding of
   `Sin(Atan(x))` (see `docs/swat-quirks.md`). CI runs it on 2015–2019.
+- **3a done.** The command loop, HRU hydrographs, 284 routing units and 44 aquifers (42
+  shallow, 2 deep) of `Bh_land` match SWAT+ bit for bit on every column of `ru_day` and
+  `aquifer_day`, 2015–2025. Channels pass their inflow on until 3b.

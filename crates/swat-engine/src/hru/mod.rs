@@ -163,6 +163,8 @@ pub struct Hru {
     /// Lag stores of sediment and its nutrients, surface nitrate and soluble P (`surf_bs(2..8)`):
     /// sediment, organic N, organic P, nitrate, soluble P, active and stable mineral P.
     pub surf_bs_sed: [f32; 7],
+    /// Lag stores of detached sand, silt, clay, small and large aggregates (`surf_bs(13..17)`).
+    pub surf_bs_cls: [f32; 5],
     /// Lag store of lateral nitrate (`bss(2)`).
     pub bss_no3: f32,
     /// The management schedule, if any.
@@ -319,6 +321,9 @@ pub struct HruDay {
     pub nb: HruNb,
     pub ls: HruLs,
     pub nutrients: bool,
+    /// What leaves the HRU (`hru_hyds`): total, recharge, surface, lateral and tile flow
+    /// (`ob%hd(1..5)`).
+    pub hd: [crate::hyd::Hyd; 5],
 }
 
 /// What an HRU's day needs besides its weather: the day of the year, its station's unadjusted
@@ -1359,6 +1364,16 @@ impl Hru {
         // The sediment released is taken from its store twice (once after computing it, once
         // with the other constituents), so the store goes negative after a sediment day.
         self.surf_bs_sed[0] -= lagged[0];
+        // The detached sediment classes come only from lateral flow (`swr_latsed`, none so far):
+        // their stores start at 1e-6 and release that share every day.
+        let mut cls = [0.0_f32; 5];
+        for (k, v) in cls.iter_mut().enumerate() {
+            self.surf_bs_cls[k] = self.surf_bs_cls[k].max(1.0e-6);
+            *v = self.surf_bs_cls[k] * brt;
+        }
+        for (k, v) in cls.iter().enumerate() {
+            self.surf_bs_cls[k] -= *v;
+        }
 
         // swr_substor
         self.bss += latq_gen;
@@ -1390,6 +1405,67 @@ impl Hru {
         if qdr < 0.0 {
             qdr = 0.0;
         }
+
+        // swr_subwq: chlorophyll-a, CBOD and dissolved oxygen in the runoff.
+        let (mut chl_a, mut cbodu, mut doxq) = (0.0_f32, 0.0_f32, 0.0_f32);
+        if qdr > 1.0e-4 {
+            let mut wtmp = 5.0 + 0.75 * w.tave;
+            if wtmp <= 0.1 {
+                wtmp = 0.1;
+            }
+            wtmp += 273.15;
+            let tp = 100.0 * (lagged[1] + lagged[3]) / qdr;
+            chl_a = 0.1 * tp;
+            let org_c = (self.layers[0].cbn / 100.0) * saved.enratio * lagged[0] * 1000.0;
+            cbodu = 2.7 * org_c / (qdr * self.km) / 10000.0;
+            let ww = -139.3441_f32 + (1.575701e05 / wtmp);
+            let w2 = wtmp * wtmp;
+            let xx = 6.642308e07 / w2;
+            let yy = 1.2438e10 / (w2 * wtmp);
+            let zz = 8.621949e11 / (w2 * w2);
+            let mut soxy = (ww - xx + yy - zz).exp();
+            if soxy < 0.0 {
+                soxy = 0.0;
+            }
+            doxq = soxy * (-0.1 * cbodu).exp();
+            if doxq < 0.0 {
+                doxq = 0.0;
+            }
+            if doxq > soxy {
+                doxq = soxy;
+            }
+        }
+
+        // hru_hyds
+        let hd = {
+            use crate::hyd::Hyd;
+            let cnv_m3 = self.area_ha * 10.0;
+            let cnv_kg = self.area_ha;
+            let mut sur = Hyd {
+                temp: 5.0 + 0.75 * w.tave,
+                flo: qday * cnv_m3,
+                sed: lagged[0],
+                orgn: lagged[1] * cnv_kg,
+                sedp: (lagged[2] + lagged[5] + lagged[6]) * cnv_kg,
+                no3: lagged[3] * cnv_kg,
+                solp: (lagged[4] + 0.0) * cnv_kg,
+                chla: chl_a * cnv_kg,
+                san: cls[0],
+                sil: cls[1],
+                cla: cls[2],
+                sag: cls[3],
+                lag: cls[4],
+                ..Hyd::default()
+            };
+            let cnv_ppm = if sur.flo > 0.01 { 1.0 / (1000.0 * sur.flo) } else { 0.0 };
+            sur.cbod = cbodu * cnv_ppm;
+            sur.dox = doxq * cnv_ppm;
+            let rhg = Hyd { flo: sepbtm * cnv_m3, no3: nd.percn * cnv_kg, ..Hyd::default() };
+            let lat = Hyd { flo: latq * cnv_m3, no3: latno3 * cnv_kg, ..Hyd::default() };
+            let til = Hyd { flo: qtile * cnv_m3, no3: 0.0 * cnv_kg, ..Hyd::default() };
+            let tot = Hyd::default().plus(sur).plus(lat).plus(til);
+            [tot, rhg, sur, lat, til]
+        };
 
         let wb = HruWb {
             precip: w.precip,
@@ -1469,7 +1545,7 @@ impl Hru {
             percn: nd.percn,
             ..HruLs::default()
         };
-        HruDay { wb, pw, nb, ls, nutrients: b.cswat == 0 || b.cswat == 2 }
+        HruDay { wb, pw, nb, ls, nutrients: b.cswat == 0 || b.cswat == 2, hd }
     }
 
     /// `time_control` at the end of a year: perennials age, the original carbon model's soil is

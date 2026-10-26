@@ -49,11 +49,11 @@ jobs:
             test -d "$src" || src=variants/$scenario
             mkdir -p runs/$scenario
             cp -r "$src" runs/$scenario/fortran
-            scripts/print-daily.sh runs/$scenario/fortran hru_wb,hru_pw,hru_nb,hru_ls hru_cb,hru_cb_vars
+            scripts/print-daily.sh runs/$scenario/fortran hru_wb,hru_pw,hru_nb,hru_ls,ru,aquifer hru_cb,hru_cb_vars
             (cd runs/$scenario/fortran && "$FORTRAN" > run.log 2>&1)
             test -f runs/$scenario/fortran/success.fin
             "$RUST" run "$src" --out runs/$scenario/rust
-            for table in hru_wb_day hru_pw_day hru_nb_day hru_ls_day; do
+            for table in hru_wb_day hru_pw_day hru_nb_day hru_ls_day ru_day aquifer_day; do
               # The port writes the nutrient tables only for the HRUs it simulates in full.
               test -f runs/$scenario/rust/$table.txt || continue
               if "$RUST" compare runs/$scenario/fortran/$table.txt runs/$scenario/rust/$table.txt > runs/$scenario/$table.cmp; then

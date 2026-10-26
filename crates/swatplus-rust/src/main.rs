@@ -109,6 +109,9 @@ fn run(dir: &str, out: &str) -> ExitCode {
             if let Some(why) = report.hru_skipped {
                 eprintln!("note: HRU water balance not simulated ({why}); hru_wb_day.txt has precipitation only");
             }
+            if let Some(why) = report.routing_skipped {
+                eprintln!("note: routing units and aquifers not simulated ({why})");
+            }
         }
         Err(e) => {
             eprintln!("error: {e}");

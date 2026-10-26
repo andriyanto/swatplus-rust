@@ -403,6 +403,7 @@ impl Hru {
         if nd.enratio > 3.0 {
             nd.enratio = 3.0;
         }
+        saved.enratio = nd.enratio;
         let area = self.area_ha;
         let l = &mut self.layers[0];
         // nut_orgn

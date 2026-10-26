@@ -17,7 +17,9 @@ type Key = (i64, i64, i64);
 struct Rows<R> {
     names: Vec<String>,
     lines: std::io::Lines<R>,
-    cols: (usize, usize, usize),
+    /// Year, day and unit columns; without a unit column (`ru_day.txt`) rows are numbered
+    /// within their day.
+    cols: (usize, usize, Option<usize>),
     last: Option<Key>,
 }
 
@@ -28,9 +30,10 @@ impl<R: BufRead> Rows<R> {
         let header = lines.next().ok_or("no header line")?.map_err(|e| e.to_string())?;
         let names: Vec<String> = header.split_whitespace().map(str::to_string).collect();
         let col = |n: &str| names.iter().position(|x| x == n);
-        let (Some(iy), Some(id), Some(iu)) = (col("yr"), col("jday"), col("unit")) else {
-            return Err("the header has no yr, jday and unit columns".into());
+        let (Some(iy), Some(id)) = (col("yr"), col("jday")) else {
+            return Err("the header has no yr and jday columns".into());
         };
+        let iu = col("unit");
         Ok(Rows { names, lines, cols: (iy, id, iu), last: None })
     }
 
@@ -40,7 +43,17 @@ impl<R: BufRead> Rows<R> {
             let line = line.map_err(|e| e.to_string())?;
             let t: Vec<String> = line.split_whitespace().map(str::to_string).collect();
             let key = |i: usize| t.get(i).and_then(|v| v.parse::<i64>().ok());
-            let (Some(y), Some(d), Some(u)) = (key(self.cols.0), key(self.cols.1), key(self.cols.2)) else { continue };
+            let (Some(y), Some(d)) = (key(self.cols.0), key(self.cols.1)) else { continue };
+            let u = match self.cols.2 {
+                Some(iu) => match key(iu) {
+                    Some(u) => u,
+                    None => continue,
+                },
+                None => match self.last {
+                    Some((ly, ld, lu)) if (ly, ld) == (y, d) => lu + 1,
+                    _ => 1,
+                },
+            };
             let k = (y, d, u);
             if self.last.is_some_and(|l| k <= l) {
                 return Err(format!("rows out of order at year {y} day {d} unit {u}"));
@@ -65,7 +78,7 @@ struct ColumnStats {
 pub fn compare(expected: impl BufRead, actual: impl BufRead, abs: f64, rel: f64, label: &str) -> Result<bool, String> {
     let mut ex = Rows::new(expected)?;
     let mut ac = Rows::new(actual)?;
-    let skip = ["jday", "mon", "day", "yr", "unit", "gis_id", "name"];
+    let skip = ["jday", "mon", "day", "yr", "unit", "gis_id", "name", "type"];
     let columns: Vec<(usize, usize, String)> = ac
         .names
         .iter()

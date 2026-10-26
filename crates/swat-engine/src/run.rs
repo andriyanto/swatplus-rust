@@ -36,6 +36,12 @@ pub trait OutputSink {
     /// One HRU's day: its 1-based number, the connection-file object, its weather and, when the
     /// project's HRUs are within what the port simulates, its water balance.
     fn hru_day(&mut self, day: Day, hru: usize, gis_id: i32, name: &str, w: &HruWeather, d: Option<&HruDay>);
+
+    /// One routing unit's day (`ru_day.txt`): its name and what it passed on (`ru_d`).
+    fn ru_day(&mut self, _day: Day, _name: &str, _hd: &crate::hyd::Hyd) {}
+
+    /// One aquifer's day (`aquifer_day.txt`): its 1-based number, GIS id, name and state.
+    fn aqu_day(&mut self, _day: Day, _iaq: usize, _gis_id: i32, _name: &str, _d: &crate::route::AquDay) {}
 }
 
 /// SWAT+'s daily print switches (`pco%day_print`, `day_print_over`, `int_day_cur`) and the print
@@ -100,6 +106,8 @@ impl PrintGate {
 pub struct RunReport {
     /// Why the HRU water balance wasn't simulated, when it wasn't (weather only).
     pub hru_skipped: Option<String>,
+    /// Why routing units and aquifers weren't simulated, when the project has them.
+    pub routing_skipped: Option<String>,
 }
 
 /// Runs the simulation over `time.sim`, handing each printed day to `out`.
@@ -134,6 +142,21 @@ pub fn run(project: &Project, out: &mut dyn OutputSink) -> Result<RunReport, Str
             report.hru_skipped = Some(e);
             None
         }
+    };
+    // The objects past the HRUs (routing units, aquifers), when the HRUs are simulated.
+    let mut network = match land.as_ref() {
+        Some(l) => {
+            let tconc: Vec<f32> = l.iter().map(|h| h.tconc).collect();
+            let ovn_km: Vec<(f32, f32)> = l.iter().map(|h| (h.ovn, h.km)).collect();
+            match crate::route::Network::new(project, &station_names, &tconc, &ovn_km) {
+                Ok(n) => n,
+                Err(e) => {
+                    report.routing_skipped = Some(e);
+                    None
+                }
+            }
+        }
+        None => None,
     };
     let basin = HruBasin::new(project);
     let mut balance_started = false;
@@ -203,8 +226,23 @@ pub fn run(project: &Project, out: &mut dyn OutputSink) -> Result<RunReport, Str
                     }
                     hd = Some(d);
                 }
+                if let (Some(n), Some(d)) = (network.as_mut(), hd.as_ref()) {
+                    n.set_hru(j, &d.hd);
+                }
                 if printing {
                     out.hru_day(day, j + 1, o.gis_id, &o.name, &w, hd.as_ref());
+                }
+            }
+            if let Some(n) = network.as_mut() {
+                let pet: Vec<f32> = weather.stations.iter().map(|s| s.weat.pet).collect();
+                n.day(&pet);
+                if printing {
+                    for (iaq, gis_id, name, d) in n.aquifers() {
+                        out.aqu_day(day, iaq, gis_id, name, d);
+                    }
+                    for (name, h) in n.routing_units() {
+                        out.ru_day(day, name, h);
+                    }
                 }
             }
             if clock.day == 181 {
