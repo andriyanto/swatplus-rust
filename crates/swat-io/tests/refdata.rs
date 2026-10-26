@@ -59,8 +59,9 @@ fn ames_sub1() {
     // file.cio names an aquifer file "nbull" (a typo for null). It isn't there, and as there are
     // no aquifers SWAT+ never opens it; neither does the loader. nutrients.sol is named but not
     // there: SWAT+ then uses its default soil nutrients. Nor is chem_app.ops: fertilizer then
-    // goes on with element 0 of the chemical applications, all zero.
-    assert_eq!(report.missing, ["nutrients.sol", "chem_app.ops"]);
+    // goes on with element 0 of the chemical applications, all zero. Nor is urban.urb: no urban
+    // land types then.
+    assert_eq!(report.missing, ["nutrients.sol", "urban.urb", "chem_app.ops"]);
     let mgt = p.management.iter().find(|m| m.name == "mgt_01").unwrap();
     assert_eq!(mgt.autos, ["irr_year_irr"]);
     assert_eq!(mgt.ops.len(), 305);

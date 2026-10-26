@@ -273,6 +273,16 @@ pub fn read_management(text: &str) -> Result<Vec<MgtSchedule>> {
 /// tables, a record skipped, then each table (a header, its name and sizes, a header, the
 /// conditions with their alternatives, a header, the actions with their outcomes).
 pub fn read_decision_tables(file: &str, text: &str) -> Result<Vec<DecisionTable>> {
+    read_tables(file, text, false)
+}
+
+/// Reads `res_rel.dtl` as `dtbl_res_read` does: as `lum.dtl`, but the second constant of an
+/// action is kept as it is, and each table ends with a record that is skipped.
+pub fn read_res_decision_tables(file: &str, text: &str) -> Result<Vec<DecisionTable>> {
+    read_tables(file, text, true)
+}
+
+fn read_tables(file: &str, text: &str, res: bool) -> Result<Vec<DecisionTable>> {
     let mut rec = Records::new(file, text);
     rec.skip()?;
     let n = rec.read(1)?.int(0)?.unwrap_or(0).max(0);
@@ -311,12 +321,15 @@ pub fn read_decision_tables(file: &str, text: &str) -> Result<Vec<DecisionTable>
                 name: f.text_or(3, ""),
                 option: f.text_or(4, ""),
                 const_: f.real_or(5, 0.0)?,
-                const2: f.real_or(6, 1.0)?.max(1.0),
+                const2: if res { f.real_or(6, 0.0)? } else { f.real_or(6, 1.0)?.max(1.0) },
                 file_pointer: f.text_or(7, ""),
             });
             t.outcomes.push((0..alts).map(|a| f.text_or(8 + a, "")).collect());
         }
         out.push(t);
+        if res && rec.read(0).is_err() {
+            break;
+        }
     }
     Ok(out)
 }

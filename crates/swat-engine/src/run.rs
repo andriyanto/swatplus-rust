@@ -242,6 +242,11 @@ pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -
                 }
                 let mut hd = None;
                 if let Some(h) = land.as_mut().and_then(|l| l.get_mut(j)) {
+                    // et_pot (Penman-Monteith) raises the HRU's wind to 0.01 m/s, and the HRU
+                    // prints it.
+                    if basin.pet == 1 && w.windsp < 0.01 {
+                        w.windsp = 0.01;
+                    }
                     let g = weather.wgn.get(h.wgn);
                     let ctx = DayCtx {
                         day: clock.day,

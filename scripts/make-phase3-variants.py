@@ -5,6 +5,8 @@
            Penman-Monteith (codes.bsn pet 2), and the urban and wetland HRUs (urbn_lum, wetw_lum)
            given evergreen forest (frse_lum) and no surface storage. Everything else, the 1,858
            HRUs, their soils, plants, schedules and the whole object network, is Batanghari's.
+  Bh_urb   Batanghari with only the wetland HRUs replaced (as in Bh_land): Penman-Monteith PET
+           and the urban HRUs as they are.
 
 usage: scripts/make-phase3-variants.py <Batanghari folder> <output folder>
 """
@@ -39,17 +41,18 @@ def set_field(line, k, text):
         pos = end
 
 
-def bh_land(src, out):
-    d = os.path.join(out, "Bh_land")
+def variant(src, out, name, pet, replaced):
+    d = os.path.join(out, name)
     shutil.rmtree(d, ignore_errors=True)
     shutil.copytree(src, d)
 
     def codes(lines):
         k = lines[1].split().index("pet")
-        lines[2] = set_field(lines[2], k, "2")
+        lines[2] = set_field(lines[2], k, pet)
         return lines
 
-    rewrite(os.path.join(d, "codes.bsn"), codes)
+    if pet is not None:
+        rewrite(os.path.join(d, "codes.bsn"), codes)
 
     def hrus(lines):
         h = lines[1].split()
@@ -58,7 +61,7 @@ def bh_land(src, out):
             t = lines[i].split()
             if len(t) <= k_ss:
                 continue
-            if t[k_lu] in ("urbn_lum", "wetw_lum"):
+            if t[k_lu] in replaced:
                 lines[i] = set_field(lines[i], k_lu, "frse_lum".ljust(len(t[k_lu])).strip())
                 lines[i] = set_field(lines[i], k_ss, "null")
         return lines
@@ -70,4 +73,5 @@ def bh_land(src, out):
 if __name__ == "__main__":
     src, out = sys.argv[1], sys.argv[2]
     os.makedirs(out, exist_ok=True)
-    bh_land(src, out)
+    variant(src, out, "Bh_land", "2", ("urbn_lum", "wetw_lum"))
+    variant(src, out, "Bh_urb", None, ("wetw_lum",))

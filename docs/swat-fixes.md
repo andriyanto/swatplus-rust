@@ -17,6 +17,8 @@ Each correction is guarded by the same flag, so a faithful run is unchanged.
 | `sq_sed` / sediment classes | The sediment taken from the class stores is subtracted twice. | Subtracted once. |
 | `pl_nupd`, `pl_pupd` | Only the last plant's N and P demand is zeroed each day, so in a community the other plants keep yesterday's demand. | Every plant's demand starts the day at zero. |
 | `hru_hyds` (`subwq`) | The enrichment ratio comes from the previous HRU (a module variable). | The HRU's own ratio for the day. |
+| `et_act` (wetlands) | The open-water evaporation coefficient is taken from the HRU numbered as the wetland's hydrology row. | The wetland's own. |
+| `et_pot` (Penman-Monteith) | The canopy resistance uses the last plant's stomatal conductance, not the leaf-area-weighted mean summed just before. | The weighted mean. |
 | Year end | The yearly irrigation total's reset is commented out, so the annual limit is reached once and for good. | Reset each year. |
 
 ## Routing units and aquifers

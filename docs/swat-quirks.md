@@ -365,6 +365,45 @@ From `hyd_connect`, `command`, `hru_hyds`, `ru_control`, `dr_ru`, `time_conc_ini
   are the (constant) carbon and organic N; return flow sent to another aquifer counts as `flo_ls`.
 - **Revap uses the weather station's Hargreaves PET**, whatever PET method the HRUs use.
 
+## Penman-Monteith PET and urban HRUs (phase 3d)
+
+From `et_pot`, `et_act`, `sq_daycn` and `hru_urban`; the port is in `swat-engine/src/hru/mod.rs`.
+
+- **Penman-Monteith raises the HRU's wind to 0.01 m/s**, in the weather the HRU then prints
+  (`hru_pw_day`'s `wndspd`).
+- **The plants' maximum transpiration it computes is overwritten by `et_act`** with the leaf
+  area share of the PET, except on days with no PET left after the canopy (and some PET there):
+  then Penman-Monteith's stands.
+- **The canopy resistance uses the last plant's stomatal conductance** (`gsi_adj` after the loop),
+  not the leaf-area-weighted `gsi_wav` the loop sums.
+- **CO2 for the reference crop is the basin's `co2`** (`co2y`, the same each year without
+  `co2_yr.dat`).
+- **Impervious runoff uses curve number 98**, not `urban.urb`'s `urb_cn`, and only on days
+  with more than 0.1 mm of effective rain (it is computed inside the curve number routine).
+- **Urban silt is in tonnes, not t/ha**: `hru_urban` multiplies the washed-off solids by the
+  HRU area for the silt class, not for the sediment.
+- **`usgs_reg`, the USGS regression loads, is not ported**; any other `urb_ro` than it and
+  `buildup_washoff` adds no loads.
+
+## Wetland HRUs (phase 3d)
+
+From `wet_initial`, `et_act`, `wetland_control`, `res_hydro`, `res_sediment`, `res_nutrient`
+and `swr_satexcess`; the port is in `swat-engine/src/hru/wetland.rs`.
+
+- **`et_act` takes the open-water evaporation coefficient from `wet_hyd(ihyd)`**, the wetland
+  data of the HRU numbered as the wetland's `hydrology.wet` row, not its own; an HRU without a
+  wetland has the type's default, 0.7.
+- **A wetland HRU's curve number is never computed** (`surface` isn't called), so `hru_wb_day`
+  prints 0 for it.
+- **Its sediment and nutrient routines run on the runoff it releases with the peak rate
+  `qp_cms` of the last HRU that had runoff**: a module variable `ero_pkq` sets, and wetlands
+  don't. So `nut_orgn`, `nut_psed`, `nut_nlch` and `nut_solp` replace the loads the wetland
+  released with ones from the soil.
+- **When an empty wetland spills, its sediment is counted twice**: the flushed sediment becomes
+  the outflow's, which is then added to the yield already holding it.
+- **The release's seepage check works on a copy of the soil water**: it limits seepage to
+  what the profile can take, but the soil itself fills only in the percolation that follows.
+
 ## SWAT-DEG channels (phases 3b and 3c)
 
 From `sd_hydsed_init`, `sd_rating_curve`, `sd_channel_control3`, `sd_channel_sediment3`,

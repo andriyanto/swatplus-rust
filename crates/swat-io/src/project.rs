@@ -66,7 +66,7 @@ pub fn load_project(src: &dyn FileSource) -> Result<(Project, LoadReport)> {
         project.wgn = climate::read_wgn(&name, &text)?;
     }
     // HRUs and the databases they point to (`hru_read` and the readers before it).
-    let tables: [(&str, &str, &'static [swat_model::table::Field]); 11] = [
+    let tables: [(&str, &str, &'static [swat_model::table::Field]); 12] = [
         ("hydrology", "topogr_hyd", schema::TOPOGRAPHY),
         ("hydrology", "hydrol_hyd", schema::HYDROLOGY),
         ("hydrology", "field_fld", schema::FIELD),
@@ -78,6 +78,7 @@ pub fn load_project(src: &dyn FileSource) -> Result<(Project, LoadReport)> {
         ("hru_parm_db", "till_til", schema::TILLAGE),
         ("hru_parm_db", "plants_plt", schema::PLANTS),
         ("soils", "nut_sol", schema::SOILTEST),
+        ("hru_parm_db", "urban_urb", schema::URBAN),
     ];
     let mut read = Vec::new();
     for (section, slot, fields) in tables {
@@ -98,6 +99,7 @@ pub fn load_project(src: &dyn FileSource) -> Result<(Project, LoadReport)> {
     project.tillage = it.next().flatten();
     project.plants = it.next().flatten();
     project.soil_test = it.next().flatten();
+    project.urban = it.next().flatten();
     // proc_db: the operation databases, then the schedules that point into them.
     let ops: [(&str, &str, &'static [swat_model::table::Field]); 4] = [
         ("hru_parm_db", "fert_frt", schema::FERTILIZER),
@@ -120,6 +122,31 @@ pub fn load_project(src: &dyn FileSource) -> Result<(Project, LoadReport)> {
     if let Some((name, text)) = fetch("decision_table", "dtbl_lum")? {
         project.lum_dtl = hru::read_decision_tables(&name, &text)?;
     }
+    if let Some((name, text)) = fetch("decision_table", "dtbl_res")? {
+        project.res_dtl = hru::read_res_decision_tables(&name, &text)?;
+    }
+    // proc_res: res_read_init, res_read_sed, res_read_nut, wet_read, wet_read_hyd.
+    let res_tables: [(&str, &'static [swat_model::table::Field]); 5] = [
+        ("init_res", schema::RES_INIT),
+        ("sed_res", schema::RES_SED),
+        ("nut_res", schema::RES_NUT),
+        ("wet", schema::WETLAND),
+        ("hyd_wet", schema::WET_HYD),
+    ];
+    let mut read = Vec::new();
+    for (slot, fields) in res_tables {
+        read.push(match fetch("reservoir", slot)? {
+            Some((name, text)) => Some(table::read_table(&name, &text, fields)?),
+            None => None,
+        });
+    }
+    let mut it = read.into_iter();
+    project.res_init = it.next().flatten();
+    project.res_sed = it.next().flatten();
+    project.res_nut = it.next().flatten();
+    project.wetland = it.next().flatten();
+    project.wet_hyd = it.next().flatten();
+    project.weir_res = fetch("reservoir", "weir_res")?.is_some();
     if let Some((_, text)) = fetch("lum", "management_sch")? {
         project.management = hru::read_management(&text)?;
     }

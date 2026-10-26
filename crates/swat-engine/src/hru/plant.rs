@@ -80,6 +80,10 @@ pub struct PlantDb {
     pub rsr1: f32,
     pub rsr2: f32,
     pub aeration: f32,
+    /// Maximum stomatal conductance (m/s) and the slope of its decline with the vapour pressure
+    /// deficit (`plcp%vpd2`), for Penman-Monteith.
+    pub gsi: f32,
+    pub vpd2: f32,
     // plant_cp
     pub leaf1: f32,
     pub leaf2: f32,
@@ -155,6 +159,7 @@ impl PlantDb {
             rsr1: x("rsr1"),
             rsr2: x("rsr2"),
             aeration: x("aeration"),
+            gsi: x("gsi"),
             ..PlantDb::default()
         };
         let mut pltnfr2 = x("pltnfr2");
@@ -237,6 +242,7 @@ impl PlantDb {
             let b2 = 1.0 - (pltpfr2 - d.pltpfr3) / b1;
             let b3 = 1.0 - 0.00001 / b1;
             (d.pup1, d.pup2) = ascrv(b2, b3, 0.5, 1.0);
+            d.vpd2 = (1.0 - x("gmaxfr")) / (x("vpdfr") - 1.0);
         }
         d
     }
@@ -442,6 +448,9 @@ pub struct Saved {
     /// `pest_enrsb`'s enrichment ratio (`enratio` of the HRU module; `varinit` zeroes a local of
     /// the same name), so `swr_subwq` uses the last one computed for any HRU.
     pub enratio: f32,
+    /// `ero_pkq`'s peak runoff rate (`qp_cms` of the HRU module): kept on days without runoff,
+    /// and for wetlands, which don't compute it.
+    pub qp_cms: f32,
 }
 
 /// `plant_init` for the community's single plant. `wgn_months` gives each month's mean maximum

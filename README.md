@@ -56,7 +56,7 @@ What has been found so far is in [`docs/swat-quirks.md`](docs/swat-quirks.md).
 The quirks that are plainly bugs can be corrected instead with `run <folder> --fix-swat`; the
 results then differ from SWAT+'s. They are listed in [`docs/swat-fixes.md`](docs/swat-fixes.md).
 
-Next: Batanghari itself (phase 3d: Penman-Monteith PET, urban and wetland HRUs), then Pessel — see [`docs/phase3.md`](docs/phase3.md). For a project the port can't
+Batanghari matches SWAT+ bit for bit (phase 3d). Next: Pessel (phase 3e) — see [`docs/phase3.md`](docs/phase3.md). For a project the port can't
 simulate yet (other decision table conditions and actions, other operations, other PET
 methods…), `run` says why and writes the weather and precipitation only.
 

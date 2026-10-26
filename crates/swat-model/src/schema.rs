@@ -34,6 +34,72 @@ pub const HYDROLOGY: &[Field] = &[
 ];
 
 /// `landuse.lum`: `land_use_management` (`landuse_read`).
+/// `wetland.wet` (`wet_read`): an id, then the wetland's name and the names of its data.
+pub const WETLAND: &[Field] =
+    &[f("id", I, "0"), f("name", T, ""), f("init", T, ""), f("hyd", T, ""), f("rel", T, ""), f("sed", T, ""), f("nut", T, "")];
+
+/// `hydrology.wet` (`wetland_hyd_data`).
+pub const WET_HYD: &[Field] = &[
+    f("name", T, "default"),
+    f("psa", R, "0."),
+    f("pdep", R, "0."),
+    f("esa", R, "0."),
+    f("edep", R, "0."),
+    f("k", R, "0.01"),
+    f("evrsv", R, "0.7"),
+    f("acoef", R, "1."),
+    f("bcoef", R, "1."),
+    f("ccoef", R, "1."),
+    f("frac", R, "0.5"),
+];
+
+/// `initial.res` (`res_init_dat_c`).
+pub const RES_INIT: &[Field] =
+    &[f("name", T, ""), f("org_min", T, ""), f("pest", T, ""), f("path", T, ""), f("hmet", T, ""), f("salt", T, "")];
+
+/// `sediment.res` (`reservoir_sed_data`).
+pub const RES_SED: &[Field] = &[
+    f("name", T, ""),
+    f("nsed", R, "0."),
+    f("d50", R, "0."),
+    f("carbon", R, "0."),
+    f("bd", R, "0."),
+    f("sed_stlr", R, "0."),
+    f("velsetlr", R, "0."),
+];
+
+/// `nutrients.res` (`reservoir_nut_data`).
+pub const RES_NUT: &[Field] = &[
+    f("name", T, ""),
+    f("ires1", I, "0"),
+    f("ires2", I, "0"),
+    f("nsetlr1", R, "0."),
+    f("nsetlr2", R, "0."),
+    f("psetlr1", R, "0."),
+    f("psetlr2", R, "0."),
+    f("nsolr", R, "1."),
+    f("psolr", R, "1."),
+    f("theta_n", R, "1."),
+    f("theta_p", R, "1."),
+    f("conc_nmin", R, "0.1"),
+    f("conc_pmin", R, "0.01"),
+];
+
+/// `urban.urb` (`urban_db`).
+pub const URBAN: &[Field] = &[
+    f("name", T, ""),
+    f("fimp", R, "0.05"),
+    f("fcimp", R, "0.05"),
+    f("curbden", R, "0."),
+    f("urbcoef", R, "0."),
+    f("dirtmx", R, "1000."),
+    f("thalf", R, "1."),
+    f("tnconc", R, "0."),
+    f("tpconc", R, "0."),
+    f("tno3conc", R, "0."),
+    f("urbcn2", R, "98."),
+];
+
 pub const LANDUSE: &[Field] = &[
     f("name", T, ""),
     f("cal_group", T, ""),

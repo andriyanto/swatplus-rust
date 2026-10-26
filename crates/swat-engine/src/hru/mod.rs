@@ -11,6 +11,7 @@ pub mod carbon;
 pub mod mgt;
 pub mod nutrient;
 pub mod plant;
+pub mod wetland;
 
 use std::ops::Add;
 
@@ -114,6 +115,15 @@ pub struct Hru {
     pub snocov2: f32,
     /// Manning's n for overland flow (`luse%ovn`).
     pub ovn: f32,
+    /// The urban land type (`urban.urb`) and how its runoff picks up loads, for urban HRUs.
+    pub urban: Option<Urban>,
+    /// Days of solids build-up on the impervious area (`twash`).
+    pub twash: f32,
+    /// The wetland on the HRU (`surf_stor`), its `hydrology.wet` row, and the depth evaporated
+    /// from it today (mm, `water_evap`).
+    pub wet: Option<wetland::Wetland>,
+    pub wet_hyd_row: usize,
+    pub water_evap: f32,
     /// Fraction of the surface runoff store released each day (`brt`).
     pub brt: f32,
     pub cn2: f32,
@@ -376,11 +386,14 @@ pub struct HruWb {
     pub lagsurf: f32,
     pub laglatq: f32,
     pub lagsatex: f32,
+    pub wet_evap: f32,
+    pub wet_oflo: f32,
+    pub wet_stor: f32,
 }
 
 impl HruWb {
     /// Column names in `hru_wb_day.txt` and their values.
-    pub fn columns(&self) -> [(&'static str, f32); 29] {
+    pub fn columns(&self) -> [(&'static str, f32); 32] {
         [
             ("precip", self.precip),
             ("snofall", self.snofall),
@@ -411,6 +424,9 @@ impl HruWb {
             ("lagsurf", self.lagsurf),
             ("laglatq", self.laglatq),
             ("lagsatex", self.lagsatex),
+            ("wet_evap", self.wet_evap),
+            ("wet_oflo", self.wet_oflo),
+            ("wet_stor", self.wet_stor),
         ]
     }
 }
@@ -573,8 +589,8 @@ pub fn init_hrus(
     if step > 1 {
         return Err("sub-daily time steps".into());
     }
-    if codes.pet != 2 {
-        return Err(format!("potential ET method {} (only Hargreaves, 2, so far)", codes.pet));
+    if !(0..=2).contains(&codes.pet) {
+        return Err(format!("potential ET method {} (read from a file)", codes.pet));
     }
     if codes.gampt != 0 {
         return Err("Green and Ampt infiltration".into());
@@ -601,6 +617,15 @@ pub fn init_hrus(
         init_bmix(&mut h, &bmix);
         time_conc(&mut h, surlag);
         out.push(h);
+    }
+    // et_act takes the wetland's evaporation coefficient from `wet_hyd(ihyd)`: the HRU numbered
+    // as its hydrology row, which has the type's default (0.7) unless it has a wetland too.
+    let evrsv: Vec<Option<f32>> = out.iter().map(|h| h.wet.as_ref().map(|w| w.evrsv)).collect();
+    for h in out.iter_mut() {
+        let row = h.wet_hyd_row;
+        if let Some(w) = h.wet.as_mut() {
+            w.evrsv_et = evrsv.get(row.wrapping_sub(1)).copied().flatten().unwrap_or(0.7);
+        }
     }
     cal_conditions(project, &mut out)?;
     Ok(out)
@@ -663,17 +688,49 @@ fn init_hru(
     if !lu_found && !is_null(&hd.land_use_mgt) {
         return Err(format!("{n}: land use {} not found", hd.land_use_mgt));
     }
-    for f in ["urb_lu", "tiledrain", "septic", "fstrip", "grassww", "bmpuser"] {
+    for f in ["tiledrain", "septic", "fstrip", "grassww", "bmpuser"] {
         let v = lu.text(f);
         if lu_found && !is_null(v) && !v.is_empty() {
             return Err(format!("{n}: land use {} has {f} {v}", hd.land_use_mgt));
         }
     }
-    if !is_null(&hd.surf_stor) && !hd.surf_stor.is_empty() {
-        return Err(format!("{n}: surface storage {}", hd.surf_stor));
-    }
 
     let mut h = Hru { area_ha: ob.area_ha, km: ob.area_ha / 100.0, elev: ob.elev, lat: ob.lat, ..Hru::default() };
+
+    // wet_initial
+    if !is_null(&hd.surf_stor) && !hd.surf_stor.is_empty() {
+        if project.codes.cswat == 2 {
+            return Err(format!("{n}: wetland with the carbon model"));
+        }
+        let (w, row) = wetland::Wetland::new(project, &hd.surf_stor, h.area_ha).map_err(|e| format!("{n}: {e}"))?;
+        h.wet = Some(w);
+        h.wet_hyd_row = row;
+    }
+
+    // plant_init: the urban land type by name (none when not in urban.urb).
+    if lu_found
+        && let Some(t) = project.urban.as_ref()
+        && let Some(r) = t.find(lu.text("urb_lu"))
+    {
+        let x = |f: &str| t.real(r, f).unwrap_or(0.0);
+        let ro = match lu.text("urb_ro") {
+            "buildup_washoff" => UrbanRunoff::BuildupWashoff,
+            "usgs_reg" => return Err(format!("{n}: urban loads by USGS regression (usgs_reg)")),
+            _ => UrbanRunoff::None,
+        };
+        h.urban = Some(Urban {
+            fimp: x("fimp"),
+            fcimp: x("fcimp"),
+            curbden: x("curbden"),
+            urbcoef: x("urbcoef"),
+            dirtmx: x("dirtmx"),
+            thalf: x("thalf"),
+            tnconc: x("tnconc"),
+            tpconc: x("tpconc"),
+            tno3conc: x("tno3conc"),
+            ro,
+        });
+    }
 
     // topohyd_init
     let (topo, _) = Row::find(project.topography.as_ref(), schema::TOPOGRAPHY, &hd.topo);
@@ -1159,6 +1216,7 @@ impl Hru {
         self.irr_runoff = 0.0;
         self.fertn = 0.0;
         self.fertp = 0.0;
+        self.water_evap = 0.0;
         // A tillage's effect lasts `till_eff_days` (carbon model).
         if let Some(cb) = &b.carbon
             && self.till_switch
@@ -1254,39 +1312,68 @@ impl Hru {
             snomlt = 0.0;
         }
 
-        // et_pot (only Hargreaves so far; init_hrus checks), and the vapour pressure deficit
+        // et_pot, and the vapour pressure deficit
         let ea = crate::climate::ee(w.tave);
         let ed = ea * w.rhum;
         let vpd = ea - ed;
-        let pet_day = self.pet_co * pet_hargreaves(w);
+        let (pet_raw, ep_pm) = match b.pet {
+            0 => (self.pet_priestley_taylor(w, ea, ed), 0.0),
+            1 => self.pet_penman_monteith(w, albday, ea, ed, vpd, b),
+            _ => (pet_hargreaves(w), 0.0),
+        };
+        let pet_day = self.pet_co * pet_raw;
 
         // et_act
-        let (canev, es_day, ep_max) = self.evaporation(w, pet_day);
+        let (canev, es_day, ep_max) = self.evaporation(w, pet_day, ep_pm, b.fixes);
 
         // mgt_operatn
         if self.mgt.as_ref().is_some_and(|m| !m.yr_skip) {
             self.mgt_operatn(c.mo, c.day_mo, b);
         }
 
-        // surface: daily curve number, runoff when there is enough water, erosion.
-        let cnday = self.daily_cn(b.cn_froz);
+        // surface: daily curve number, runoff when there is enough water, erosion. Not for a
+        // wetland: its runoff is what it releases, and its curve number is never set.
+        let is_wet = self.wet.is_some();
+        let cnday = if is_wet { 0.0 } else { self.daily_cn(b.cn_froz) };
         let mut surfq = 0.0_f32;
-        if precip_eff > 0.1 {
+        if precip_eff > 0.1 && !is_wet {
             let r2 = 25400.0 / cnday - 254.0;
             let bb = 0.2 * r2;
             let pb = precip_eff - bb;
             if pb > 0.0 {
                 surfq = pb * pb / (precip_eff + 0.8 * r2);
             }
+            // Directly connected impervious area: curve number 98 (`urbcn2` is not used).
+            if let Some(u) = &self.urban {
+                let mut surfqimp = 0.0_f32;
+                let cnimp = 98.0_f32;
+                let r2 = 25400.0 / cnimp - 254.0;
+                let bb = 0.2 * r2;
+                let pb = precip_eff - bb;
+                if pb > 0.0 {
+                    surfqimp = pb * pb / (precip_eff + 0.8 * r2);
+                }
+                surfq = surfq * (1.0 - u.fcimp) + surfqimp * u.fcimp;
+            }
         }
-        surfq += self.irr_runoff;
-        let mut nd = NutDay::default();
-        self.erosion(surfq.max(0.0), surfq, w.precip, c.precip_half_hr, &b.nut, &mut nd);
+        let mut nd = NutDay { qp_cms: saved.qp_cms, ..NutDay::default() };
+        let inflpcp;
+        if is_wet {
+            // wetland_control
+            surfq = self.wetland_control(w.precip, c.mo, c.station_tave, &b.nut, &mut nd);
+            inflpcp = self.wet.as_ref().map_or(0.0, |wt| wt.water_seep).max(0.0);
+        } else {
+            surfq += self.irr_runoff;
+            self.erosion(surfq.max(0.0), surfq, w.precip, c.precip_half_hr, &b.nut, &mut nd);
+            saved.qp_cms = nd.qp_cms;
+            inflpcp = (precip_eff - surfq).max(0.0);
+        }
 
-        let inflpcp = (precip_eff - surfq).max(0.0);
-
-        // swr_percmain
-        let (latq_gen, sepbtm) = self.percolate(inflpcp + self.irr_applied, &mut surfq);
+        // swr_percmain (a wetland's irrigation went into the pond)
+        let irr_in = if is_wet { 0.0 } else { self.irr_applied };
+        let (latq_gen, sepbtm) = self.percolate(inflpcp + irr_in, &mut surfq);
+        // The wetland's release (and saturation excess below a low weir), as runoff.
+        let wet_outflow = self.wet.as_ref().map_or(0.0, |wt| if wt.out.flo > 0.0 { wt.out.flo / self.area_ha / 10.0 } else { 0.0 });
 
         if b.cswat == 0 {
             self.rsd_decomp(&b.nut);
@@ -1364,6 +1451,9 @@ impl Hru {
         self.nut_nlch(surfq, &b.nut, &mut nd);
         self.nut_solp(surfq, &b.nut, &mut nd);
 
+        // hru_urban: loads washed off the impervious area.
+        let silyld = self.hru_urban(surfq, c.precip_half_hr, &mut nd);
+
         // stor_surfstor: sediment and its nutrients lag like runoff.
         let brt = self.brt;
         let mut lagged = [nd.sedyld, nd.sedorgn, nd.sedorgp, nd.surqno3, nd.surqsolp, nd.sedminpa, nd.sedminps];
@@ -1381,7 +1471,8 @@ impl Hru {
         // their stores start at 1e-6 and release that share every day.
         let mut cls = [0.0_f32; 5];
         for (k, v) in cls.iter_mut().enumerate() {
-            self.surf_bs_cls[k] = self.surf_bs_cls[k].max(1.0e-6);
+            let add = if k == 1 { silyld } else { 0.0 };
+            self.surf_bs_cls[k] = (self.surf_bs_cls[k] + add).max(1.0e-6);
             *v = self.surf_bs_cls[k] * brt;
         }
         for (k, v) in cls.iter().enumerate() {
@@ -1506,6 +1597,9 @@ impl Hru {
             delsw: self.sw - sw_volume_begin,
             lagsurf: self.surf_bs,
             laglatq: self.bss,
+            wet_evap: self.water_evap,
+            wet_oflo: wet_outflow,
+            wet_stor: self.wet.as_ref().map_or(0.0, |wt| wt.water.flo / (10.0 * self.area_ha)),
             ..HruWb::default()
         };
         let pw = HruPw {
@@ -1744,19 +1838,22 @@ impl Hru {
     /// SWAT+ `et_act` without ponded water: canopy evaporation, sublimation, soil evaporation
     /// and the nitrate it draws up from the second layer. Returns (canopy evaporation, soil
     /// evaporation, maximum transpiration).
-    fn evaporation(&mut self, w: &HruWeather, pet_day: f32) -> (f32, f32, f32) {
+    /// `et_act`; `ep_in` is the maximum transpiration `et_pot` left (Penman-Monteith's, else
+    /// varinit's 0), kept when no PET is left after the canopy.
+    fn evaporation(&mut self, w: &HruWeather, pet_day: f32, ep_in: f32, fixes: bool) -> (f32, f32, f32) {
         let esd = 500.0_f32;
         let etco = 0.80_f32;
         let effnup = 0.05_f32;
         let mut pet = pet_day;
         let canev;
         let mut es_day = 0.0_f32;
-        let mut ep_max = 0.0_f32;
+        let mut ep_max = ep_in;
         pet -= self.canstor;
         if pet < 0.0 {
             self.canstor = -pet;
             canev = pet_day;
             pet = 0.0;
+            ep_max = 0.0;
         } else {
             canev = self.canstor;
             self.canstor = 0.0;
@@ -1774,7 +1871,12 @@ impl Hru {
             eos1 *= es_max;
             es_max = es_max.min(eos1);
             es_max = es_max.max(0.0);
-            if pet_day < es_max + ep_max {
+            let ponded = self.wet.as_ref().filter(|wt| wt.water.flo > 0.0).map(|wt| if fixes { wt.evrsv } else { wt.evrsv_et });
+            if let Some(evrsv) = ponded {
+                // Open water evaporates, less under the canopy (Sakaguchi et al. 2014); the
+                // plants' and the soil's together may then exceed the PET.
+                es_max = if self.lai_sum <= 4.0 { evrsv * (1.0 - self.lai_sum / 4.0) * pet } else { 0.0 };
+            } else if pet_day < es_max + ep_max {
                 es_max = pet_day - ep_max;
                 if pet < es_max + ep_max {
                     es_max = pet * es_max / (es_max + ep_max);
@@ -1792,10 +1894,30 @@ impl Hru {
                     self.sno_mm = 0.0;
                 }
             }
+            // Evaporation from the ponded water before the soil.
+            let area = self.area_ha;
+            if let Some(wt) = self.wet.as_mut()
+                && wt.water.flo > 0.0
+            {
+                let mut wetvol_mm = wt.water.flo / (10.0 * area);
+                let evap;
+                if wetvol_mm >= esleft {
+                    wetvol_mm -= esleft;
+                    evap = esleft * (10.0 * area);
+                    esleft = 0.0;
+                } else {
+                    esleft -= wetvol_mm;
+                    evap = wetvol_mm * (10.0 * area);
+                    wetvol_mm = 0.0;
+                }
+                wt.water.flo = 10.0 * wetvol_mm * area;
+                self.water_evap = evap / (10.0 * area);
+            }
+            let soil_evap = self.wet.as_ref().is_none_or(|wt| wt.water.flo < 1.0e-6);
             let mut evzp = 0.0_f32;
             let eosl = esleft;
             let mut sev = 0.0_f32;
-            for ly in 0..self.layers.len() {
+            for ly in (0..self.layers.len()).filter(|_| soil_evap) {
                 let dep = if ly == 0 { self.layers[0].d } else { self.layers[ly - 1].d };
                 if dep < esd {
                     let esco = self.esco;
@@ -1974,7 +2096,11 @@ impl Hru {
                     }
                 }
                 if ul_excess > 0.0 {
-                    *surfq += ul_excess;
+                    if self.wet.is_some() {
+                        self.wet_excess(ul_excess, surfq);
+                    } else {
+                        *surfq += ul_excess;
+                    }
                 }
             }
         }
@@ -1982,6 +2108,157 @@ impl Hru {
 }
 
 /// SWAT+ `et_pot`, Hargreaves (`pet` code 2), before the HRU's adjustment.
+impl Hru {
+    /// Net short-wave radiation for the reference PET, and the net long-wave radiation
+    /// (`et_pot`).
+    fn pet_radiation(&self, w: &HruWeather, ed: f32) -> (f32, f32) {
+        let tk = w.tave + 273.15;
+        let ralb = if self.sno_mm <= 0.5 { w.solrad * (1.0 - 0.23) } else { w.solrad * (1.0 - 0.8) };
+        let rbo = -(0.34 - 0.139 * ed.sqrt());
+        let rto = if w.solradmx < 1.0e-4 { 0.0 } else { 0.9 * (w.solrad / w.solradmx) + 0.1 };
+        // tk**4: gfortran multiplies, squaring twice.
+        let tk2 = tk * tk;
+        let rout = rbo * rto * 4.9e-9 * (tk2 * tk2);
+        (ralb, rout)
+    }
+
+    /// Mean barometric pressure, latent heat, psychrometric constant and the slope of the
+    /// saturation vapour pressure curve (`et_pot`).
+    fn pet_constants(&self, w: &HruWeather, ea: f32) -> (f32, f32, f32) {
+        let pb = 101.3 - self.elev * (0.01152 - 0.544e-6 * self.elev);
+        let xl = 2.501 - 2.361e-3 * w.tave;
+        let gma = 1.013e-3 * pb / (0.622 * xl);
+        let t = w.tave + 237.3;
+        let dlt = 4098.0 * ea / (t * t);
+        (xl, gma, dlt)
+    }
+
+    /// Priestley-Taylor PET (`pet` 0).
+    fn pet_priestley_taylor(&self, w: &HruWeather, ea: f32, ed: f32) -> f32 {
+        let (xl, gma, dlt) = self.pet_constants(w, ea);
+        let (ralb, rout) = self.pet_radiation(w, ed);
+        let rn_pet = ralb + rout;
+        (1.28 * (dlt / (dlt + gma)) * rn_pet / xl).max(0.0)
+    }
+
+    /// Penman-Monteith PET (`pet` 1) for an alfalfa reference crop, and the maximum plant
+    /// transpiration for the HRU's canopy. `w.windsp` comes already raised to 0.01 m/s (the run
+    /// loop does it, since SWAT+ changes the HRU's weather and prints it).
+    fn pet_penman_monteith(&self, w: &HruWeather, albday: f32, ea: f32, ed: f32, vpd: f32, b: &HruBasin) -> (f32, f32) {
+        use crate::fortran::rpow;
+        let (xl, gma, dlt) = self.pet_constants(w, ea);
+        let (ralb, rout) = self.pet_radiation(w, ed);
+        let ralb1 = w.solrad * (1.0 - albday);
+        let rn = ralb1 + rout;
+        let rn_pet = ralb + rout;
+        let rho = 1710.0 - 6.85 * w.tave;
+        let co2 = b.plant.co2;
+        let rv = 114.0 / (w.windsp * rpow(170.0 / 1000.0, 0.2));
+        let rc = 49.0 / (1.4 - 0.4 * co2 / 330.0);
+        let pet_day = ((dlt * rn_pet + gma * rho * vpd / rv) / (xl * (dlt + gma * (1.0 + rc / rv)))).max(0.0);
+
+        if !self.plants.iter().any(|p| p.gro) {
+            return (pet_day, 0.0);
+        }
+        let zz = if self.cht_mx <= 1.0 { 170.0 } else { self.cht_mx * 100.0 + 100.0 };
+        let uzz = w.windsp * rpow(zz / 1000.0, 0.2);
+        let chz = if self.cht_mx < 0.01 { 1.0 } else { self.cht_mx * 100.0 };
+        let zom = if chz <= 200.0 { 0.123 * chz } else { 0.058 * rpow(chz, 1.19) };
+        let zov = 0.1 * zom;
+        let d = 0.667 * chz;
+        let mut rv = ((zz - d) / zom).ln() * ((zz - d) / zov).ln();
+        rv /= 0.41_f32 * 0.41 * uzz;
+        let (mut gsi_adj, mut gsi_wav) = (0.0_f32, 0.0_f32);
+        for p in &self.plants {
+            let rto = p.lai / (self.lai_sum + 0.01);
+            let xx = vpd - 1.0;
+            let fvpd = if xx > 0.0 { (1.0 - p.db.vpd2 * xx).max(0.1) } else { 1.0 };
+            gsi_adj = p.db.gsi * fvpd;
+            gsi_wav += gsi_adj * rto;
+        }
+        // SWAT+ takes the leaf resistance from the last plant's conductance, not the
+        // leaf-area-weighted one it has just summed; corrected, the weighted one.
+        let g = if b.fixes { gsi_wav } else { gsi_adj };
+        let mut rc = 1.0 / (g + 0.01);
+        rc /= 0.5 * (self.lai_sum + 0.01) * (1.4 - 0.4 * co2 / 330.0);
+        let ep_max = ((dlt * rn + gma * rho * vpd / rv) / (xl * (dlt + gma * (1.0 + rc / rv)))).max(0.0).min(pet_day);
+        (pet_day, ep_max)
+    }
+}
+
+/// An urban land type of `urban.urb` (`urban_db`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Urban {
+    /// Impervious and directly connected impervious fractions of the HRU.
+    pub fimp: f32,
+    pub fcimp: f32,
+    /// Curb length density (km/ha), wash-off coefficient (1/mm), maximum solids (kg/curb km),
+    /// days to half of it.
+    pub curbden: f32,
+    pub urbcoef: f32,
+    pub dirtmx: f32,
+    pub thalf: f32,
+    /// Total N, total P and nitrate in the solids (mg/kg).
+    pub tnconc: f32,
+    pub tpconc: f32,
+    pub tno3conc: f32,
+    pub ro: UrbanRunoff,
+}
+
+/// How urban runoff picks up its loads (`urb_ro`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum UrbanRunoff {
+    BuildupWashoff,
+    /// Anything else: no loads from the impervious area.
+    None,
+}
+
+impl Hru {
+    /// `hru_urban`, daily: build-up and wash-off of solids on the impervious area, which replace
+    /// that share of the sediment and its nutrients. Returns the silt it adds (`silyld`).
+    fn hru_urban(&mut self, surfq: f32, phh: f32, nd: &mut NutDay) -> f32 {
+        let Some(u) = self.urban else { return 0.0 };
+        if u.ro != UrbanRunoff::BuildupWashoff {
+            return 0.0;
+        }
+        if surfq <= 0.1 {
+            self.twash += 1.0;
+            return 0.0;
+        }
+        let mut dirt = u.dirtmx * self.twash / (u.thalf + self.twash);
+        let dirto = dirt;
+        let urbk = u.urbcoef * (nd.qp_cms * 3.6 / self.km);
+        let rp1 = -2.0 * (1.0 - phh).ln();
+        let durf = 4.605 / rp1;
+        let mut turo = durf + self.tconc;
+        if turo > 24.0 {
+            turo = 24.0;
+        }
+        let mut xx = urbk * turo;
+        if xx > 24.0 {
+            xx = 24.0;
+        }
+        dirt *= (-xx).exp();
+        if dirt < 1.0e-6 {
+            dirt = 0.0;
+        }
+        self.twash = u.thalf * dirt / (u.dirtmx - dirt);
+        let sus_sol = ((dirto - dirt) * u.curbden).max(0.0);
+        let tn = u.tnconc * sus_sol / 1.0e6;
+        let tp = u.tpconc * sus_sol / 1.0e6;
+        let tno3 = u.tno3conc * sus_sol / 1.0e6;
+        let rest = 1.0 - u.fimp;
+        nd.sedyld = (0.001 * sus_sol) * u.fimp + nd.sedyld * rest;
+        // The silt is in t/ha times the area (t), the sediment in t/ha: as SWAT+ has it.
+        let silyld = (0.001 * sus_sol * self.area_ha) * u.fimp;
+        nd.surqno3 = tno3 * u.fimp + nd.surqno3 * rest;
+        nd.sedorgn = (tn - tno3) * u.fimp + nd.sedorgn * rest;
+        nd.sedorgp = 0.75 * tp * u.fimp + nd.sedorgp * rest;
+        nd.surqsolp = 0.25 * tp * u.fimp + nd.surqsolp * rest;
+        silyld
+    }
+}
+
 fn pet_hargreaves(w: &HruWeather) -> f32 {
     let xl = 2.501 - 2.361e-3 * w.tave;
     let ramm = w.solradmx * 37.59 / 30.0;

@@ -337,6 +337,19 @@ impl Hru {
         }
     }
 
+    /// `ero_cfactor`, which sets the C factor method to 1 before it tests it: the cover factor
+    /// from residue and above-ground biomass.
+    pub(super) fn c_factor(&self, rsd_covco: f32) -> f32 {
+        let rsd_sumfac = (self.rsd_tot.m + 1.0) / 1000.0;
+        let rsd_covfact = exp_w(-rsd_covco * rsd_sumfac);
+        let ab_gr_t = self.ab_gr_com.m / 1000.0;
+        let grcov_frac = ab_gr_t / (ab_gr_t + exp_w(1.175 - 1.748 * ab_gr_t));
+        let mut bio_covfact = 1.0 - grcov_frac * exp_w(-0.328 * self.cht_mx);
+        bio_covfact = bio_covfact.max(1.0e-10);
+        bio_covfact = bio_covfact.min(1.0);
+        (rsd_covfact * bio_covfact).max(1.0e-10)
+    }
+
     /// Erosion in `surface` (`ero_pkq`, `ero_eiusle`, `ero_cfactor`, `ero_ysed`): peak runoff and
     /// sediment yield of the day's runoff `qday`. `precip` is the HRU's, `phh` the station's
     /// fraction of rain in the peak half hour.
@@ -362,15 +375,7 @@ impl Hru {
             }
         }
         if surfq > 1.0e-6 && nd.qp_cms > 1.0e-6 {
-            // ero_cfactor sets the C factor method to 1 before it tests it.
-            let rsd_sumfac = (self.rsd_tot.m + 1.0) / 1000.0;
-            let rsd_covfact = exp_w(-b.rsd_covco * rsd_sumfac);
-            let ab_gr_t = self.ab_gr_com.m / 1000.0;
-            let grcov_frac = ab_gr_t / (ab_gr_t + exp_w(1.175 - 1.748 * ab_gr_t));
-            let mut bio_covfact = 1.0 - grcov_frac * exp_w(-0.328 * self.cht_mx);
-            bio_covfact = bio_covfact.max(1.0e-10);
-            bio_covfact = bio_covfact.min(1.0);
-            let c = (rsd_covfact * bio_covfact).max(1.0e-10);
+            let c = self.c_factor(b.rsd_covco);
             // ero_ysed
             let cklsp = c * self.usle_mult;
             let mut sedyld = (10.0 * surfq * nd.qp_cms * self.area_ha).powf(0.56) * cklsp;

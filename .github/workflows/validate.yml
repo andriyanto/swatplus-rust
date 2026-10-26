@@ -41,10 +41,11 @@ jobs:
         run: |
           status=0
           scripts/make-variants.sh testdata/Ames_sub1 variants
-          # Phase 3: Batanghari's HRUs, 2015-2019 (three printed years) to keep the tables small.
+          # Phase 3: Batanghari (and Bh_land, its HRUs with Hargreaves PET), 2015-2019 (three
+          # printed years) to keep the tables small.
           scripts/make-phase3-variants.py testdata/Batanghari variants
-          sed -i '3s/2025/2019/' variants/Bh_land/time.sim
-          for scenario in Osu_1hru Ames_sub1 Ames_bare Ames_past0 Ames_past Ames_corn Ames_cornf Ames_cosy Ames_cosy2 Ames_dtbl Bh_land; do
+          sed -i '3s/2025/2019/' variants/Bh_land/time.sim testdata/Batanghari/time.sim
+          for scenario in Osu_1hru Ames_sub1 Ames_bare Ames_past0 Ames_past Ames_corn Ames_cornf Ames_cosy Ames_cosy2 Ames_dtbl Bh_land Batanghari; do
             src=testdata/$scenario
             test -d "$src" || src=variants/$scenario
             mkdir -p runs/$scenario
