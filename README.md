@@ -16,6 +16,8 @@ original carbon model (`Ames_past0`) and with the Century carbon model Ames uses
 (planting, harvest, tillage, irrigation, fertilizer: `Ames_corn`, `Ames_cornf`), and with
 **Ames_sub1 itself**, unchanged: corn and soybean in one community, its 305 scheduled
 operations, irrigation by decision table and custom soil layers. CI checks this on every push.
+Phase 3 (routing units, aquifers, SWAT-DEG channels) works on two real projects from West Sumatra, Indonesia, in `testdata/`: `Batanghari` (upland, 284 channels, 1,858 HRUs) and `Pessel` (coastal, 1,454 channels, 3,966 HRUs, peat and paddy), each with its Fortran reference; the stages are in [`docs/phase3.md`](docs/phase3.md).
+
 The design, decisions and phases are in RustGIS: [`docs/swat/design.md`](https://github.com/andriyanto/rustgis/blob/swat-plus-design/docs/swat/design.md).
 
 ## Goal

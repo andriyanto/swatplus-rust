@@ -278,6 +278,42 @@ port is `swat-engine/src/hru/mgt.rs`, with tillage in `hru/carbon.rs`.
   every day the biological mixing runs. That mixing stops on the day of a tillage and comes
   back by `bio_consf` of its full value a day.
 
+## Real projects: the tropics and the SWAT+ Editor (Batanghari, Pessel)
+
+Found while building the two West Sumatra test cases (`testdata/Batanghari`, `testdata/Pessel`).
+They are SWAT+ behaviour, so the port reproduces them; the test cases carry the work-arounds in
+their inputs, listed in each `README.md`.
+
+- **Perennials never go dormant below 20° latitude.** `cli_initwgn` sets the day-length
+  threshold for dormancy (`wgn_pms%daylth`) to -1 hour when `|lat| < 20` and `dorm_hr` is 0, so
+  `pl_dormant` never starts dormancy, and dormancy is the only place a `temp_gro` perennial's
+  `phuacc` goes back to 0. Once `phuacc` passes `dlai` (`hu_lai_decl` in `plants.plt`, 0.99 for
+  forest and oil palm), `pl_leaf_senes` brings leaf area down to `lai_min` within 15 days and it
+  stays there for the rest of the run. ET falls to about half of PET and runoff rises with the
+  wetter soil. The SWAT+ Editor caps `hu_lai_decl` at 1, so the test cases set it to 20 in
+  `plants.plt` after the Editor writes the inputs (about one heat unit accrues a year).
+- **`perco` is a steep function.** `topohyd_init` turns `hydrology.hyd`'s `perco` into the
+  limit on drainage out of the profile bottom: `perco_lim = exp(-(1.0052 ln(-ln(perco - 1e-6))
+  + 5.6862))`, at most 1. perco 0.05 gives about 0.001, 0.5 gives 0.005, 0.8 gives 0.015, 0.95
+  gives 0.067. A tile-drained HRU has perco forced to 0.1 and `cn3_swf` to 0.95.
+- **The Editor writes `perco` by hydrologic group**: 0.5 for group C and 0.05 for group D in
+  both projects, and `cn3_swf` 0.95. With 0.5 almost all percolation stays in the profile,
+  the soil is near saturation, and curve numbers stay high.
+- **`dp_tot` in `soils.sol` is not the root depth.** `hydro_init` sets `soil%zmx` to the depth
+  of the bottom layer, whatever `dp_tot` says.
+- **HWSD Histosols come with an empty subsoil.** The Editor's `global_usersoil` gives Od19's
+  second layer `awc` 0 and `soil_k` 0, an impermeable layer at 30 cm. Pessel replaces both.
+- **`calibration.cal` object lists.** The number before the list (`obj_tot` in the header) is
+  the number of list entries, not of objects: `cal_parmchg_read` reads it as `nspu` and then that
+  many integers, where a negative entry closes a range (`1 -111 113 115 -1123` is 1-111, 113,
+  115-1123). The Editor lists only HRUs that have a land use.
+- **QSWAT+ turns `WATR` into `WETW`.** Open water cells become wetland HRUs (`wetland.wet`,
+  surface storage). Cells without a land use the Editor knows get `lu_mgt` `null` in
+  `hru-data.hru`.
+- **Wetland HRUs evaporate little.** In Pessel the wetland HRUs (`wetl`, `wetf`, `wetw`) return
+  about 375 mm a year to the air against a PET of about 1,300 mm; almost all rain leaves as
+  `wet_oflo`. Reproduced as is.
+
 ## Arithmetic
 
 - **`x ** 0.5` is the math library's `powf`**, not a square root: gfortran calls `powf`, while
