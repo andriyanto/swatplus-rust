@@ -487,10 +487,6 @@ pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -
                     _ => None,
                 }
             };
-            // sim_initday
-            for v in saved.ubnrunoff.iter_mut() {
-                *v = 0.0;
-            }
             // The HRUs run in SWAT+'s command order (an HRU that receives another's water after
             // it), and print in their own order.
             let hru_order: Vec<usize> = match network.as_ref() {

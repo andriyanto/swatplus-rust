@@ -679,6 +679,22 @@ def ps_hourly(base, dst, years=(2015, 2017)):
     print(f"{os.path.basename(dst)}: hourly, Green-Ampt ({len(names)} precipitation files)")
 
 
+def ps_urbhr(base, dst):
+    """A copy of the hourly project `base` whose generic farmland is a medium-density town, its
+    loads washed off the impervious area by the hour (`hru_urbanhr`)."""
+    if os.path.exists(dst):
+        shutil.rmtree(dst)
+    shutil.copytree(base, dst)
+    path = os.path.join(dst, "landuse.lum")
+    lines = read(path)
+    h = lines[1].split()
+    for i in range(2, len(lines)):
+        if lines[i].startswith("agrl_lum"):
+            lines[i] = set_field(set_field(lines[i], h.index("urban"), "urmd"), h.index("urb_ro"), "buildup_washoff")
+    write(path, lines)
+    print(f"{os.path.basename(dst)}: hourly, a town washed off by the hour")
+
+
 def ps_land(base, dst):
     """A copy of project `base` where three upland oil palm HRUs drain across the land into the
     HRU below them in their routing unit (landscape routing), instead of to the channel."""
@@ -732,3 +748,4 @@ if __name__ == "__main__":
     ps_urban(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_urban"))
     ps_hourly(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_hourly"))
     ps_land(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_land"))
+    ps_urbhr(os.path.join(out, "Ps_hourly"), os.path.join(out, "Ps_urbhr"))
