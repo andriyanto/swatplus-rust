@@ -612,6 +612,22 @@ def ps_solp(base, dst):
     print(f"{os.path.basename(dst)}: dynamic soil P")
 
 
+def ps_urban(base, dst):
+    """A copy of project `base` whose generic farmland is a medium-density town, its loads from
+    the USGS regression equations (`urb_ro` usgs_reg)."""
+    if os.path.exists(dst):
+        shutil.rmtree(dst)
+    shutil.copytree(base, dst)
+    path = os.path.join(dst, "landuse.lum")
+    lines = read(path)
+    h = lines[1].split()
+    for i in range(2, len(lines)):
+        if lines[i].startswith("agrl_lum"):
+            lines[i] = set_field(set_field(lines[i], h.index("urban"), "urmd"), h.index("urb_ro"), "usgs_reg")
+    write(path, lines)
+    print(f"{os.path.basename(dst)}: a town by the USGS regressions")
+
+
 if __name__ == "__main__":
     src, out = sys.argv[1], sys.argv[2]
     os.makedirs(out, exist_ok=True)
@@ -623,3 +639,4 @@ if __name__ == "__main__":
     ps_bmp(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_bmp"))
     ps_septic(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_septic"))
     ps_solp(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_solp"))
+    ps_urban(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_urban"))

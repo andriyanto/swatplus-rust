@@ -1357,6 +1357,10 @@ fn soil_layers(h: &mut Hru, soil: &Soil, depths: Option<&[i32]>) -> Result<(), S
         if l.rock > 98.0 {
             l.rock = 98.0;
         }
+        // The average calcium carbonate of 20,000 SSURGO soils when none is given.
+        if l.cal <= 1.0e-6 {
+            l.cal = 2.8;
+        }
     }
     for l in layers.iter_mut() {
         l.wp = 0.4 * l.clay * l.bd / 100.0;
