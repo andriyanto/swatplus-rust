@@ -40,6 +40,7 @@ jobs:
       - name: Run and compare
         run: |
           status=0
+          trap 'echo "::error title=stopped::at scenario ${scenario:-none} (line $LINENO)"' ERR
           scripts/make-variants.sh testdata/Ames_sub1 variants
           # Phase 3: Batanghari (and Bh_land, its HRUs with Hargreaves PET), 2015-2019 (three
           # printed years) to keep the tables small.
@@ -62,7 +63,7 @@ jobs:
             (cd runs/$scenario/fortran && "$FORTRAN" > run.log 2>&1)
             test -f runs/$scenario/fortran/success.fin
             # The port reads the same print.prt (the folder's SWAT+ output is no input).
-            "$RUST" run runs/$scenario/fortran --out runs/$scenario/rust
+            "$RUST" run runs/$scenario/fortran --out runs/$scenario/rust 2> runs/$scenario/rust.log || { echo "::error title=$scenario port::$(tail -3 runs/$scenario/rust.log | tr '\n' ' ')"; exit 1; }
             for stem in hru_wb hru_pw hru_nb hru_ls ru aquifer channel_sd basin_wb basin_nb basin_ls basin_pw lsunit_wb lsunit_nb lsunit_ls lsunit_pw basin_sd_cha reservoir basin_res recall basin_psc; do for period in day mon yr aa subday; do
               table=${stem}_$period
               # The port writes the nutrient tables, and the period tables, only for the HRUs it
