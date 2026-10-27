@@ -82,6 +82,10 @@ pub struct Project {
     pub res_hyd: Option<Table>,
     /// `tiledrain.str`.
     pub tiledrain: Option<Table>,
+    /// `filterstrip.str`, `grassedww.str` and `bmpuser.str`.
+    pub fstrip: Option<Table>,
+    pub grassww: Option<Table>,
+    pub bmpuser: Option<Table>,
     /// `atmo.cli`.
     pub atmodep: Option<AtmoDep>,
     /// `recall.rec` and the files it names (`recall_read`).

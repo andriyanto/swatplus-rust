@@ -548,6 +548,34 @@ def ps_tile(base, dst):
     print(f"{os.path.basename(dst)}: oil palm on drains")
 
 
+def ps_bmp(base, dst):
+    """A copy of project `base` with filter strips along its oil palm, grassed waterways in its
+    row crops and the editor's user-defined practice on its generic agricultural land."""
+    if os.path.exists(dst):
+        shutil.rmtree(dst)
+    shutil.copytree(base, dst)
+    path = os.path.join(dst, "filterstrip.str")
+    lines = read(path)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    # SWAT's documented defaults (field 40 times the strip, half the runoff into its most
+    # concentrated tenth, none of it channelized), White and Arnold (2009).
+    lines.append("riparian                 1      40.00000       0.50000       0.00000  Riparian_buffer")
+    write(path, lines + [""])
+    path = os.path.join(dst, "landuse.lum")
+    lines = read(path)
+    h = lines[1].split()
+    for i in range(2, len(lines)):
+        if lines[i].startswith("oilp_lum"):
+            lines[i] = set_field(lines[i], h.index("vfs"), "riparian")
+        elif lines[i].startswith("agrr_lum"):
+            lines[i] = set_field(lines[i], h.index("grww"), "grwway_low")
+        elif lines[i].startswith("agrl_lum"):
+            lines[i] = set_field(lines[i], h.index("bmp"), "bmpusr1")
+    write(path, lines)
+    print(f"{os.path.basename(dst)}: filter strips, grassed waterways, user practice")
+
+
 if __name__ == "__main__":
     src, out = sys.argv[1], sys.argv[2]
     os.makedirs(out, exist_ok=True)
@@ -556,3 +584,4 @@ if __name__ == "__main__":
     ps_musk(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_musk"))
     ps_atmo(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_atmo"))
     ps_tile(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_tile"))
+    ps_bmp(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_bmp"))

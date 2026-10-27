@@ -196,6 +196,15 @@ pub fn load_project(src: &dyn FileSource) -> Result<(Project, LoadReport)> {
     if let Some((name, text)) = fetch("structural", "tiledrain_str")? {
         project.tiledrain = Some(table::read_table(&name, &text, schema::TILEDRAIN)?);
     }
+    for (slot, fields, dst) in [
+        ("fstrip_str", schema::FSTRIP, &mut project.fstrip),
+        ("grassww_str", schema::GRASSWW, &mut project.grassww),
+        ("bmpuser_str", schema::BMPUSER, &mut project.bmpuser),
+    ] {
+        if let Some((name, text)) = fetch("structural", slot)? {
+            *dst = Some(table::read_table(&name, &text, fields)?);
+        }
+    }
     if let Some((name, text)) = fetch("climate", "atmo_cli")? {
         project.atmodep = Some(climate::read_atmodep(&name, &text)?);
     }

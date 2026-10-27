@@ -7,6 +7,7 @@
 //! (`nutrient`) or of the carbon model (`carbon`, `cswat` 2), and dated management (`mgt`). [`init_hrus`] says which inputs
 //! need what isn't ported yet.
 
+pub mod bmp;
 pub mod carbon;
 pub mod mgt;
 pub mod nutrient;
@@ -222,6 +223,8 @@ pub struct Hru {
     /// Tile drains (`hru%sdr`), if any, and today's tile flow (mm, `qtile`).
     pub tile: Option<Tile>,
     pub qtile: f32,
+    /// Filter strips, grassed waterways and user-defined practices.
+    pub bmps: bmp::Bmps,
     /// Tile flow and its nitrate held back (`bss(3)`, `bss(4)`).
     pub bss_tile: f32,
     pub bss_tno3: f32,
@@ -856,11 +859,9 @@ fn init_hru(
 ) -> Result<Hru, String> {
     let n = &hd.name;
     let (lu, lu_found) = Row::find_or_first(project.landuse.as_ref(), schema::LANDUSE, &hd.land_use_mgt);
-    for f in ["septic", "fstrip", "grassww", "bmpuser"] {
-        let v = lu.text(f);
-        if lu_found && !is_null(v) && !v.is_empty() {
-            return Err(format!("{n}: land use {} has {f} {v}", hd.land_use_mgt));
-        }
+    let v = lu.text("septic");
+    if lu_found && !is_null(v) && !v.is_empty() {
+        return Err(format!("{n}: land use {} has septic {v}", hd.land_use_mgt));
     }
 
     let mut h = Hru {
@@ -951,6 +952,10 @@ fn init_hru(
         perco = 0.1;
     }
     h.perco = perco;
+    // structure_init
+    if lu_found {
+        h.bmps = bmp::init(project, [lu.text("fstrip"), lu.text("grassww"), lu.text("bmpuser")], h.km, h.slope);
+    }
     h.sno = Snow {
         falltmp: sno.real("falltmp"),
         melttmp: sno.real("melttmp"),
@@ -1754,6 +1759,20 @@ impl Hru {
             self.bss_tno3 -= tileno3;
         }
         nd.tileno3 = tileno3;
+
+        // smp_filter, smp_grass_wway, smp_bmpfixed
+        {
+            let mut sf = bmp::Surface { lagged: &mut lagged, cls: &mut cls };
+            if let Some(f) = self.bmps.filter {
+                bmp::filter(&f, self.area_ha, surfq, self.layers[0].k, &mut sf);
+            }
+            if let Some(g) = self.bmps.grassww {
+                bmp::grass_wway(&g, self.area_ha, self.km, surfq, &mut sf);
+            }
+            if let Some(u) = self.bmps.user {
+                bmp::user(&u, &mut sf, &mut latno3);
+            }
+        }
 
         // sq_surfst
         self.surf_bs = (self.surf_bs + surfq).max(1.0e-6);
