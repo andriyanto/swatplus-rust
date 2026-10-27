@@ -27,6 +27,9 @@ null). Hard calibration (calibration.cal) keeps its HRUs, renumbered.
             stations for its weather stations in turn; dry deposition three times higher in the
             haze of September-October 2015 (docs/atmo.md).
 
+  Ps_tile   Ps_coast with its oil palm drained (tiledrain.str peat_canal): drains 600 mm deep,
+            the water table Indonesian peat rules keep under 0.4 m (docs/structures.md).
+
 usage: scripts/make-pessel-variants.py <Pessel folder> <output folder>
 """
 import os
@@ -522,6 +525,29 @@ def ps_atmo(base, dst):
     print(f"{os.path.basename(dst)}: monthly nitrogen deposition")
 
 
+def ps_tile(base, dst):
+    """A copy of project `base` with its oil palm on drains."""
+    if os.path.exists(dst):
+        shutil.rmtree(dst)
+    shutil.copytree(base, dst)
+    path = os.path.join(dst, "tiledrain.str")
+    lines = read(path)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    # depth (mm), time to drain to field capacity (h), lag (h), radius (mm), spacing (mm),
+    # drainage coefficient (mm a day), pump capacity, lateral conductivity factor.
+    lines.append("peat_canal           600.00000      48.00000      96.00000     100.00000   30000.00000      20.00000       0.00000       1.00000  ")
+    write(path, lines + [""])
+    path = os.path.join(dst, "landuse.lum")
+    lines = read(path)
+    k = lines[1].split().index("tile")
+    for i in range(2, len(lines)):
+        if lines[i].startswith("oilp_lum"):
+            lines[i] = set_field(lines[i], k, "peat_canal")
+    write(path, lines)
+    print(f"{os.path.basename(dst)}: oil palm on drains")
+
+
 if __name__ == "__main__":
     src, out = sys.argv[1], sys.argv[2]
     os.makedirs(out, exist_ok=True)
@@ -529,3 +555,4 @@ if __name__ == "__main__":
     ps_paddy(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_paddy"))
     ps_musk(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_musk"))
     ps_atmo(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_atmo"))
+    ps_tile(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_tile"))

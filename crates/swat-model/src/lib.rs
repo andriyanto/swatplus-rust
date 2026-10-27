@@ -80,6 +80,8 @@ pub struct Project {
     /// `reservoir.res` and `hydrology.res`.
     pub res_dat: Option<Table>,
     pub res_hyd: Option<Table>,
+    /// `tiledrain.str`.
+    pub tiledrain: Option<Table>,
     /// `atmo.cli`.
     pub atmodep: Option<AtmoDep>,
     /// `recall.rec` and the files it names (`recall_read`).

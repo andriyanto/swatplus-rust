@@ -478,3 +478,16 @@ pub const RES_HYD: &[Field] = &[
     f("br1", R, "0."),
     f("br2", R, "0."),
 ];
+
+/// `tiledrain.str` (`subsurface_drainage_parameters`).
+pub const TILEDRAIN: &[Field] = &[
+    f("name", T, "null"),
+    f("depth", R, "0."),
+    f("time", R, "0."),
+    f("lag", R, "0."),
+    f("radius", R, "0."),
+    f("dist", R, "0."),
+    f("drain_co", R, "0."),
+    f("pumpcap", R, "0."),
+    f("latksat", R, "0."),
+];

@@ -78,6 +78,19 @@ pub struct Layer {
     pub bmix: f32,
 }
 
+/// A tile drain (`tiledrain.str`): its depth (mm), the time to drain the soil to field capacity
+/// (h), the drainage coefficient (mm a day), and the layer it is in (1-based, 0 for none).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Tile {
+    pub depth: f32,
+    pub time: f32,
+    pub drain_co: f32,
+    pub ldrain: usize,
+    /// The lag (h) and the share of the held-back tile flow released a day (`tile_ttime`).
+    pub lag: f32,
+    pub ttime: f32,
+}
+
 /// Snow parameters (`snow.sno` row).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Snow {
@@ -206,6 +219,12 @@ pub struct Hru {
     /// The initial soil water as a share of field capacity (`soil%ffc`), and `hyd%epco`.
     pub ffc: f32,
     pub epco: f32,
+    /// Tile drains (`hru%sdr`), if any, and today's tile flow (mm, `qtile`).
+    pub tile: Option<Tile>,
+    pub qtile: f32,
+    /// Tile flow and its nitrate held back (`bss(3)`, `bss(4)`).
+    pub bss_tile: f32,
+    pub bss_tno3: f32,
     /// The last day's atmospheric nitrate and ammonium (kg/ha), printed again on days without.
     pub atmo_prev: [f32; 2],
     /// A paddy's target and threshold ponding depths (mm, `hru%irr_hmax`, `irr_hmin`).
@@ -725,8 +744,9 @@ fn cal_conditions(project: &Project, hrus: &mut [Hru]) -> Result<(), String> {
         for e in elems {
             let h = hrus.get_mut(e.wrapping_sub(1)).ok_or_else(|| format!("calibration of {}: HRU {e}", u.name))?;
             match u.name.as_str() {
+                // Not for tile-drained HRUs.
+                "perco" | "cn3_swf" if h.tile.is_some() => {}
                 "perco" => {
-                    // Not for tile-drained HRUs (none are, so far).
                     h.perco = chg(h.perco);
                     h.perco_lim = if h.perco > 1.0e-6 {
                         let perc_ln_func = 1.0052_f32 * (-(h.perco - 1.0e-6).ln()).ln() + 5.6862;
@@ -836,7 +856,7 @@ fn init_hru(
 ) -> Result<Hru, String> {
     let n = &hd.name;
     let (lu, lu_found) = Row::find_or_first(project.landuse.as_ref(), schema::LANDUSE, &hd.land_use_mgt);
-    for f in ["tiledrain", "septic", "fstrip", "grassww", "bmpuser"] {
+    for f in ["septic", "fstrip", "grassww", "bmpuser"] {
         let v = lu.text(f);
         if lu_found && !is_null(v) && !v.is_empty() {
             return Err(format!("{n}: land use {} has {f} {v}", hd.land_use_mgt));
@@ -908,7 +928,28 @@ fn init_hru(
     h.esco = hyd.real("esco");
     h.epco = hyd.real("epco");
     h.cn3_swf = hyd.real("cn3_swf");
-    let perco = hyd.real("perco");
+    if hyd.real("lat_sed") > 0.0 {
+        return Err(format!("{n}: sediment in lateral flow (lat_sed)"));
+    }
+    let mut perco = hyd.real("perco");
+    // topohyd_init: a tile-drained HRU's curve number and percolation are set for tiles.
+    let tile_name = lu.text("tiledrain").to_string();
+    if lu_found && !is_null(&tile_name) && !tile_name.is_empty() {
+        let t = project.tiledrain.as_ref().and_then(|t| t.find(&tile_name).map(|r| (t, r)));
+        let Some((t, r)) = t else {
+            return Err(format!("{n}: tile drain {tile_name} not in tiledrain.str"));
+        };
+        if project.codes.tdrn == 1 {
+            return Err(format!("{n}: tile drains by the DRAINMOD equations"));
+        }
+        if project.codes.wtdn == 1 {
+            return Err(format!("{n}: tile drains with the water table of the soil moisture (wtable 1)"));
+        }
+        let x = |f: &str| t.real(r, f).unwrap_or(0.0);
+        h.tile = Some(Tile { depth: x("depth"), time: x("time"), drain_co: x("drain_co"), ldrain: 0, lag: x("lag"), ttime: 0.0 });
+        h.cn3_swf = 0.95;
+        perco = 0.1;
+    }
     h.perco = perco;
     h.sno = Snow {
         falltmp: sno.real("falltmp"),
@@ -1059,6 +1100,12 @@ fn init_hru(
         }
     }
     h.zmx = h.layers.last().map(|l| l.d).unwrap_or(0.0);
+    // structure_set_parms: the layer the tiles are in.
+    let depths: Vec<f32> = h.layers.iter().map(|l| l.d).collect();
+    if let Some(t) = h.tile.as_mut() {
+        t.ldrain = if t.depth > 0.0 { depths.iter().position(|&d| t.depth < d).map_or(0, |k| k + 1) } else { 0 };
+        t.ttime = if t.ldrain > 0 && t.lag > 0.01 { 1.0 - (-24.0 / t.lag).exp() } else { 0.0 };
+    }
     h.lat_ttime = if h.lat_ttime <= 0.0 {
         let mut scmx = 0.0_f32;
         for l in &h.layers {
@@ -1684,13 +1731,35 @@ impl Hru {
         }
         self.bss -= latq;
         self.bss_no3 -= latno3;
+        // The tile flow and its nitrate are lagged the same way, by the tiles' lag.
+        let (mut qtile, mut tileno3) = (0.0_f32, 0.0_f32);
+        if let Some(t) = self.tile {
+            self.bss_tile += self.qtile;
+            self.bss_tno3 += nd.tileno3;
+            if self.bss_tile < 1.0e-6 {
+                self.bss_tile = 0.0;
+            }
+            if self.bss_tno3 < 1.0e-6 {
+                self.bss_tno3 = 0.0;
+            }
+            qtile = self.bss_tile * t.ttime;
+            tileno3 = self.bss_tno3 * t.ttime;
+            if qtile < 1.0e-6 {
+                qtile = 0.0;
+            }
+            if tileno3 < 1.0e-6 {
+                tileno3 = 0.0;
+            }
+            self.bss_tile -= qtile;
+            self.bss_tno3 -= tileno3;
+        }
+        nd.tileno3 = tileno3;
 
         // sq_surfst
         self.surf_bs = (self.surf_bs + surfq).max(1.0e-6);
         let qday = self.surf_bs * self.brt;
         self.surf_bs -= qday;
 
-        let qtile = 0.0_f32;
         let mut qdr = qday + latq + qtile;
         if qdr < 0.0 {
             qdr = 0.0;
@@ -1741,7 +1810,7 @@ impl Hru {
                 orgn: lagged[1] * cnv_kg,
                 sedp: (lagged[2] + lagged[5] + lagged[6]) * cnv_kg,
                 no3: lagged[3] * cnv_kg,
-                solp: (lagged[4] + 0.0) * cnv_kg,
+                solp: (lagged[4] + nd.tilelabp) * cnv_kg,
                 chla: chl_a * cnv_kg,
                 san: cls[0],
                 sil: cls[1],
@@ -1755,7 +1824,7 @@ impl Hru {
             sur.dox = doxq * cnv_ppm;
             let rhg = Hyd { flo: sepbtm * cnv_m3, no3: nd.percn * cnv_kg, ..Hyd::default() };
             let lat = Hyd { flo: latq * cnv_m3, no3: latno3 * cnv_kg, ..Hyd::default() };
-            let til = Hyd { flo: qtile * cnv_m3, no3: 0.0 * cnv_kg, ..Hyd::default() };
+            let til = Hyd { flo: qtile * cnv_m3, no3: nd.tileno3 * cnv_kg, ..Hyd::default() };
             let tot = Hyd::default().plus(sur).plus(lat).plus(til);
             [tot, rhg, sur, lat, til]
         };
@@ -1786,6 +1855,7 @@ impl Hru {
             wet_evap: self.water_evap,
             wet_oflo: wet_outflow,
             wet_stor: self.wet.as_ref().map_or(0.0, |wt| wt.water.flo / (10.0 * self.area_ha)),
+            qtile,
             ..HruWb::default()
         };
         let pw = HruPw {
@@ -1840,6 +1910,8 @@ impl Hru {
             usle: nd.usle,
             sedminp: lagged[5] + lagged[6],
             lchlabp: nd.lchlabp,
+            tileno3: nd.tileno3,
+            tilelabp: nd.tilelabp,
             percn: nd.percn,
             ..HruLs::default()
         };
@@ -2219,7 +2291,69 @@ impl Hru {
         }
         self.sat_excess(surfq);
         self.sum_sw();
+        self.qtile = self.tile_flow();
         (latq, sepbtm)
+    }
+
+    /// The end of `swr_percmain`: the shallow water table (`wtable` 0) and, above the tiles,
+    /// tile flow (`swr_origtile`) taken from the layers' water above field capacity.
+    fn tile_flow(&mut self) -> f32 {
+        let Some(t) = self.tile else { return 0.0 };
+        let mut qtile = 0.0_f32;
+        let mut wt_shall = self.zmx;
+        if self.layers.get(1).is_some_and(|l| l.tmp > 0.0) {
+            let por_air = 0.9_f32;
+            let d = self.zmx - t.depth;
+            if self.sw > self.sumfc {
+                let mut yy = self.sumul * por_air;
+                if yy < 1.1 * self.sumfc {
+                    yy = 1.1 * self.sumfc;
+                }
+                let mut xx = (self.sw - self.sumfc) / (yy - self.sumfc);
+                if xx > 1.0 {
+                    xx = 1.0;
+                }
+                wt_shall = xx * self.zmx;
+            }
+            if t.depth > 0.0 {
+                if wt_shall <= d {
+                    qtile = 0.0;
+                } else {
+                    // swr_origtile
+                    if self.sw > self.sumfc {
+                        let sw_excess = (wt_shall - d) / wt_shall * (self.sw - self.sumfc);
+                        qtile = if t.time < 1.0 { sw_excess } else { sw_excess * (1.0 - (-24.0 / t.time).exp()) };
+                        qtile = qtile.min(t.drain_co);
+                    } else {
+                        qtile = 0.0;
+                    }
+                    if qtile < 0.0 {
+                        qtile = 0.0;
+                    }
+                }
+            }
+        }
+        if qtile > 0.0 {
+            let mut sumqtile = qtile;
+            for l in self.layers.iter_mut() {
+                let xx = l.st - l.fc;
+                if xx > 0.0 {
+                    if xx > sumqtile {
+                        l.st -= sumqtile;
+                        sumqtile = 0.0;
+                    } else {
+                        sumqtile -= xx;
+                        l.st = l.fc;
+                    }
+                }
+            }
+            if sumqtile > 0.0 {
+                qtile -= sumqtile;
+                qtile = qtile.max(0.0);
+            }
+        }
+        self.sum_sw();
+        qtile
     }
 
     /// SWAT+ `swr_percmicro` for layer `ly1` (0-based): returns (percolation, lateral flow).

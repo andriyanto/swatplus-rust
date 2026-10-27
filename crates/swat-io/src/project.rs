@@ -193,6 +193,9 @@ pub fn load_project(src: &dyn FileSource) -> Result<(Project, LoadReport)> {
             *dst = Some(table::read_table(&name, &text, fields)?);
         }
     }
+    if let Some((name, text)) = fetch("structural", "tiledrain_str")? {
+        project.tiledrain = Some(table::read_table(&name, &text, schema::TILEDRAIN)?);
+    }
     if let Some((name, text)) = fetch("climate", "atmo_cli")? {
         project.atmodep = Some(climate::read_atmodep(&name, &text)?);
     }

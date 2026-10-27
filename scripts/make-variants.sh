@@ -13,6 +13,7 @@
 #   Ames_corn  corn alone under mgt_01's dated operations (below).
 #   Ames_cornf Ames_corn with its fertilizer actually applied (below).
 #   Ames_cosy, Ames_cosy2, Ames_dtbl: Ames_sub1's own land uses, step by step (below).
+#   Ames_tile  Ames_sub1 with tile drains under its corn and soybean (phase 4).
 #
 # Both drop soil_lyr_depths.sol, so SWAT+ keeps the layers of soils.sol (plus its 10 mm top layer)
 # instead of re-layering every soil to custom depths; that path is validated later.
@@ -101,3 +102,13 @@ awk '{ sub(/\r$/, "") }
 rm -rf "$out/Ames_dtbl"
 cp -r "$src" "$out/Ames_dtbl"
 rm -f "$out/Ames_dtbl/soil_lyr_depths.sol"
+
+# Ames_tile (phase 4): Ames_sub1 as it is, with its corn and soybean (cosy_lum) on tile drains
+# 1 m deep (tiledrain.str mw24_1000), as much of Iowa's cropland is.
+rm -rf "$out/Ames_tile"
+cp -r "$src" "$out/Ames_tile"
+awk '
+  { sub(/\r$/, "") }
+  NR > 2 && $1 == "cosy_lum" { $10 = "mw24_1000"; line = ""; for (i = 1; i <= NF; i++) line = line sprintf("%-18s", $i); print line; next }
+  { print }
+' "$src/landuse.lum" > "$out/Ames_tile/landuse.lum"

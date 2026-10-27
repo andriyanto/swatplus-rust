@@ -19,6 +19,7 @@ pub struct NutBasin {
     pub phoskd: f32,
     pub pperco: f32,
     pub nperco: f32,
+    pub nperco_lchtile: f32,
     pub decr_min: f32,
     pub prf: f32,
     pub rsd_covco: f32,
@@ -41,6 +42,7 @@ impl NutBasin {
             phoskd: p("phoskd"),
             pperco: p("pperco"),
             nperco: p("nperco"),
+            nperco_lchtile: p("nperco_lchtile"),
             decr_min: p("decr_min"),
             prf: p("prf"),
             rsd_covco: p("rsd_covco"),
@@ -75,6 +77,9 @@ pub struct NutDay {
     /// Nitrate and ammonium from the atmosphere (kg/ha, `nut_nrain`).
     pub no3atmo: f32,
     pub nh4atmo: f32,
+    /// Nitrate and labile P in tile flow (kg/ha).
+    pub tileno3: f32,
+    pub tilelabp: f32,
     pub act_nit_n: f32,
     pub org_lab_p: f32,
     pub act_sta_n: f32,
@@ -497,6 +502,8 @@ impl Hru {
     pub(super) fn nut_nlch(&mut self, surfq: f32, b: &NutBasin, nd: &mut NutDay) {
         let anion_excl = self.anion_excl;
         let nly = self.layers.len();
+        let ldrain = self.tile.map_or(0, |t| t.ldrain);
+        let qtile = self.qtile;
         let mut percnlyr = 0.0_f32;
         for jj in 0..nly {
             let l = &mut self.layers[jj];
@@ -505,18 +512,47 @@ impl Hru {
                 l.no3 = 0.0;
             }
             let sro = if jj == 0 { surfq } else { 0.0 };
-            let vv = l.prk + sro + l.flat + 1.0e-10;
+            let mut vv = l.prk + sro + l.flat + 1.0e-10;
+            if ldrain == jj + 1 {
+                vv += qtile;
+            }
             let mut ww = -vv / ((1.0 - anion_excl) * l.ul);
             if ww < -80.0 {
                 ww = -80.0;
             }
             let vno3 = l.no3 * (1.0 - ww.exp());
-            let co = (vno3 / vv).max(0.0);
+            let mut co = (vno3 / vv).max(0.0);
             if jj == 0 {
                 nd.surqno3 = surfq * b.nperco * co;
                 nd.surqno3 = nd.surqno3.min(l.no3);
                 l.no3 = (l.no3 - nd.surqno3).max(0.0001);
             }
+            // Tile flow takes nitrate from the tile's layer down; its concentration is then the
+            // one the layer's lateral flow and percolation take too.
+            if ldrain == jj + 1 && qtile > 0.0 {
+                let (mut ul_sum, mut no3_sum) = (0.0_f32, 0.0_f32);
+                for lo in &self.layers[jj..] {
+                    ul_sum += lo.ul;
+                    no3_sum += lo.no3;
+                }
+                let vv = qtile;
+                let ww = -vv / ((1.0 - anion_excl) * ul_sum);
+                let vno3 = no3_sum * (1.0 - ww.exp());
+                co = (vno3 / vv).max(0.0);
+                nd.tileno3 = co * b.nperco_lchtile * qtile;
+                let mut left = nd.tileno3;
+                for lo in self.layers[jj..].iter_mut() {
+                    lo.no3 -= left;
+                    if lo.no3 < 0.0 {
+                        left = -lo.no3;
+                        lo.no3 = 0.0;
+                    } else {
+                        left = 0.0;
+                    }
+                }
+                nd.tileno3 -= left;
+            }
+            let l = &mut self.layers[jj];
             let mut ssfnlyr = co * l.flat;
             ssfnlyr = ssfnlyr.min(l.no3);
             nd.latno3 += ssfnlyr;
@@ -542,6 +578,8 @@ impl Hru {
             nd.surqsolp = nd.surqsolp.max(0.0);
             l.lab -= nd.surqsolp;
         }
+        let ldrain = self.tile.map_or(0, |t| t.ldrain);
+        let qtile = self.qtile;
         for ly in 0..nly {
             let l = &mut self.layers[ly];
             let vap = -l.prk / (0.01 * l.st + 0.1 * b.pperco * l.bd);
@@ -552,6 +590,14 @@ impl Hru {
                 nd.lchlabp = plch;
             } else {
                 self.layers[ly + 1].lab += plch;
+            }
+            if ly + 1 == ldrain {
+                let l = &mut self.layers[ly];
+                let vap = -qtile / (0.01 * l.st + 0.1 * b.pperco * l.bd);
+                let mut plch = 0.001 * l.lab * (1.0 - exp_w(vap));
+                plch = plch.min(l.lab);
+                l.lab -= plch;
+                nd.tilelabp = plch;
             }
         }
     }
