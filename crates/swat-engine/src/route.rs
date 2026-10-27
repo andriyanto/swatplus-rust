@@ -208,6 +208,7 @@ pub struct NetDay<'a> {
     /// Calendar year, month, and whether the day is printed (`time%yrs > nyskip`).
     pub yrc: i32,
     pub mo: i32,
+    pub day_mo: i32,
     pub print: bool,
 }
 
@@ -783,7 +784,8 @@ impl Network {
                     {
                         let w = nd.weat.get(wst);
                         let (precip, pet, tave) = w.map_or((0.0, 0.0, 0.0), |w| (w.precip, w.pet, w.tave));
-                        self.obs[icmd].hd[0] = self.reservoirs[k].control(hin, nd.yrc, nd.mo, precip, pet, tave, nd.print);
+                        self.obs[icmd].hd[0] =
+                            self.reservoirs[k].control(hin, nd.yrc, nd.mo, nd.jday, nd.day_mo, precip, pet, tave, nd.print);
                     }
                 }
                 ObjectKind::Recall => {

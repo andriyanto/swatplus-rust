@@ -1,7 +1,8 @@
 # Engine 1.0: the remaining features
 
 Features ported for engine 1.0 that need no document of their own. Landscape routing is in
-[`routing.md`](routing.md), urban HRUs by step in [`subdaily.md`](subdaily.md).
+[`routing.md`](routing.md); urban HRUs, the curve number and generated rain by step are in
+[`subdaily.md`](subdaily.md).
 
 ## PET "read in" (`codes.bsn` pet 3)
 
@@ -59,3 +60,53 @@ the plant, `awc` on clay loams' top two layers, `k`, `bd`, `anion_excl`, `usle_k
 lateral flow, the slope, `elev` on rice, `erorgn`, `petco` on group B oil palm, `surlag`, and six
 aquifer parameters. Every table matches SWAT+: surface runoff falls from 598 to 541 mm a year
 and percolation rises from 1,210 to 1,297 mm.
+
+## More reservoir releases (`res_hydro`)
+
+Besides `rate`, `rate_pct`, `inflo_rate`, `inflo_frac`, `ab_emer`, `days` and `dyrt`, a
+reservoir's decision table can now release by:
+
+- **`dyrt1`**: as `dyrt`, the base volume from a condition of the table (`con1` the fifth,
+  `con2` the fourth, `con3` the third) and its operator: `=` is the principal volume plus that
+  share of the flood storage, `*`, `+`, `-`, `/` apply the limit to the flood storage alone.
+- **`inflo_targ`**: the inflow plus what is above the share of the principal volume given by the
+  condition numbered by the action's constant.
+- **`natlake`**, a natural lake (Döll et al. 2003): `kr (S / (Smax − So))^1.5 · S`, with `S` the
+  volume above an inactive `So` (the constant times the principal volume), `Smax` the principal
+  volume and `kr` the second constant (per day).
+- **`nonirr-h06`** (Hanasaki et al. 2006) and **`hydrop`** (HYPE, after Arheimer et al. 2020).
+
+Quirks:
+
+- **A natural lake below its inactive volume releases NaN** (a negative number to the power
+  1.5), and so does everything downstream from then on.
+- **`nonirr-h06` and `hydrop` release nothing**: both release a share of the reservoir's mean
+  inflow of the last five years, kept month by month in `res_control`, but the day of the month,
+  the end-of-month flag and the day's inflow it keeps them by are never set, so the mean stays
+  0. (`hydrop`'s seasonal factor is also not a sine: `1 + a (2π day + b) / 365`.)
+  `irr-h06` divides the mean demand, also 0, by itself and releases NaN: the port refuses it.
+- **Each action is taken once a time step**, as for the other options (`inflo_targ` releases the
+  day's inflow `step` times).
+
+Still refused: a reservoir's `weir` (SWAT+ takes the weir height of the wetland numbered as the
+reservoir) and `meas` (measured release, from a recall object), and condition tables (`ctbl_`).
+
+**Bh_rel** (`scripts/make-reservoir-variants.py`) is Bh_res with its reservoir released by
+`lake_multi`: below the principal spillway as a natural lake plus the Hanasaki and hydropower
+schemes and a minimum release of 2 m³/s; between the spillways by `dyrt1` over 30 days to the
+flood storage of the third condition, plus 1 % of the principal volume a day; above the
+emergency spillway by `inflo_targ`. Its storage swings between empty and 48.5 million m³; every
+table, the reservoir's daily one too, matches SWAT+.
+
+## Sources
+
+- Arheimer, B., Pimentel, R., Isberg, K., Crochemore, L., Andersson, J. C. M., Hasan, A., &
+  Pineda, L. (2020). Global catchment modelling using World-Wide HYPE (WWH), open data, and
+  stepwise parameter estimation. *Hydrology and Earth System Sciences*, 24, 535–559.
+  https://doi.org/10.5194/hess-24-535-2020
+- Döll, P., Kaspar, F., & Lehner, B. (2003). A global hydrological model for deriving water
+  availability indicators: model tuning and validation. *Journal of Hydrology*, 270(1–2),
+  105–134. https://doi.org/10.1016/S0022-1694(02)00283-4
+- Hanasaki, N., Kanae, S., & Oki, T. (2006). A reservoir operation scheme for global river
+  routing models. *Journal of Hydrology*, 327(1–2), 22–41.
+  https://doi.org/10.1016/j.jhydrol.2005.11.011

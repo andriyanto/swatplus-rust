@@ -9,6 +9,11 @@
           reservoir and the sources are hypothetical; their sizes and loads are typical ones
           (docs/reservoirs.md).
 
+  Bh_rel  Bh_res with the reservoir released by the newer options of `res_hydro`: below its
+          principal volume as a natural lake (Döll et al. 2003) plus the Hanasaki and HYPE
+          hydropower schemes, between the spillways by `dyrt1`, above the emergency spillway by
+          `inflo_targ` (docs/engine1.md).
+
 usage: scripts/make-reservoir-variants.py <Batanghari folder> <output folder>
 """
 import calendar
@@ -177,7 +182,48 @@ def bh_res(src, out):
     print(f"Bh_res: {moved} inflows into the reservoir above cha{CHA:03d}; 2 point sources")
 
 
+def bh_rel(out):
+    src = os.path.join(out, "Bh_res")
+    dst = os.path.join(out, "Bh_rel")
+    if os.path.exists(dst):
+        shutil.rmtree(dst)
+    shutil.copytree(src, dst)
+
+    def p(name):
+        return os.path.join(dst, name)
+
+    lines = read(p("res_rel.dtl"))
+    lines[1] = str(int(lines[1].split()[0]) + 1)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    lines += [
+        "",
+        "name                     conds      alts      acts  ",
+        "lake_multi                   5         3         6  ",
+        "var                        obj   obj_num           lim_var            lim_op     lim_const      alt1      alt2      alt3  ",
+        "vol                        res         0              pvol                 *       1.00000         <         >         -  ",
+        "vol                        res         0              pvol                 *       1.30000         -         -         -  ",
+        "vol                        res         0              evol                 *       1.00000         -         <         >  ",
+        "month                     null         0              null                 -       5.00000         -         -         -  ",
+        "month                     null         0              null                 -       9.00000         -         -         -  ",
+        "act_typ                    obj   obj_num              name            option         const        const2                fp  outcome           ",
+        "release                    res         0          nat_lake           natlake       0.00000       0.01000              null  y   n   n   ",
+        "release                    res         0          hanasaki        nonirr-h06       0.85000       0.00000              null  y   n   n   ",
+        "release                    res         0             hydro            hydrop       0.30000      30.00000              null  y   n   n   ",
+        "release                    res         0          drawdown             dyrt1      30.00000       1.00000              con3  n   y   n   ",
+        "release                    res         0        over_emerg        inflo_targ       1.00000       0.00000              null  n   n   y   ",
+        "release                    res         0           minimum              rate       2.00000       0.00000              null  y   y   y   ",
+        "",
+    ]
+    write(p("res_rel.dtl"), lines)
+    lines = read(p("reservoir.res"))
+    lines[2] = lines[2].replace("      flood_season", "        lake_multi")
+    write(p("reservoir.res"), lines)
+    print("Bh_rel: the reservoir released by natlake, nonirr-h06, hydrop, dyrt1 and inflo_targ")
+
+
 if __name__ == "__main__":
     src, out = sys.argv[1], sys.argv[2]
     os.makedirs(out, exist_ok=True)
     bh_res(src, out)
+    bh_rel(out)

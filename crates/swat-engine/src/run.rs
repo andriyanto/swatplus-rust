@@ -621,6 +621,7 @@ pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -
                     jday: clock.day,
                     yrc: clock.yrc,
                     mo: clock.mo,
+                    day_mo: clock.day_mo,
                     print: clock.yrs > nyskip,
                 };
                 n.day(&nd);
