@@ -57,7 +57,7 @@ jobs:
       - name: Osu_1hru in WebAssembly matches the native run
         run: |
           exec > >(tee run.log) 2>&1
-          trap 'tail -25 run.log | while IFS= read -r l; do echo "::error::$l"; done' ERR
+          trap 'grep -v "^progress" run.log | tail -9 | while IFS= read -r l; do echo "::error::$l"; done' ERR
           set -eE
           cargo build --release -p swatplus-rust
           ls -la target/wasm32-unknown-unknown/release/swat_wasm.wasm
