@@ -520,7 +520,7 @@ impl Hru {
     /// Erosion in `surface` (`ero_pkq`, `ero_eiusle`, `ero_cfactor`, `ero_ysed`): peak runoff and
     /// sediment yield of the day's runoff `qday`. `precip` is the HRU's, `phh` the station's
     /// fraction of rain in the peak half hour.
-    pub(super) fn erosion(&self, qday: f32, surfq: f32, precip: f32, phh: f32, b: &NutBasin, nd: &mut NutDay) {
+    pub(super) fn erosion(&mut self, qday: f32, surfq: f32, precip: f32, phh: f32, b: &NutBasin, nd: &mut NutDay) {
         if qday > 1.0e-6 {
             nd.qp_cms = if b.sed_det == 1 {
                 let xx = 2.0 * self.tconc * (1.0 - phh).ln();
@@ -543,6 +543,7 @@ impl Hru {
         }
         if surfq > 1.0e-6 && nd.qp_cms > 1.0e-6 {
             let c = self.c_factor(b.rsd_covco);
+            self.usle_cfac = c;
             // ero_ysed
             let cklsp = c * self.usle_mult;
             let mut sedyld = (10.0 * surfq * nd.qp_cms * self.area_ha).powf(0.56) * cklsp;

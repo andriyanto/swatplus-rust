@@ -491,7 +491,16 @@ pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -
             for v in saved.ubnrunoff.iter_mut() {
                 *v = 0.0;
             }
-            for (j, (ist, o, plaps, tlaps)) in hrus.iter().enumerate() {
+            // The HRUs run in SWAT+'s command order (an HRU that receives another's water after
+            // it), and print in their own order.
+            let hru_order: Vec<usize> = match network.as_ref() {
+                Some(n) if n.hru_order().len() == hrus.len() => n.hru_order().to_vec(),
+                _ => (0..hrus.len()).collect(),
+            };
+            let mut hru_days: Vec<Option<HruDay>> = (0..hrus.len()).map(|_| None).collect();
+            let mut hru_ws: Vec<HruWeather> = vec![HruWeather::default(); hrus.len()];
+            for &j in &hru_order {
+                let (ist, _o, plaps, tlaps) = &hrus[j];
                 let Some(st) = weather.stations.get(ist - 1) else { continue };
                 let s = &st.weat;
                 let mut w = HruWeather {
@@ -542,6 +551,7 @@ pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -
                         day_end_yr: clock.day_end_yr,
                         yrc: clock.yrc,
                         end_yr: clock.day == clock.day_end_yr,
+                        runon: network.as_ref().and_then(|n| n.hru_runon(j)),
                     };
                     let mut d = h.day(&w, &ctx, &basin, &mut saved);
                     for &(ipl, y) in &d.harvests {
@@ -559,6 +569,12 @@ pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -
                     n.set_hru(j, &d.hd, &d.hhsurfq);
                     hru_wb[j] = [d.wb.snomlt, d.wb.surq_gen, d.wb.latq, d.wb.wateryld];
                 }
+                hru_ws[j] = w;
+                hru_days[j] = hd;
+            }
+            for (j, (_ist, o, _plaps, _tlaps)) in hrus.iter().enumerate() {
+                let w = hru_ws[j];
+                let hd = hru_days[j].take();
                 if printing {
                     out.hru_day(day, j + 1, o.gis_id, &o.name, &w, hd.as_ref());
                 }
