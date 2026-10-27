@@ -24,6 +24,8 @@ pub struct NutBasin {
     pub prf: f32,
     pub rsd_covco: f32,
     pub sed_det: i32,
+    /// `codes.bsn` `sol_p_model`: 1 for the dynamic P sorption of White et al. (`nut_pminrl2`).
+    pub sol_p_model: i32,
     /// `n_act_frac` (carbon module, 0.02 unless `carbon.bsn` sets it).
     pub n_act_frac: f32,
     /// Correct SWAT+'s bugs instead of reproducing them (`RunOptions::fixes`).
@@ -47,6 +49,7 @@ impl NutBasin {
             prf: p("prf"),
             rsd_covco: p("rsd_covco"),
             sed_det: project.codes.sed_det,
+            sol_p_model: project.codes.sol_p_model,
             n_act_frac,
             fixes: false,
         }
@@ -143,7 +146,7 @@ fn residue_ca(r: &OrgMass) -> f32 {
 
 impl Hru {
     /// `soil_nutcarb_init` for `cswat` 0: mineral N and P by depth, and humus pools.
-    pub(super) fn nutcarb_init(&mut self, t: &SoilTest, psp: f32, cswat: i32) {
+    pub(super) fn nutcarb_init(&mut self, t: &SoilTest, psp_bsn: f32, cswat: i32, sol_p_model: i32, psp_saved: &mut f32) {
         for l in self.layers.iter_mut() {
             l.cbn = l.cbn.max(0.001);
         }
@@ -155,8 +158,40 @@ impl Hru {
             l.no3 *= wt1;
             l.lab = if t.lab_p > 1.0e-9 { t.lab_p * dep_frac } else { 5.0 * dep_frac };
             l.lab *= wt1;
+            let psp = if sol_p_model == 1 {
+                // The dynamic sorption ratio (a layer without clay keeps the last one).
+                let solp = l.lab / wt1;
+                let mut psp = *psp_saved;
+                if l.clay > 0.0 {
+                    psp = -0.045 * l.clay.ln() + (0.001 * solp);
+                    psp = psp - (0.035 * l.cbn) + 0.43;
+                }
+                if psp < 0.10 {
+                    psp = 0.10;
+                } else if psp > 0.7 {
+                    psp = 0.7;
+                }
+                *psp_saved = psp;
+                psp
+            } else {
+                psp_bsn
+            };
             l.act = l.lab * (1.0 - psp) / psp;
-            l.sta = 4.0 * l.act;
+            l.sta = if sol_p_model == 1 {
+                // The stable pool from total mineral P (White et al. 2009, from Sharpley 2004).
+                let actp = l.act / wt1;
+                let solp = l.lab / wt1;
+                let mut ssp = 25.044_f32 * (actp + solp).powf(-0.3833);
+                if ssp > 7.0 {
+                    ssp = 7.0;
+                }
+                if ssp < 1.0 {
+                    ssp = 1.0;
+                }
+                ssp * (l.act + l.lab)
+            } else {
+                4.0 * l.act
+            };
         }
         if cswat != 0 {
             return;
@@ -313,6 +348,124 @@ impl Hru {
                     l.nh4 = 0.0;
                 }
             }
+        }
+    }
+
+    /// SWAT+ `nut_pminrl2` (`sol_p_model` 1): phosphorus between the pools with a sorption
+    /// ratio and stable-to-active ratio that change with the soil and its P (Vadas and White
+    /// 2010).
+    pub(super) fn nut_pminrl2(&mut self, nd: &mut NutDay) {
+        nd.lab_min_p = 0.0;
+        nd.act_sta_p = 0.0;
+        // exp(-0.29), folded by gfortran.
+        let e029 = ((-0.29_f32) as f64).exp() as f32;
+        for l in self.layers.iter_mut() {
+            if l.lab <= 1.0e-6 {
+                l.lab = 1.0e-6;
+            }
+            if l.act <= 1.0e-6 {
+                l.act = 1.0e-6;
+            }
+            if l.sta <= 1.0e-6 {
+                l.sta = 1.0e-6;
+            }
+            let conv_wt = l.bd * l.thick / 100.0;
+            let solp = l.lab / conv_wt;
+            let actpp = l.act / conv_wt;
+            let stap = l.sta / conv_wt;
+            let mut psp = if l.clay > 0.0 {
+                let p = -0.045 * l.clay.ln() + (0.001 * solp);
+                p - (0.035 * l.cbn) + 0.43
+            } else {
+                0.4
+            };
+            if psp < 0.1 {
+                psp = 0.1;
+            }
+            if psp > 0.7 {
+                psp = 0.7;
+            }
+            if l.psp_store > 0.0 {
+                psp = (l.psp_store * 29.0 + psp * 1.0) / 30.0;
+            }
+            l.psp_store = psp;
+            let rto = psp / (1.0 - psp);
+            let mut rmp1 = l.lab - l.act * rto;
+            if rmp1 >= 0.0 {
+                rmp1 = rmp1.max(-l.lab);
+                let vara = 0.918 * (-4.603 * psp).exp();
+                let varb = (-0.238 * vara.ln()) - 1.126;
+                let mut arate = if l.a_days > 0 { vara * (l.a_days as f32).powf(varb) } else { vara * 1.0_f32.powf(varb) };
+                if arate > 0.5 {
+                    arate = 0.5;
+                }
+                if arate < 0.1 {
+                    arate = 0.1;
+                }
+                rmp1 *= arate;
+                l.a_days += 1;
+                l.b_days = 0;
+            }
+            if rmp1 < 0.0 {
+                rmp1 = rmp1.min(l.act);
+                let base = (-1.08 * psp) + 0.79;
+                let mut varc = base * e029;
+                if varc > 1.0 {
+                    varc = 1.0;
+                }
+                if varc < 0.1 {
+                    varc = 0.1;
+                }
+                rmp1 *= varc;
+                l.a_days = 0;
+                l.b_days += 1;
+            }
+            let mut as_p_coeff = 0.0023 * l.cal + 0.005;
+            if as_p_coeff > 0.05 {
+                as_p_coeff = 0.05;
+            }
+            if as_p_coeff < 0.002 {
+                as_p_coeff = 0.002;
+            }
+            let mut ssp = 25.044_f32 * (actpp + (actpp * rto)).powf(-0.3833);
+            if ssp > 10.0 {
+                ssp = 10.0;
+            }
+            if ssp < 0.7 {
+                ssp = 0.7;
+            }
+            if l.ssp_store > 0.0 {
+                ssp = (ssp + l.ssp_store * 99.0) / 100.0;
+            }
+            let mut roc = ssp * (l.act + l.act * rto);
+            roc -= l.sta;
+            roc *= as_p_coeff;
+            l.ssp_store = ssp;
+            let mut wetness = l.st / l.fc;
+            if wetness > 1.0 {
+                wetness = 1.0;
+            }
+            if wetness < 0.25 {
+                wetness = 0.25;
+            }
+            rmp1 *= wetness;
+            roc *= wetness;
+            if (solp + actpp + stap) < 10000.0 {
+                l.sta += roc;
+                if l.sta < 0.0 {
+                    l.sta = 0.0;
+                }
+                l.act = l.act - roc + rmp1;
+                if l.act < 0.0 {
+                    l.act = 0.0;
+                }
+                l.lab -= rmp1;
+                if l.lab < 0.0 {
+                    l.lab = 0.0;
+                }
+            }
+            nd.lab_min_p += rmp1;
+            nd.act_sta_p += roc;
         }
     }
 

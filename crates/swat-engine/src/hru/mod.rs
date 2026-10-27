@@ -57,6 +57,14 @@ pub struct Layer {
     pub cbn: f32,
     pub wpmm: f32,
     pub usle_k: f32,
+    /// Calcium carbonate (%), and the dynamic P model's (`sol_p_model` 1) running sorption
+    /// and stable P ratios and days since a P surplus or deficit (`psp_store`, `ssp_store`,
+    /// `a_days`, `b_days`).
+    pub cal: f32,
+    pub psp_store: f32,
+    pub ssp_store: f32,
+    pub a_days: i32,
+    pub b_days: i32,
     /// The day's percolation out of the layer and lateral flow from it (`ly%prk`, `ly%flat`).
     pub prk: f32,
     pub flat: f32,
@@ -648,9 +656,6 @@ pub fn init_hrus(
     if codes.cswat != 0 && codes.cswat != 2 {
         return Err(format!("carbon model {}", codes.cswat));
     }
-    if codes.sol_p_model != 0 {
-        return Err("soil phosphorus model 1 (nut_pminrl2)".into());
-    }
     if step > 1 {
         return Err("sub-daily time steps".into());
     }
@@ -674,10 +679,12 @@ pub fn init_hrus(
     let surlag = project.params.get("surlag").unwrap_or(4.0);
     let hru_objs: Vec<_> = project.objects_of(swat_model::ObjectKind::Hru).collect();
     let mut out = Vec::with_capacity(project.hru_data.len());
+    // soil_nutcarb_init's `psp`, kept from the last layer for a layer without clay.
+    let mut psp_saved = 0.0_f32;
     for (i, hd) in project.hru_data.iter().enumerate() {
         let ob = hru_objs.get(i).ok_or_else(|| format!("HRU {} has no object in hru.con", i + 1))?;
         let g = wgn.get(i).and_then(|&k| wgns.get(k)).ok_or_else(|| format!("HRU {}: no weather generator", i + 1))?;
-        let mut h = init_hru(project, hd, ob, g, ffcb, ndays)?;
+        let mut h = init_hru(project, hd, ob, g, ffcb, ndays, &mut psp_saved)?;
         h.wgn = wgn.get(i).copied().unwrap_or(0);
         init_bmix(&mut h, &bmix);
         time_conc(&mut h, surlag);
@@ -861,6 +868,7 @@ fn init_hru(
     g: &crate::climate::WgnState,
     ffcb: f32,
     ndays: &[i32; 13],
+    psp_saved: &mut f32,
 ) -> Result<Hru, String> {
     let n = &hd.name;
     let (lu, lu_found) = Row::find_or_first(project.landuse.as_ref(), schema::LANDUSE, &hd.land_use_mgt);
@@ -895,7 +903,14 @@ fn init_hru(
         let x = |f: &str| t.real(r, f).unwrap_or(0.0);
         let ro = match lu.text("urb_ro") {
             "buildup_washoff" => UrbanRunoff::BuildupWashoff,
-            "usgs_reg" => return Err(format!("{n}: urban loads by USGS regression (usgs_reg)")),
+            // regres: the precipitation category of the HRU's weather generator.
+            "usgs_reg" => UrbanRunoff::UsgsReg(if g.pcp_an < 508.0 {
+                0
+            } else if g.pcp_an < 1016.0 {
+                1
+            } else {
+                2
+            }),
             _ => UrbanRunoff::None,
         };
         h.urban = Some(Urban {
@@ -1171,7 +1186,7 @@ fn init_hru(
             hum_c_p: x("hum_c_p"),
         };
     }
-    h.nutcarb_init(&test, project.params.get("psp").unwrap_or(0.4), project.codes.cswat);
+    h.nutcarb_init(&test, project.params.get("psp").unwrap_or(0.4), project.codes.cswat, project.codes.sol_p_model, psp_saved);
     if project.codes.cswat == 2 {
         h.carbon_init(&carbon::CarbonBasin::new(project));
     }
@@ -1245,11 +1260,11 @@ fn custom_layers(soil: &Soil, depths: &[i32]) -> Vec<Layer> {
             }
             d = csld as f32;
         }
-        let mut sum = [0.0_f32; 10];
+        let mut sum = [0.0_f32; 11];
         let mut n = 0;
         for jj in pcd..=csld {
             let l = &db[cell.get(jj.max(0) as usize).copied().unwrap_or(0)];
-            for (s, v) in sum.iter_mut().zip([l.bd, l.awc, l.k, l.cbn, l.clay, l.silt, l.sand, l.rock, l.alb, l.usle_k]) {
+            for (s, v) in sum.iter_mut().zip([l.bd, l.awc, l.k, l.cbn, l.clay, l.silt, l.sand, l.rock, l.alb, l.usle_k, l.cal]) {
                 *s += v;
             }
             n += 1;
@@ -1267,6 +1282,7 @@ fn custom_layers(soil: &Soil, depths: &[i32]) -> Vec<Layer> {
             rock: sum[7] / nf,
             alb: sum[8] / nf,
             usle_k: sum[9] / nf,
+            cal: sum[10] / nf,
             ..Layer::default()
         });
         pcd = csld + 1;
@@ -1291,6 +1307,7 @@ fn soil_layers(h: &mut Hru, soil: &Soil, depths: Option<&[i32]>) -> Result<(), S
         alb: l.alb,
         cbn: l.cbn,
         usle_k: l.usle_k,
+        cal: l.cal,
         ..Layer::default()
     };
     let mut layers = vec![from(first, 10.0)];
@@ -1637,7 +1654,11 @@ impl Hru {
             nd.denit = self.cbn_zhang2(cb, bm);
         }
         self.nut_nitvol();
-        self.nut_pminrl(&b.nut, &mut nd);
+        if b.nut.sol_p_model == 1 {
+            self.nut_pminrl2(&mut nd);
+        } else {
+            self.nut_pminrl(&b.nut, &mut nd);
+        }
         // sep_biozone
         if let Some(sp) = self.septic.as_mut() {
             let opt = &mut saved.septic_opt[sp.isep];
@@ -1722,7 +1743,7 @@ impl Hru {
         self.nut_solp(surfq, &b.nut, &mut nd);
 
         // hru_urban: loads washed off the impervious area.
-        let silyld = self.hru_urban(surfq, c.precip_half_hr, &mut nd);
+        let silyld = self.hru_urban(surfq, c.precip_half_hr, w.precip, &mut nd);
 
         // stor_surfstor: sediment and its nutrients lag like runoff.
         let brt = self.brt;
@@ -2607,6 +2628,9 @@ pub struct Urban {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum UrbanRunoff {
     BuildupWashoff,
+    /// The USGS regression equations (Driver and Tasker), with the annual precipitation
+    /// category of the weather generator (0: under 508 mm, 1: under 1,016 mm, 2: more).
+    UsgsReg(usize),
     /// Anything else: no loads from the impervious area.
     None,
 }
@@ -2614,8 +2638,38 @@ pub enum UrbanRunoff {
 impl Hru {
     /// `hru_urban`, daily: build-up and wash-off of solids on the impervious area, which replace
     /// that share of the sediment and its nutrients. Returns the silt it adds (`silyld`).
-    fn hru_urban(&mut self, surfq: f32, phh: f32, nd: &mut NutDay) -> f32 {
+    fn hru_urban(&mut self, surfq: f32, phh: f32, precip: f32, nd: &mut NutDay) -> f32 {
         let Some(u) = self.urban else { return 0.0 };
+        if let UrbanRunoff::UsgsReg(ii) = u.ro {
+            if !(precip > 0.1 && surfq > 0.1) {
+                return 0.0;
+            }
+            // regres: chemical oxygen demand (unused), suspended solids, total N and total P
+            // (lb, then kg) of a storm on the impervious area.
+            const B: [[[f32; 5]; 3]; 4] = [
+                [[407.0, 0.626, 0.710, 0.379, 1.518], [151.0, 0.823, 0.726, 0.564, 1.451], [102.0, 0.851, 0.601, 0.528, 1.978]],
+                [[1778.0, 0.867, 0.728, 0.157, 2.367], [812.0, 1.236, 0.436, 0.202, 1.938], [97.7, 1.002, 1.009, 0.837, 2.818]],
+                [[20.2, 0.825, 1.070, 0.479, 1.258], [4.04, 0.936, 0.937, 0.692, 1.373], [1.66, 0.703, 0.465, 0.521, 1.845]],
+                [[1.725, 0.884, 0.826, 0.467, 2.130], [0.697, 1.008, 0.628, 0.469, 1.790], [1.618, 0.954, 0.789, 0.289, 2.247]],
+            ];
+            let (km, fimp) = (self.km, u.fimp);
+            let regres = |k: usize| {
+                let b = &B[k][ii];
+                let r = b[0] * (precip / 25.4).powf(b[1]) * (km * fimp / 2.589).powf(b[2]) * (fimp * 100.0 + 1.0).powf(b[3]) * b[4];
+                r / 2.205
+            };
+            let sus_sol = regres(1);
+            let tn = regres(2);
+            let tp = regres(3);
+            let rest = 1.0 - fimp;
+            nd.sedyld = (0.001 * sus_sol) * fimp + nd.sedyld * rest;
+            let silyld = (0.001 * sus_sol) * fimp;
+            nd.sedorgn = (0.7 * tn / (km * 100.0)) * fimp + nd.sedorgn * rest;
+            nd.surqno3 = (0.3 * tn / (km * 100.0)) * fimp + nd.surqno3 * rest;
+            nd.sedorgp = (0.75 * tp / (km * 100.0)) * fimp + nd.sedorgp * rest;
+            nd.surqsolp = 0.25 * tp / (km * 100.0) * fimp + nd.surqsolp * rest;
+            return silyld;
+        }
         if u.ro != UrbanRunoff::BuildupWashoff {
             return 0.0;
         }

@@ -600,6 +600,18 @@ def ps_septic(base, dst):
     print(f"{os.path.basename(dst)}: septic systems in the dry fields")
 
 
+def ps_solp(base, dst):
+    """A copy of project `base` with the dynamic soil P model (`codes.bsn` soil_p 1)."""
+    if os.path.exists(dst):
+        shutil.rmtree(dst)
+    shutil.copytree(base, dst)
+    path = os.path.join(dst, "codes.bsn")
+    lines = read(path)
+    lines[2] = set_field(lines[2], lines[1].split().index("soil_p"), "1")
+    write(path, lines)
+    print(f"{os.path.basename(dst)}: dynamic soil P")
+
+
 if __name__ == "__main__":
     src, out = sys.argv[1], sys.argv[2]
     os.makedirs(out, exist_ok=True)
@@ -610,3 +622,4 @@ if __name__ == "__main__":
     ps_tile(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_tile"))
     ps_bmp(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_bmp"))
     ps_septic(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_septic"))
+    ps_solp(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_solp"))
