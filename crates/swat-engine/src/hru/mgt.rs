@@ -76,6 +76,9 @@ pub struct Op {
     pub kind: OpKind,
     pub mon: i32,
     pub day: i32,
+    /// Heat units that trigger it (`husc`, a share of the plant's or of the base-0 year's), or 0
+    /// for an operation by date.
+    pub husc: f32,
     /// The plant it applies to (`op_char`).
     pub op_char: String,
 }
@@ -468,18 +471,12 @@ impl Mgt {
         let mut ops = Vec::with_capacity(s.ops.len());
         let mut jdays = Vec::with_capacity(s.ops.len());
         for o in &s.ops {
-            if o.husc > 0.0 {
-                return Err(format!("schedule {}: {} by heat units", s.name, o.op));
-            }
             let kind = match o.op.as_str() {
                 "plnt" => OpKind::Plant,
                 "hvkl" => OpKind::HarvKill { op: HarvOp::new(project, &o.op_plant), eff: o.op3 },
                 "harv" => OpKind::Harv { op: HarvOp::new(project, &o.op_plant), eff: o.op3 },
                 "kill" => OpKind::Kill,
                 "till" => {
-                    if project.codes.cswat != 2 {
-                        return Err(format!("schedule {}: tillage with carbon model {}", s.name, project.codes.cswat));
-                    }
                     let t = project.tillage.as_ref();
                     OpKind::Till { effmix: row_real(t, &o.op_char, "effmix", 0.0), deptil: row_real(t, &o.op_char, "deptil", 0.0) }
                 }
@@ -531,7 +528,7 @@ impl Mgt {
                 other => return Err(format!("schedule {}: operation {other}", s.name)),
             };
             jdays.push(jdt(ndays, o.day, o.mon));
-            ops.push(Op { kind, mon: o.mon, day: o.day, op_char: o.op_char.clone() });
+            ops.push(Op { kind, mon: o.mon, day: o.day, husc: o.husc, op_char: o.op_char.clone() });
         }
         // plant_init: the first operation is the one before the first of the starting rotation
         // year on or after the start day (the loop leaves its index one past the one wanted).
@@ -862,6 +859,31 @@ impl super::Hru {
                 break;
             }
         }
+        // Operations by heat units, while the community's first plant's (or, when it isn't
+        // growing, the base-0 year's) pass the current one's (`mgt%op2` is always 0 by then).
+        let aphu = |h: &super::Hru| match h.plants.first() {
+            Some(pl) if pl.gro => pl.phuacc,
+            _ => h.phubase,
+        };
+        let mut a = aphu(self);
+        loop {
+            let Some(m) = self.mgt.as_ref() else { return };
+            let op = &m.ops[m.cur_op];
+            if !(op.husc > 0.0 && a > op.husc) {
+                break;
+            }
+            self.mgt_sched(b);
+            if n == 1 {
+                break;
+            }
+            a = aphu(self);
+            if self.mgt.as_ref().is_some_and(|m| m.ops[m.cur_op].kind == OpKind::Skip) {
+                self.mgt_sched(b);
+            }
+            if self.mgt.as_ref().is_some_and(|m| m.yr_skip) {
+                break;
+            }
+        }
     }
 
     /// SWAT+ `mgt_sched`: the current operation, then the next one becomes current (a skip stays
@@ -940,11 +962,10 @@ impl super::Hru {
                     self.plants[i] = pl;
                 }
             }
-            OpKind::Till { effmix, deptil } => {
-                if let Some(cb) = b.carbon.as_ref() {
-                    self.tillmix_cswat1(effmix, deptil, cb);
-                }
-            }
+            OpKind::Till { effmix, deptil } => match b.carbon.as_ref() {
+                Some(cb) if b.cswat == 2 => self.tillmix_cswat1(effmix, deptil, cb),
+                _ => self.tillmix_cswat0(0.0, effmix, deptil),
+            },
             OpKind::Irr { amt_mm, eff, surq } => {
                 self.days_irr = 1;
                 self.irr_applied = amt_mm * eff * (1.0 - surq);

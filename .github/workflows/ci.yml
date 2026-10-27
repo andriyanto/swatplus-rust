@@ -48,8 +48,46 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
-      - name: Build the libraries for the browser
-        run: cargo build --target wasm32-unknown-unknown -p swat-model -p swat-io
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build the module for the browser
+        run: cargo build --release --target wasm32-unknown-unknown -p swat-wasm
+      - name: Osu_1hru in WebAssembly matches the native run
+        run: |
+          cargo build --release -p swatplus-rust
+          ls -la target/wasm32-unknown-unknown/release/swat_wasm.wasm
+          tar -cf /tmp/osu.tar -C testdata Osu_1hru
+          node scripts/wasm-run.mjs target/wasm32-unknown-unknown/release/swat_wasm.wasm /tmp/osu.tar /tmp/osu-out.tar 3
+          mkdir /tmp/wasm-out && tar -xf /tmp/osu-out.tar -C /tmp/wasm-out
+          cat /tmp/wasm-out/run.json
+          grep -q '"ok":true' /tmp/wasm-out/run.json
+          target/release/swatplus-rust run testdata/Osu_1hru --out /tmp/native-out
+          n=0
+          for f in /tmp/native-out/*.txt; do
+            cmp "$f" "/tmp/wasm-out/$(basename "$f")" || n=$((n+1))
+            n=$n
+          done
+          echo "$(ls /tmp/native-out/*.txt | wc -l) tables, $n differ"
+          test "$n" = 0
+
+  parquet:
+    name: Parquet tables read by DuckDB and Arrow
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install duckdb pyarrow
+      - run: cargo build --release
+      - name: Osu_1hru as text and Parquet, every table daily
+        run: |
+          cp -r testdata/Osu_1hru /tmp/osu
+          scripts/print-daily.sh /tmp/osu hru_wb,hru_pw,hru_nb,hru_ls,ru,aquifer,channel_sd,basin_wb,basin_nb,basin_ls,basin_pw,lsunit_wb hru_cb > /dev/null
+          target/release/swatplus-rust run /tmp/osu --out /tmp/osu-out --format both --progress json | tail -3
+          scripts/check-parquet.py /tmp/osu-out
 
   msrv:
     name: Minimum Rust version (1.90)

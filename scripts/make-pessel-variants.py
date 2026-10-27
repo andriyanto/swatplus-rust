@@ -882,6 +882,33 @@ def ps_peren(base, dst):
     print(f"{os.path.basename(dst)}: perennial days to maturity, plant populations")
 
 
+def ps_hu(base, dst):
+    """A copy of project `base` whose generic farmland is managed by heat units, as in SWAT:
+    ploughed at 0.10 of the base-0 year's heat units, planted at 0.15, fertilized with 100 kg of
+    urea at 0.30 of the crop's, harvested and killed at 1.20, then the rest of the year skipped."""
+    if os.path.exists(dst):
+        shutil.rmtree(dst)
+    shutil.copytree(base, dst)
+    p = lambda f: os.path.join(dst, f)
+    rows = [("till", 0.10, "fallplow", "null", 0.0), ("plnt", 0.15, "agrl", "null", 0.0),
+            ("fert", 0.30, "urea", "broadcast", 100.0), ("hvkl", 1.20, "agrl", "grain", 0.0),
+            ("skip", 0.0, "null", "null", 0.0)]
+    lines = read(p("management.sch"))
+    while lines and not lines[-1].strip():
+        lines.pop()
+    lines += [f"{'agrl_hu':<34}{len(rows):>3}{0:>11}  "]
+    lines += [f"{'':<40}{o:<10}{0:>6}{0:>6}{hu:>10.5f}  {a1:<16}  {a2:<16}{a3:>10.5f}" for o, hu, a1, a2, a3 in rows]
+    write(p("management.sch"), lines + [""])
+    lines = read(p("landuse.lum"))
+    k = lines[1].split().index("mgt")
+    for i in range(2, len(lines)):
+        t = lines[i].split()
+        if t and t[0] == "agrl_lum":
+            lines[i] = set_field(lines[i], k, "agrl_hu")
+    write(p("landuse.lum"), lines)
+    print(f"{os.path.basename(dst)}: generic farmland managed by heat units")
+
+
 def ps_urbhr(base, dst):
     """A copy of the hourly project `base` whose generic farmland is a medium-density town, its
     loads washed off the impervious area by the hour (`hru_urbanhr`)."""
@@ -956,5 +983,6 @@ if __name__ == "__main__":
     ps_cal(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_cal"))
     ps_harv(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_harv"))
     ps_peren(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_peren"))
+    ps_hu(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_hu"))
     ps_uh(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_uh"))
     ps_gap(os.path.join(out, "Ps_hourly"), os.path.join(out, "Ps_gap"))

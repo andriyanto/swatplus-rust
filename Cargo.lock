@@ -21,10 +21,29 @@ name = "swat-model"
 version = "0.1.0"
 
 [[package]]
+name = "swat-output"
+version = "0.1.0"
+dependencies = [
+ "swat-engine",
+ "swat-model",
+]
+
+[[package]]
+name = "swat-wasm"
+version = "0.1.0"
+dependencies = [
+ "swat-engine",
+ "swat-io",
+ "swat-model",
+ "swat-output",
+]
+
+[[package]]
 name = "swatplus-rust"
 version = "0.1.0"
 dependencies = [
  "swat-engine",
  "swat-io",
  "swat-model",
+ "swat-output",
 ]

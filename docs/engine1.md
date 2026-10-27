@@ -151,6 +151,23 @@ table, crop yields too, matches SWAT+.
 9 m triangular spacing) and 50,000 row crop plants. Every table matches SWAT+; the palms'
 average leaf area falls from 4.9 to 1.1, and the basin's ET from 1,253 to 657 mm a year.
 
+## Schedules by heat units, and tillage without the carbon model
+
+A schedule's operation with heat units (`hu_sch` above 0) runs once they pass it (after the day's
+operations by date): the share of the plant's heat units to maturity while it grows, or of the
+year's base-0 heat units while it doesn't (`mgt_operatn`). And a schedule's `till` mixes the soil
+with `mgt_newtillmix_cswat0` without the carbon model (`cswat` 0), as decision tables already did.
+
+- **The heat units are always the community's first plant's**: `mgt_sched` finds the plant an
+  operation names (`op2`) only on its copy of the operation, which the next one replaces, so the
+  test sees `op2` 0.
+- **A `skip` following an operation by heat units runs at once**, skipping the rest of the year.
+
+**Ps_hu** is Ps_coast with its generic farmland managed as in SWAT's classic schedules:
+ploughed (`fallplow`) at 0.10 of the base-0 heat units, planted at 0.15, given 100 kg/ha of urea
+at 0.30 of the crop's heat units, harvested for grain and killed at 1.20, the rest of the year
+skipped. Every table matches SWAT+.
+
 ## Sources
 
 - Arheimer, B., Pimentel, R., Isberg, K., Crochemore, L., Andersson, J. C. M., Hasan, A., &

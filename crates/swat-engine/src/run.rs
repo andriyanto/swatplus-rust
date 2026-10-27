@@ -59,6 +59,10 @@ pub struct Day {
 
 /// Receives daily output, for the days SWAT+ prints.
 pub trait OutputSink {
+    /// The simulation is starting day `done + 1` of `total` (`done` = `total` once it has
+    /// ended): for progress reports.
+    fn progress(&mut self, _done: usize, _total: usize, _day: Day) {}
+
     /// One HRU's day: its 1-based number, the connection-file object, its weather and, when the
     /// project's HRUs are within what the port simulates, its water balance.
     fn hru_day(&mut self, day: Day, hru: usize, gis_id: i32, name: &str, w: &HruWeather, d: Option<&HruDay>);
@@ -281,6 +285,8 @@ pub fn run(project: &Project, out: &mut dyn OutputSink) -> Result<RunReport, Str
 /// [`run`] with options.
 pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -> Result<RunReport, String> {
     let mut clock = Clock::new(&project.time);
+    let total_days = project.time.days().len();
+    let mut days_done = 0_usize;
     let mut weather = Weather::new(project, &mut clock);
     let mut report = RunReport::default();
 
@@ -426,6 +432,8 @@ pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -
         }
         for jday in clock.day_start..=clock.day_end_yr {
             clock.set_day(jday);
+            out.progress(days_done, total_days, Day { jday: clock.day, mon: clock.mo, day: clock.day_mo, yr: clock.yrc });
+            days_done += 1;
             gate.update(&clock);
             weather.climate_control(&clock)?;
 
@@ -765,6 +773,7 @@ pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -
         }
         clock.yrc += 1;
     }
+    out.progress(days_done, total_days, Day { jday: clock.day, mon: clock.mo, day: clock.day_mo, yr: clock.yrc });
     Ok(report)
 }
 

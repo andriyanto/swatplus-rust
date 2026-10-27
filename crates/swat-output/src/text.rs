@@ -3,9 +3,8 @@
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
-use std::fs::File;
-use std::io::Write as _;
-use std::path::{Path, PathBuf};
+
+use crate::store::Store;
 
 use swat_engine::channel::ChWat;
 use swat_engine::hru::HruDay;
@@ -68,17 +67,17 @@ const TABLES: [&str; 21] = [
 #[derive(Default)]
 struct Sheet {
     buf: String,
-    file: Option<File>,
+    written: bool,
     started: bool,
 }
 
-/// Collects the tables into folder `dir`, a few megabytes at a time (a large project's daily
+/// Collects the tables into `store`, a few megabytes at a time (a large project's daily
 /// tables run to gigabytes). Without the HRU simulation, the daily water balance has
 /// precipitation only, the plant table the weather only, and the other HRU tables aren't
 /// written.
-pub struct TextTables {
+pub struct TextTables<S: Store> {
     title: String,
-    dir: PathBuf,
+    store: S,
     sheets: BTreeMap<String, Sheet>,
     /// Per table, whether `print.prt` asks for its daily, monthly, yearly, average annual file.
     flags: BTreeMap<&'static str, [bool; 4]>,
@@ -87,6 +86,8 @@ pub struct TextTables {
     pub fixes: bool,
     /// `crop_yld`: `y` the basin's crops, `a` each HRU's, `b` both.
     crop_yld: String,
+    /// Progress reports, if wanted.
+    pub progress: Option<crate::progress::Reporter>,
 }
 
 fn period_index(p: Option<Period>) -> usize {
@@ -105,8 +106,8 @@ fn suffix(p: Option<Period>) -> &'static str {
     }
 }
 
-impl TextTables {
-    pub fn new(title: &str, dir: &Path, print: &PrintSettings) -> Self {
+impl<S: Store> TextTables<S> {
+    pub fn new(title: &str, store: S, print: &PrintSettings) -> Self {
         let mut flags = BTreeMap::new();
         for name in TABLES {
             let f = match print.object(name) {
@@ -117,12 +118,13 @@ impl TextTables {
         }
         Self {
             title: title.to_string(),
-            dir: dir.to_path_buf(),
+            store,
             sheets: BTreeMap::new(),
             flags,
             error: None,
             fixes: false,
             crop_yld: print.crop_yld.clone(),
+            progress: None,
         }
     }
 
@@ -157,38 +159,33 @@ impl TextTables {
             if s.buf.len() <= limit || self.error.is_some() {
                 continue;
             }
-            let path = self.dir.join(name);
-            if s.file.is_none() {
-                match File::create(&path) {
-                    Ok(f) => s.file = Some(f),
-                    Err(e) => {
-                        self.error = Some(format!("{}: {e}", path.display()));
-                        continue;
-                    }
-                }
+            if let Err(e) = self.store.append(name, s.buf.as_bytes()) {
+                self.error = Some(e);
             }
-            if let Some(f) = s.file.as_mut()
-                && let Err(e) = f.write_all(s.buf.as_bytes())
-            {
-                self.error = Some(format!("{}: {e}", path.display()));
-            }
+            s.written = true;
             s.buf.clear();
         }
     }
 
-    /// Writes the rest; `Err` names the file that couldn't be written.
-    pub fn finish(mut self) -> Result<(), String> {
+    /// Writes the rest and gives the store back; `Err` names the file that couldn't be
+    /// written.
+    pub fn finish(mut self) -> Result<S, String> {
         for s in self.sheets.values_mut() {
             // A table with a header and no rows is still written.
-            if s.buf.is_empty() && s.file.is_none() {
+            if s.buf.is_empty() && !s.written {
                 s.buf.push('\n');
             }
         }
         self.flush(0);
         match self.error {
             Some(e) => Err(e),
-            None => Ok(()),
+            None => Ok(self.store),
         }
+    }
+
+    /// The names of the tables written so far or buffered.
+    pub fn names(&self) -> Vec<String> {
+        self.sheets.keys().cloned().collect()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -382,7 +379,13 @@ fn row(out: &mut String, values: impl IntoIterator<Item = f32>) {
     let _ = writeln!(out);
 }
 
-impl OutputSink for TextTables {
+impl<S: Store> OutputSink for TextTables<S> {
+    fn progress(&mut self, done: usize, total: usize, day: Day) {
+        if let Some(p) = self.progress.as_mut() {
+            p.day(done, total, day);
+        }
+    }
+
     fn hru_day(&mut self, d: Day, hru: usize, gis_id: i32, name: &str, w: &HruWeather, h: Option<&HruDay>) {
         let weather = [w.tmax, w.tmin, w.tave, w.solrad, w.windsp, w.rhum];
         match h {

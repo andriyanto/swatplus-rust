@@ -1,0 +1,25 @@
+[package]
+name = "swat-wasm"
+description = "SWAT+ in Rust as a WebAssembly module: a scenario in, its tables out, both as tar"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+swat-model.workspace = true
+swat-io.workspace = true
+swat-engine.workspace = true
+swat-output.workspace = true
+
+# Not the workspace's lints: the module's exports take and return raw pointers.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
