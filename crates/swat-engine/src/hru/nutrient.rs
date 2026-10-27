@@ -727,11 +727,11 @@ impl Hru {
     }
 
     /// SWAT+ `nut_solp`: soluble P in runoff, and P leached down the profile.
-    pub(super) fn nut_solp(&mut self, surfq: f32, b: &NutBasin, nd: &mut NutDay) {
+    pub(super) fn nut_solp(&mut self, surfq: f32, runon_solp: f32, b: &NutBasin, nd: &mut NutDay) {
         let nly = self.layers.len();
         {
             let l = &mut self.layers[0];
-            l.lab += 0.0;
+            l.lab += runon_solp;
             let xx = l.bd * l.d * b.phoskd;
             nd.surqsolp = l.lab * surfq / (xx + 1.0);
             nd.surqsolp = nd.surqsolp.min(l.lab);

@@ -53,7 +53,7 @@ jobs:
           # And the whole of Pessel, 2015 only, printed from the first day.
           sed -i '3s/2025/2015/' testdata/Pessel/time.sim
           sed -i '3s/^2 /0 /' testdata/Pessel/print.prt
-          for scenario in Osu_1hru Ames_sub1 Ames_bare Ames_past0 Ames_past Ames_corn Ames_cornf Ames_cosy Ames_cosy2 Ames_dtbl Ames_tile Bh_land Batanghari Bh_res Ps_coast Ps_paddy Ps_musk Ps_atmo Ps_tile Ps_bmp Ps_septic Ps_solp Ps_urban Ps_hourly Pessel; do
+          for scenario in Osu_1hru Ames_sub1 Ames_bare Ames_past0 Ames_past Ames_corn Ames_cornf Ames_cosy Ames_cosy2 Ames_dtbl Ames_tile Bh_land Batanghari Bh_res Ps_coast Ps_paddy Ps_musk Ps_atmo Ps_tile Ps_bmp Ps_septic Ps_solp Ps_urban Ps_hourly Ps_land Pessel; do
             src=testdata/$scenario
             test -d "$src" || src=variants/$scenario
             mkdir -p runs/$scenario

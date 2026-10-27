@@ -53,7 +53,7 @@ branch (`SWAT+ Fortran build` workflow).
 The aim is the same results as SWAT+, so its behaviour is reproduced even where it surprises.
 What has been found so far is in [`docs/swat-quirks.md`](docs/swat-quirks.md).
 
-Rice paddies (weir, ponding, puddling) and their validation are in [`docs/paddy.md`](docs/paddy.md); reservoirs and point sources (recall objects) in [`docs/reservoirs.md`](docs/reservoirs.md); nitrogen deposition and Muskingum routing in [`docs/atmo.md`](docs/atmo.md); tile drains and other structural practices in [`docs/structures.md`](docs/structures.md); the dynamic soil P model and urban loads by the USGS regressions in [`docs/nutrients.md`](docs/nutrients.md); hourly (sub-daily) steps with Green-Ampt infiltration and hourly channel flows in [`docs/subdaily.md`](docs/subdaily.md).
+Rice paddies (weir, ponding, puddling) and their validation are in [`docs/paddy.md`](docs/paddy.md); reservoirs and point sources (recall objects) in [`docs/reservoirs.md`](docs/reservoirs.md); nitrogen deposition and Muskingum routing in [`docs/atmo.md`](docs/atmo.md); tile drains and other structural practices in [`docs/structures.md`](docs/structures.md); the dynamic soil P model and urban loads by the USGS regressions in [`docs/nutrients.md`](docs/nutrients.md); hourly (sub-daily) steps with Green-Ampt infiltration and hourly channel flows in [`docs/subdaily.md`](docs/subdaily.md); water routed from HRU to HRU across the land in [`docs/routing.md`](docs/routing.md).
 
 Which output tables it writes, and how SWAT+ sums them into months, years and average annual values, is in [`docs/outputs.md`](docs/outputs.md).
 

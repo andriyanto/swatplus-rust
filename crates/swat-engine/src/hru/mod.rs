@@ -1687,11 +1687,15 @@ impl Hru {
         // more, and keeps the sediment it can carry. Lateral flow goes into the layers by their
         // thickness.
         let mut runon_sed = 0.0_f32;
+        // A wetland's runon (`ht1`) is still in `swr_percmain`'s infiltration (per hectare
+        // again) and its soluble P goes into the top layer's labile P (`nut_solp`).
+        let mut wet_runon = crate::hyd::Hyd::default();
         if let Some(r) = c.runon {
             if r.sur.flo > 1.0e-6 {
                 if let Some(wt) = self.wet.as_mut() {
                     let ht1 = r.sur.plus(crate::hyd::Hyd::scale(1.0, r.til));
                     wt.water = wt.water.plus(ht1);
+                    wet_runon = ht1;
                 } else {
                     let ls_overq = r.sur.flo + (r.til.flo * 1.0) / (10.0 * self.area_ha);
                     precip_eff += ls_overq;
@@ -1796,7 +1800,7 @@ impl Hru {
 
         // swr_percmain (a wetland's irrigation went into the pond)
         let irr_in = if is_wet { 0.0 } else { self.irr_applied };
-        let (latq_gen, sepbtm) = self.percolate(inflpcp + irr_in, &mut surfq);
+        let (latq_gen, sepbtm) = self.percolate(inflpcp + irr_in + wet_runon.flo / (self.area_ha * 10.0), &mut surfq);
         // The wetland's release (and saturation excess below a low weir), as runoff.
         let wet_outflow = self.wet.as_ref().map_or(0.0, |wt| if wt.out.flo > 0.0 { wt.out.flo / self.area_ha / 10.0 } else { 0.0 });
 
@@ -1901,7 +1905,7 @@ impl Hru {
             [nd.no3atmo, nd.nh4atmo] = self.atmo_prev;
         }
         self.nut_nlch(surfq, &b.nut, &mut nd);
-        self.nut_solp(surfq, &b.nut, &mut nd);
+        self.nut_solp(surfq, wet_runon.solp, &b.nut, &mut nd);
 
         // hru_urban: loads washed off the impervious area.
         let silyld = self.hru_urban(surfq, c.precip_half_hr, w.precip, &mut nd);
