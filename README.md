@@ -41,6 +41,9 @@ cargo run --release -p swatplus-rust -- run testdata/Osu_1hru --out out --format
 cargo run --release -p swatplus-rust -- compare <SWAT+ hru_pw_day.txt> out/hru_pw_day.txt
 ```
 
+A design note in Indonesian, function by function (Markdown, Word and PDF), is in
+[`docs/nota-desain/`](docs/nota-desain/README.md).
+
 How another program runs it (the command line, Parquet tables, JSON progress, the WebAssembly
 module) is in [`docs/runner.md`](docs/runner.md).
 
