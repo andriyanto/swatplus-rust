@@ -130,16 +130,37 @@ pub fn compare(expected: impl BufRead, actual: impl BufRead, abs: f64, rel: f64,
             (Some((key, e)), Some((_, a))) => {
                 rows += 1;
                 for ((ie, ia, name), s) in columns.iter().zip(stats.iter_mut()) {
-                    let x = e.get(*ie).and_then(|v| v.parse::<f64>().ok());
-                    let y = a.get(*ia).and_then(|v| v.parse::<f64>().ok());
-                    let (Some(x), Some(y)) = (x, y) else { continue };
+                    let (Some(sx), Some(sy)) = (e.get(*ie), a.get(*ia)) else { continue };
+                    // A number, a value that isn't one (NaN, infinity, asterisks for an
+                    // overflow), or text (a name: not compared).
+                    let val = |v: &str| match v.parse::<f64>() {
+                        Ok(f) if f.is_finite() => Some(Some(f)),
+                        Ok(_) => Some(None),
+                        Err(_) if !v.is_empty() && v.bytes().all(|b| b == b'*') => Some(None),
+                        Err(_) => None,
+                    };
+                    let (Some(vx), Some(vy)) = (val(sx), val(sy)) else { continue };
                     s.values += 1;
-                    let d = (x - y).abs();
-                    let r = if d > 0.0 { d / x.abs().max(y.abs()) } else { 0.0 };
-                    s.max_abs = s.max_abs.max(d);
-                    s.max_rel = s.max_rel.max(r);
-                    // A hair of slack: 0.144 - 0.143 is a little over 0.001 in binary.
-                    if d > abs * (1.0 + 1.0e-6) && r > rel {
+                    let (x, y, differs) = match (vx, vy) {
+                        (Some(x), Some(y)) => {
+                            let d = (x - y).abs();
+                            let r = if d > 0.0 { d / x.abs().max(y.abs()) } else { 0.0 };
+                            s.max_abs = s.max_abs.max(d);
+                            s.max_rel = s.max_rel.max(r);
+                            // A hair of slack: 0.144 - 0.143 is a little over 0.001 in binary.
+                            (sx.clone(), sy.clone(), d > abs * (1.0 + 1.0e-6) && r > rel)
+                        }
+                        // Not a number on one side or both: NaN equals NaN, an infinity the
+                        // same infinity, asterisks the same asterisks.
+                        _ => {
+                            let same = match (sx.parse::<f64>(), sy.parse::<f64>()) {
+                                (Ok(x), Ok(y)) => (x.is_nan() && y.is_nan()) || x == y,
+                                _ => sx == sy,
+                            };
+                            (sx.clone(), sy.clone(), !same)
+                        }
+                    };
+                    if differs {
                         s.mismatches += 1;
                         if s.first.is_none() {
                             let step = if key.3 > 0 { format!(" step {}", key.3) } else { String::new() };
@@ -189,5 +210,18 @@ mod tests {
         assert_eq!(compare(e.as_bytes(), a.as_bytes(), 0.001, 1e-4, "t"), Ok(true));
         let a = format!("{HEAD}1 1 1 2000 1 1 h1 1.000 2.003\n1 1 1 2000 2 2 h2 1.000 2.000\n2 1 2 2000 1 1 h1 3.000 4.000\n");
         assert_eq!(compare(e.as_bytes(), a.as_bytes(), 0.001, 1e-4, "t"), Ok(false));
+    }
+
+    #[test]
+    fn nan_and_overflow_differ_from_numbers() {
+        let row = |a: &str| format!("{HEAD}1 1 1 2000 1 1 h1 {a} 2.000\n");
+        let cmp = |x: &str, y: &str| compare(row(x).as_bytes(), row(y).as_bytes(), 0.001, 1e-4, "t");
+        assert_eq!(cmp("NaN", "1.000"), Ok(false));
+        assert_eq!(cmp("1.000", "NaN"), Ok(false));
+        assert_eq!(cmp("NaN", "NaN"), Ok(true));
+        assert_eq!(cmp("Infinity", "inf"), Ok(true));
+        assert_eq!(cmp("Infinity", "-Infinity"), Ok(false));
+        assert_eq!(cmp("********", "1.000"), Ok(false));
+        assert_eq!(cmp("********", "********"), Ok(true));
     }
 }

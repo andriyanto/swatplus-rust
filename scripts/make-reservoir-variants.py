@@ -14,6 +14,10 @@
           hydropower schemes, between the spillways by `dyrt1`, above the emergency spillway by
           `inflo_targ` (docs/engine1.md).
 
+  Bh_nosed  Bh_res with the reservoir naming a sediment.res row that doesn't exist: SWAT+ then
+          leaves its settling factors at 0 (all sediment above the normal concentration, 0,
+          settles at once; no soluble N or P settles), and the port must do the same.
+
 usage: scripts/make-reservoir-variants.py <Batanghari folder> <output folder>
 """
 import calendar
@@ -222,8 +226,22 @@ def bh_rel(out):
     print("Bh_rel: the reservoir released by natlake, nonirr-h06, hydrop, dyrt1 and inflo_targ")
 
 
+def bh_nosed(out):
+    src = os.path.join(out, "Bh_res")
+    dst = os.path.join(out, "Bh_nosed")
+    if os.path.exists(dst):
+        shutil.rmtree(dst)
+    shutil.copytree(src, dst)
+    path = os.path.join(dst, "reservoir.res")
+    lines = read(path)
+    lines[2] = lines[2].replace("           sedres1", "           nosed01")
+    write(path, lines)
+    print("Bh_nosed: the reservoir without its sediment.res row")
+
+
 if __name__ == "__main__":
     src, out = sys.argv[1], sys.argv[2]
     os.makedirs(out, exist_ok=True)
     bh_res(src, out)
     bh_rel(out)
+    bh_nosed(out)

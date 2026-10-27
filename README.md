@@ -9,7 +9,7 @@ tables, paddies, wetlands, tile drains and other structures, septic systems, urb
 landscape routing between HRUs, routing units, aquifers, SWAT-DEG channels, reservoirs and point
 sources — daily or by sub-daily steps (Green-Ampt or the curve number with unit hydrographs),
 and its output tables are those of SWAT+ commit `6f51536`, bit for bit, on two SWAT+ examples
-and two real projects from West Sumatra (`Batanghari`, 1,858 HRUs; `Pessel`, 3,966 HRUs) and 31
+and two real projects from West Sumatra (`Batanghari`, 1,858 HRUs; `Pessel`, 3,966 HRUs) and 33
 variants that exercise each feature. CI runs both engines on every push and compares every
 table. What isn't ported is refused by name (`run` says why), never guessed.
 

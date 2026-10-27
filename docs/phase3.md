@@ -53,8 +53,8 @@ project.
 - **3d: Penman-Monteith PET and urban HRUs done.** `Bh_urb` (Batanghari with only its 79
   wetland HRUs replaced) matches SWAT+ bit for bit on all seven daily tables, 2015–2016, with
   Penman-Monteith PET (and the plants' maximum transpiration under it) and the 167 urban HRUs
-  (impervious runoff at curve number 98, build-up and wash-off of solids). CI runs it on
-  2015–2019. Priestley-Taylor (`pet` 0) is ported too, not yet validated.
+  (impervious runoff at curve number 98, build-up and wash-off of solids). CI no longer runs
+  it: `Batanghari` itself, which CI runs on 2015–2019, has the same urban HRUs and PET. Priestley-Taylor (`pet` 0) is ported too, not yet validated.
 - **3d done.** `Batanghari` itself, all 1,858 HRUs with its 79 wetlands (ponding, seepage into
   the soil and back, open-water evaporation, release by `res_rel.dtl`, settling of sediment and
   nutrients), matches SWAT+ bit for bit on all seven daily tables, 2015–2016; every wetland

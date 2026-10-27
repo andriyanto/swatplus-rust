@@ -23,7 +23,8 @@ swatplus-rust --version
 - `--fix-swat`: correct SWAT+'s bugs (`docs/swat-fixes.md`); the results then differ from
   SWAT+'s.
 - `--strict`: exit with code 3 when part of the project isn't simulated (a feature the port
-  refuses, which otherwise only gives a note and passes that part's water on).
+  refuses, which otherwise only gives a note and passes that part's water on). The tables are
+  still written in full (Parquet too), and the error comes after them.
 
 Exit codes: 0 done, 1 an error (the project can't be read or run, a table can't be written),
 2 wrong arguments, 3 part of the project not simulated (`--strict`).

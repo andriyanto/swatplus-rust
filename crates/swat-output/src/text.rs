@@ -16,6 +16,13 @@ use swat_model::PrintSettings;
 
 /// Fortran `Ew.d` with `d` 4 and width 15: `0.dddd` and a two-digit exponent.
 fn e15_4(v: f32) -> String {
+    // gfortran writes NaN and the infinities as words, right-justified.
+    if v.is_nan() {
+        return format!("{:>15}", "NaN");
+    }
+    if v.is_infinite() {
+        return format!("{:>15}", if v > 0.0 { "Infinity" } else { "-Infinity" });
+    }
     if v == 0.0 {
         return format!("{:>15}", "0.0000E+00");
     }
@@ -535,5 +542,20 @@ impl<S: Store> OutputSink for TextTables<S> {
 
     fn basin_psc(&mut self, p: Option<Period>, d: Day, name: &str, h: &Hyd) {
         self.rec_row("basin_psc", p, d, name, None, h);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::e15_4;
+
+    #[test]
+    fn e15_4_as_gfortran() {
+        assert_eq!(e15_4(0.0), "     0.0000E+00");
+        assert_eq!(e15_4(1234.6), "     0.1235E+04");
+        assert_eq!(e15_4(-0.012345), "    -0.1235E-01");
+        assert_eq!(e15_4(f32::NAN), "            NaN");
+        assert_eq!(e15_4(f32::INFINITY), "       Infinity");
+        assert_eq!(e15_4(f32::NEG_INFINITY), "      -Infinity");
     }
 }

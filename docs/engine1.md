@@ -50,6 +50,11 @@ aquifers) is accepted and changes nothing; any other parameter, conditions on re
 - **A soil parameter changes once a layer, but `anion_excl` belongs to the soil**: a `pctchg`
   or `relchg` of it is compounded as many times as there are layers changed.
 - **`lat_ttime` is changed after it has become `1 − exp(−1 / t)`**, and then made so again.
+- **`surlag` is the basin's, changed in place**: a second change of it starts from the first
+  one's result (two `pctchg` of 50 and −20 make 4 days 4.8), and each sets every HRU's lag
+  factor from its time of concentration in days, also in sub-daily runs. Validated by
+  **Ps_edge**, Ps_coast with `surlag` changed twice and every other wetland without its
+  `sediment.res` row.
 - **Changes come after the set-up**: the slope's time of concentration and USLE LS keep the old
   slope, and only what is computed later sees the change. The soil's nutrients are set up after
   calibration (`soil_nutcarb_init` follows `proc_cal`), from the calibrated soil.

@@ -381,6 +381,9 @@ impl Hru {
             wt.water.flo -= seep;
             wt.water_seep = seep / wsa1;
             let seep_rto = if seep + wt.water.flo > 0.01 { seep / (seep + wt.water.flo) } else { 0.0 };
+            // SWAT+ also adds the seeping organic N and P to the top layer's `soil1%water` pool,
+            // which only the soil mixing moves and nothing reads (no output depends on it); and
+            // the irrigation's nitrate to the pond, `irrig%no3`, which only `irrp` (refused) sets.
             top.0 += wt.water.no3 * seep_rto / area;
             top.1 += wt.water.nh3 * seep_rto / area;
             top.2 += wt.water.solp * seep_rto / area;
