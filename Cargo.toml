@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 license = "LGPL-2.1-only"
 rust-version = "1.90"
@@ -13,6 +13,8 @@ repository = "https://github.com/andriyanto/swatplus-rust"
 swat-model = { path = "crates/swat-model" }
 swat-io = { path = "crates/swat-io" }
 swat-engine = { path = "crates/swat-engine" }
+swat-output = { path = "crates/swat-output" }
+swat-wasm = { path = "crates/swat-wasm" }
 
 # No external dependencies yet. Any added later must have a license compatible with
 # LGPL-2.1-only (MIT, BSD, Boost...): Apache-2.0 alone is not. See NOTICE.

@@ -491,6 +491,7 @@ pub fn plant_init(
     zmx: f32,
     layers: &[(f32, f32)],
     epco: f32,
+    igrow_saved: &mut i32,
 ) -> Result<Plant, String> {
     let mut pl = Plant { cpnm: init.cpnm.clone(), gro: init.igro == "y", idorm: true, ..Plant::default() };
     let r = init.rsdin;
@@ -525,35 +526,35 @@ pub fn plant_init(
     } else if db.days_mat < 0 {
         pl.phumat = -pl.phumat;
     } else {
-        if !db.annual() {
-            // igrow would be left from an earlier call (implicit SAVE) or set from day length.
-            return Err(format!("plant {}: days to maturity {} for a {} plant (annuals only so far)", db.name, db.days_mat, db.typ));
+        // The planting day: for an annual, when base-0 heat units reach 0.15 of the year's; for
+        // any other plant, the last one computed (`igrow` keeps its value from call to call: 0
+        // before any).
+        if matches!(db.typ.as_str(), "null" | "null1") {
+            return Err(format!("plant {}: days to maturity for a plant of type {} (from day length)", db.name, db.typ));
         }
-        // The planting day: when base-0 heat units reach 0.15 of the year's.
-        let mut iday_sum = 181_i32;
-        let mut iday_sh = 181_i32;
         let mut phutot = 0.0_f32;
-        phu0 *= 0.15;
-        let mut igrow = None;
-        for iday in 1..=365 {
-            let tave = if lat > 0.0 {
-                tave_of(iday)
-            } else {
-                iday_sum += 1;
-                iday_sh = if iday_sum > 365 { iday_sum - 365 } else { iday_sum };
-                tave_of(iday_sh)
-            };
-            if tave > 0.0 {
-                phutot += tave;
-            }
-            if phutot > phu0 {
-                igrow = Some(if lat > 0.0 { iday } else { iday_sh });
-                break;
+        if db.annual() {
+            let mut iday_sum = 181_i32;
+            let mut iday_sh = 181_i32;
+            phu0 *= 0.15;
+            for iday in 1..=365 {
+                let tave = if lat > 0.0 {
+                    tave_of(iday)
+                } else {
+                    iday_sum += 1;
+                    iday_sh = if iday_sum > 365 { iday_sum - 365 } else { iday_sum };
+                    tave_of(iday_sh)
+                };
+                if tave > 0.0 {
+                    phutot += tave;
+                }
+                if phutot > phu0 {
+                    *igrow_saved = if lat > 0.0 { iday } else { iday_sh };
+                    break;
+                }
             }
         }
-        let Some(igrow) = igrow else {
-            return Err(format!("plant {}: base-0 heat units never reach the planting share", db.name));
-        };
+        let igrow = *igrow_saved;
         phutot = 0.0;
         for iday in igrow..=igrow + db.days_mat {
             let d = if lat > 0.0 || iday <= 365 { iday } else { iday - 365 };
@@ -584,9 +585,8 @@ pub fn plant_init(
     pl.tot.n = pl.n_fr * pl.tot.m;
     pl.p_fr = (db.pltpfr1 - db.pltpfr3) * (1.0 - matur_frac / (matur_frac + (db.pup1 - db.pup2 * matur_frac).exp())) + db.pltpfr3;
     pl.tot.p = pl.p_fr * pl.tot.m;
-    if init.pop >= 1.0e-6 {
-        return Err(format!("plant {}: plant population (not ported yet)", db.name));
-    }
+    // `plant.ini`'s population is read but never reaches the plant (`pop_com` stays 0): the
+    // potential leaf area is the plant's `blai` whatever it says.
     pl.harv_idx = db.hvsti;
     pl.lai_pot = db.blai;
     pl.rtfr = vec![0.0; layers.len()];

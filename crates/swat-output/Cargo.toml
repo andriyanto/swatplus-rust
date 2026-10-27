@@ -1,0 +1,15 @@
+[package]
+name = "swat-output"
+description = "SWAT+ output tables: SWAT+'s text tables, Parquet, and where they are stored"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+swat-model.workspace = true
+swat-engine.workspace = true
+
+[lints]
+workspace = true

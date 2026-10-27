@@ -98,6 +98,76 @@ flood storage of the third condition, plus 1 % of the principal volume a day; ab
 emergency spillway by `inflo_targ`. Its storage swings between empty and 48.5 million m³; every
 table, the reservoir's daily one too, matches SWAT+.
 
+## Harvests and kills
+
+Every `harv.ops` type is harvested now, by a schedule's `harv` (harvest only), `hvkl` (harvest
+and kill) and `kill`, and by a decision table's `harvest`, `harvest_kill` and `kill`:
+
+- **`biomass`** (`mgt_harvbiomass`): the share `hi_ovr · eff` of the seed, leaves and stems, if
+  more than `bm_min` stays above ground; what the harvest misses (`1 − eff` of it) goes to the
+  residue, and the leaf area and heat units shrink by half the share.
+- **`grain`** and **`picker`** (`mgt_harvgrain`): the seed, the share `eff` of it the yield, the
+  rest to the top layer's active humus.
+- **`tuber`** and **`peanuts`** (`mgt_harvtuber`): the share `eff` of the roots; the rest of the
+  roots to the layers' residue, the plant above ground to the surface residue, and nothing of
+  the plant is left.
+- **`residue`** (`mgt_harvresidue`): the share `eff · hi_ovr` of every plant's surface residue
+  (`eff` the operation's third value or the action's constant, or the row's when that is 0).
+- **`tree`** and **`stripper`**: a biomass harvest when harvesting only; when harvesting and
+  killing, nothing and a grain harvest.
+
+Quirks:
+
+- **A yield is counted even when nothing is harvested**: below the minimum biomass, and after a
+  residue harvest (which doesn't set it), the plant's yield adds the last harvest's yield of the
+  HRU; a biomass harvest that would leave too little counts its yield without taking it.
+- **A decision table's `harvest` doesn't count the harvest**: it adds to the yield but not to
+  the number of harvests (it adds 2 to the year's), so the average annual yield of
+  `crop_yld_aa` is the total; and the basin's yield gets the area with a yield of 0.
+- **Harvesting only, a schedule's `harv` reaches only growing plants; a decision table's
+  `harvest` any plant of the name.** A `kill` starts every plant's heat units again (and a
+  decision table's the HRU's base-0 heat units too).
+- **A residue harvest leaving less than the minimum biomass gives residue back** (up to the
+  minimum), and NaN when the residue was nil.
+
+**Ps_harv** (`scripts/make-pessel-variants.py`) is Ps_coast with oil palm's fresh fruit bunches
+picked on the 15th of each month (`ffb`: 3 % of the biomass above ground, a biomass harvest
+only), the generic farmland planted on 1 March, its grain harvested on 1 July, half its stover
+baled on 5 July (`stover_med`) and the crop killed on 10 July, and the row crops planted on day
+60 and lifted as tubers on day 300 (`tuber`) and killed on day 305 by a decision table. Every
+table, crop yields too, matches SWAT+.
+
+## Plants: days to maturity and population
+
+- **Days to maturity for a perennial** (`plants.plt` `days_mat` above 0): its heat units to
+  maturity are summed from a planting day over `days_mat` days, like an annual's. A perennial's
+  planting day isn't computed: `plant_init` keeps it from call to call, so it is the last one
+  computed for an annual (HRU by HRU, plant by plant), or day 0 before any. Plants of type
+  `null` (whose day comes from the day length) are still refused.
+- **`plant.ini`'s population (`plnt_pop`) changes nothing**: it is read, but never given to the
+  plant (`pop_com` stays 0), so the potential leaf area is always `blai`. The port accepts it.
+
+**Ps_peren** is Ps_coast with oil palm maturing in 365 days, 136 palms a hectare (the usual
+9 m triangular spacing) and 50,000 row crop plants. Every table matches SWAT+; the palms'
+average leaf area falls from 4.9 to 1.1, and the basin's ET from 1,253 to 657 mm a year.
+
+## Schedules by heat units, and tillage without the carbon model
+
+A schedule's operation with heat units (`hu_sch` above 0) runs once they pass it (after the day's
+operations by date): the share of the plant's heat units to maturity while it grows, or of the
+year's base-0 heat units while it doesn't (`mgt_operatn`). And a schedule's `till` mixes the soil
+with `mgt_newtillmix_cswat0` without the carbon model (`cswat` 0), as decision tables already did.
+
+- **The heat units are always the community's first plant's**: `mgt_sched` finds the plant an
+  operation names (`op2`) only on its copy of the operation, which the next one replaces, so the
+  test sees `op2` 0.
+- **A `skip` following an operation by heat units runs at once**, skipping the rest of the year.
+
+**Ps_hu** is Ps_coast with its generic farmland managed as in SWAT's classic schedules:
+ploughed (`fallplow`) at 0.10 of the base-0 heat units, planted at 0.15, given 100 kg/ha of urea
+at 0.30 of the crop's heat units, harvested for grain and killed at 1.20, the rest of the year
+skipped. Every table matches SWAT+.
+
 ## Sources
 
 - Arheimer, B., Pimentel, R., Isberg, K., Crochemore, L., Andersson, J. C. M., Hasan, A., &

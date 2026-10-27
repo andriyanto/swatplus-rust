@@ -18,12 +18,17 @@ use crate::fortran::aunif;
 #[derive(Clone, Debug, PartialEq)]
 pub enum OpKind {
     Plant,
-    /// Harvest (grain, or none for another type) and kill.
+    /// Harvest and kill (`hvkl`), harvest only (`harv`) with a `harv.ops` row (`op3` overrides
+    /// a residue harvest's efficiency), kill (`kill`).
     HarvKill {
-        grain: bool,
+        op: HarvOp,
         eff: f32,
-        bm_min: f32,
     },
+    Harv {
+        op: HarvOp,
+        eff: f32,
+    },
+    Kill,
     Till {
         effmix: f32,
         deptil: f32,
@@ -71,6 +76,9 @@ pub struct Op {
     pub kind: OpKind,
     pub mon: i32,
     pub day: i32,
+    /// Heat units that trigger it (`husc`, a share of the plant's or of the base-0 year's), or 0
+    /// for an operation by date.
+    pub husc: f32,
     /// The plant it applies to (`op_char`).
     pub op_char: String,
 }
@@ -140,6 +148,55 @@ pub enum SwTarget {
     Ul,
 }
 
+/// A `harv.ops` harvest type.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum HarvTyp {
+    Biomass,
+    Grain,
+    Residue,
+    Tree,
+    Tuber,
+    Peanuts,
+    Stripper,
+    Picker,
+    /// A type SWAT+ doesn't know: no harvest.
+    Other,
+}
+
+/// A `harv.ops` row: its type, harvest index override, efficiency and the biomass below which
+/// nothing is harvested.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HarvOp {
+    pub typ: HarvTyp,
+    pub hi_ovr: f32,
+    pub eff: f32,
+    pub bm_min: f32,
+}
+
+impl HarvOp {
+    /// The row named `name` (element 0, all zeros, when it isn't there).
+    fn new(project: &Project, name: &str) -> HarvOp {
+        let t = project.harv_ops.as_ref();
+        let typ = match t.and_then(|t| t.find(name).and_then(|r| t.text(r, "typ"))).unwrap_or("") {
+            "biomass" => HarvTyp::Biomass,
+            "grain" => HarvTyp::Grain,
+            "residue" => HarvTyp::Residue,
+            "tree" => HarvTyp::Tree,
+            "tuber" => HarvTyp::Tuber,
+            "peanuts" => HarvTyp::Peanuts,
+            "stripper" => HarvTyp::Stripper,
+            "picker" => HarvTyp::Picker,
+            _ => HarvTyp::Other,
+        };
+        HarvOp {
+            typ,
+            hi_ovr: row_real(t, name, "hi_ovr", 0.0),
+            eff: row_real(t, name, "eff", 0.0),
+            bm_min: row_real(t, name, "bm_min", 0.0),
+        }
+    }
+}
+
 /// An action of a decision table.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
@@ -159,8 +216,13 @@ pub enum Action {
     /// `plant` the community's plant named `crop` if it isn't growing (no `mgt_plantop`).
     Plant { crop: String },
     /// `harvest_kill` the plants named `crop` (or `all`), growing or not, at most `max_yr` times
-    /// a year: a grain harvest above `bm_min` of biomass, with the `harv.ops` efficiency.
-    HarvKill { crop: String, grain: bool, eff: f32, bm_min: f32, max_yr: i32 },
+    /// a year: a harvest of the `harv.ops` row above its minimum biomass (`eff` overrides a
+    /// residue harvest's efficiency).
+    HarvKill { crop: String, op: HarvOp, eff: f32, max_yr: i32 },
+    /// `harvest` only (no kill).
+    Harvest { crop: String, op: HarvOp, eff: f32, max_yr: i32 },
+    /// `kill`.
+    Kill { crop: String, max_yr: i32 },
     /// `rot_reset`: the rotation year becomes `yr`.
     RotReset { yr: i32 },
 }
@@ -328,20 +390,19 @@ impl Dtbl {
                         max_yr: a.const2 as i32,
                     }
                 }
-                "harvest_kill" => {
-                    let h = project.harv_ops.as_ref();
-                    let typ = h.and_then(|h| h.find(&a.file_pointer).and_then(|r| h.text(r, "typ"))).unwrap_or("");
-                    if matches!(typ, "biomass" | "residue" | "tuber" | "peanuts") {
-                        return Err(format!("decision table {}: {typ} harvest", t.name));
-                    }
-                    Action::HarvKill {
-                        crop: a.option.clone(),
-                        grain: matches!(typ, "grain" | "stripper" | "picker"),
-                        eff: row_real(h, &a.file_pointer, "eff", 0.0),
-                        bm_min: row_real(h, &a.file_pointer, "bm_min", 0.0),
-                        max_yr: a.const2 as i32,
-                    }
-                }
+                "harvest_kill" => Action::HarvKill {
+                    crop: a.option.clone(),
+                    op: HarvOp::new(project, &a.file_pointer),
+                    eff: a.const_,
+                    max_yr: a.const2 as i32,
+                },
+                "harvest" => Action::Harvest {
+                    crop: a.option.clone(),
+                    op: HarvOp::new(project, &a.file_pointer),
+                    eff: a.const_,
+                    max_yr: a.const2 as i32,
+                },
+                "kill" => Action::Kill { crop: a.option.clone(), max_yr: a.const2 as i32 },
                 "rot_reset" => Action::RotReset { yr: a.const_.max(1.0) as i32 },
                 other => return Err(format!("decision table {}: action {other}", t.name)),
             };
@@ -410,24 +471,12 @@ impl Mgt {
         let mut ops = Vec::with_capacity(s.ops.len());
         let mut jdays = Vec::with_capacity(s.ops.len());
         for o in &s.ops {
-            if o.husc > 0.0 {
-                return Err(format!("schedule {}: {} by heat units", s.name, o.op));
-            }
             let kind = match o.op.as_str() {
                 "plnt" => OpKind::Plant,
-                "hvkl" => {
-                    let t = project.harv_ops.as_ref();
-                    let typ = t.and_then(|t| t.find(&o.op_plant).and_then(|r| t.text(r, "typ"))).unwrap_or("");
-                    let grain = matches!(typ, "grain" | "stripper" | "picker");
-                    if matches!(typ, "biomass" | "residue" | "tuber" | "peanuts") {
-                        return Err(format!("schedule {}: {typ} harvest", s.name));
-                    }
-                    OpKind::HarvKill { grain, eff: row_real(t, &o.op_plant, "eff", 0.0), bm_min: row_real(t, &o.op_plant, "bm_min", 0.0) }
-                }
+                "hvkl" => OpKind::HarvKill { op: HarvOp::new(project, &o.op_plant), eff: o.op3 },
+                "harv" => OpKind::Harv { op: HarvOp::new(project, &o.op_plant), eff: o.op3 },
+                "kill" => OpKind::Kill,
                 "till" => {
-                    if project.codes.cswat != 2 {
-                        return Err(format!("schedule {}: tillage with carbon model {}", s.name, project.codes.cswat));
-                    }
                     let t = project.tillage.as_ref();
                     OpKind::Till { effmix: row_real(t, &o.op_char, "effmix", 0.0), deptil: row_real(t, &o.op_char, "deptil", 0.0) }
                 }
@@ -479,7 +528,7 @@ impl Mgt {
                 other => return Err(format!("schedule {}: operation {other}", s.name)),
             };
             jdays.push(jdt(ndays, o.day, o.mon));
-            ops.push(Op { kind, mon: o.mon, day: o.day, op_char: o.op_char.clone() });
+            ops.push(Op { kind, mon: o.mon, day: o.day, husc: o.husc, op_char: o.op_char.clone() });
         }
         // plant_init: the first operation is the one before the first of the starting rotation
         // year on or after the start day (the loop leaves its index one past the one wanted).
@@ -712,15 +761,15 @@ impl super::Hru {
                         }
                         t.num_actions[iac] += 1;
                     }
-                    Action::HarvKill { crop: own, grain, eff, bm_min, max_yr } => {
+                    Action::HarvKill { crop: own, op, eff, max_yr } => {
                         if t.num_actions[iac] <= *max_yr {
                             self.days_harv = 1;
                             let crop = crop(own);
                             for i in 0..self.plants.len() {
                                 let mut pl = std::mem::take(&mut self.plants[i]);
                                 if fortran_eq(&crop, &pl.cpnm) || fortran_eq(&crop, "all") {
-                                    if pl.tot.m > *bm_min && *grain {
-                                        self.harvgrain(&mut pl, *eff);
+                                    if pl.tot.m > op.bm_min {
+                                        self.harvest(&mut pl, i, op, *eff, true);
                                     }
                                     self.killop(&mut pl, i);
                                     // Summed even when the harvest didn't happen (the day's
@@ -729,6 +778,43 @@ impl super::Hru {
                                     pl.harv_num += 1;
                                     self.harvests.push((i, self.pl_yield.m));
                                 }
+                                self.plants[i] = pl;
+                            }
+                            t.num_actions[iac] += 1;
+                        }
+                    }
+                    Action::Harvest { crop: own, op, eff, max_yr } => {
+                        if t.num_actions[iac] <= *max_yr {
+                            self.days_harv = 1;
+                            let crop = crop(own);
+                            for i in 0..self.plants.len() {
+                                let mut pl = std::mem::take(&mut self.plants[i]);
+                                if fortran_eq(&crop, &pl.cpnm) || fortran_eq(&crop, "all") {
+                                    if pl.tot.m > op.bm_min {
+                                        self.harvest(&mut pl, i, op, *eff, false);
+                                    }
+                                    // The yield is summed, but the harvest isn't counted (its
+                                    // year's count is, twice), and the basin gets the area with
+                                    // a yield of 0 (`yield`, never set).
+                                    pl.yield_tot = pl.yield_tot + self.pl_yield;
+                                    self.harvests.push((i, 0.0));
+                                }
+                                self.plants[i] = pl;
+                            }
+                            t.num_actions[iac] += 1;
+                        }
+                    }
+                    Action::Kill { crop: own, max_yr } => {
+                        if t.num_actions[iac] <= *max_yr {
+                            self.days_kill = 1;
+                            let crop = crop(own);
+                            for i in 0..self.plants.len() {
+                                let mut pl = std::mem::take(&mut self.plants[i]);
+                                if fortran_eq(&crop, &pl.cpnm) || fortran_eq(&crop, "all") {
+                                    self.killop(&mut pl, i);
+                                }
+                                pl.phuacc = 0.0;
+                                self.phubase = 0.0;
                                 self.plants[i] = pl;
                             }
                             t.num_actions[iac] += 1;
@@ -773,6 +859,31 @@ impl super::Hru {
                 break;
             }
         }
+        // Operations by heat units, while the community's first plant's (or, when it isn't
+        // growing, the base-0 year's) pass the current one's (`mgt%op2` is always 0 by then).
+        let aphu = |h: &super::Hru| match h.plants.first() {
+            Some(pl) if pl.gro => pl.phuacc,
+            _ => h.phubase,
+        };
+        let mut a = aphu(self);
+        loop {
+            let Some(m) = self.mgt.as_ref() else { return };
+            let op = &m.ops[m.cur_op];
+            if !(op.husc > 0.0 && a > op.husc) {
+                break;
+            }
+            self.mgt_sched(b);
+            if n == 1 {
+                break;
+            }
+            a = aphu(self);
+            if self.mgt.as_ref().is_some_and(|m| m.ops[m.cur_op].kind == OpKind::Skip) {
+                self.mgt_sched(b);
+            }
+            if self.mgt.as_ref().is_some_and(|m| m.yr_skip) {
+                break;
+            }
+        }
     }
 
     /// SWAT+ `mgt_sched`: the current operation, then the next one becomes current (a skip stays
@@ -793,7 +904,7 @@ impl super::Hru {
                     }
                 }
             }
-            OpKind::HarvKill { grain, eff, bm_min } => {
+            OpKind::HarvKill { op: hop, eff } => {
                 for i in 0..self.plants.len() {
                     let mut pl = std::mem::take(&mut self.plants[i]);
                     if pl.gro {
@@ -801,8 +912,8 @@ impl super::Hru {
                         if fortran_eq(&op.op_char, &pl.cpnm) || fortran_eq(&op.op_char, "all") {
                             self.days_harv = 1;
                             self.days_kill = 1;
-                            if biomass > bm_min && grain {
-                                self.harvgrain(&mut pl, eff);
+                            if biomass > hop.bm_min {
+                                self.harvest(&mut pl, i, &hop, eff, true);
                             }
                             self.killop(&mut pl, i);
                             pl.yield_tot = pl.yield_tot + self.pl_yield;
@@ -812,15 +923,49 @@ impl super::Hru {
                         pl.reset_stress();
                         pl.phuacc = 0.0;
                         self.phubase = 0.0;
+                    } else if hop.typ == HarvTyp::Residue {
+                        // A plant not growing: only a residue harvest (whatever its name).
+                        self.harvresidue(&mut pl, i, &hop, eff);
                     }
                     self.plants[i] = pl;
                 }
             }
-            OpKind::Till { effmix, deptil } => {
-                if let Some(cb) = b.carbon.as_ref() {
-                    self.tillmix_cswat1(effmix, deptil, cb);
+            OpKind::Harv { op: hop, eff } => {
+                for i in 0..self.plants.len() {
+                    let mut pl = std::mem::take(&mut self.plants[i]);
+                    let matched = fortran_eq(&op.op_char, &pl.cpnm) || fortran_eq(&op.op_char, "all");
+                    if pl.gro {
+                        let biomass = pl.tot.m;
+                        if matched {
+                            self.days_harv = 1;
+                            if biomass > hop.bm_min {
+                                self.harvest(&mut pl, i, &hop, eff, false);
+                            }
+                            pl.yield_tot = pl.yield_tot + self.pl_yield;
+                            pl.harv_num += 1;
+                            self.harvests.push((i, self.pl_yield.m));
+                        }
+                    } else if matched && hop.typ == HarvTyp::Residue {
+                        self.harvresidue(&mut pl, i, &hop, eff);
+                    }
+                    self.plants[i] = pl;
                 }
             }
+            OpKind::Kill => {
+                for i in 0..self.plants.len() {
+                    let mut pl = std::mem::take(&mut self.plants[i]);
+                    if pl.gro && (fortran_eq(&op.op_char, &pl.cpnm) || fortran_eq(&op.op_char, "all")) {
+                        self.days_kill = 1;
+                        self.killop(&mut pl, i);
+                    }
+                    pl.phuacc = 0.0;
+                    self.plants[i] = pl;
+                }
+            }
+            OpKind::Till { effmix, deptil } => match b.carbon.as_ref() {
+                Some(cb) if b.cswat == 2 => self.tillmix_cswat1(effmix, deptil, cb),
+                _ => self.tillmix_cswat0(0.0, effmix, deptil),
+            },
             OpKind::Irr { amt_mm, eff, surq } => {
                 self.days_irr = 1;
                 self.irr_applied = amt_mm * eff * (1.0 - surq);
@@ -863,6 +1008,107 @@ impl super::Hru {
             }
             if m.cur_op >= m.ops.len() {
                 m.cur_op = 0;
+            }
+        }
+    }
+
+    /// The harvest of `harv.ops` row `op` on plant `pl` (number `me`, taken out of the
+    /// community): `kill` for a harvest and kill, where a stripper harvests the grain and a tree
+    /// nothing; harvest only, a stripper and a tree harvest the biomass. `eff` overrides a residue
+    /// harvest's efficiency when above 0.
+    pub(super) fn harvest(&mut self, pl: &mut Plant, me: usize, op: &HarvOp, eff: f32, kill: bool) {
+        match op.typ {
+            HarvTyp::Biomass => self.harvbiomass(pl, me, op),
+            HarvTyp::Grain | HarvTyp::Picker => self.harvgrain(pl, op.eff),
+            HarvTyp::Residue => self.harvresidue(pl, me, op, eff),
+            HarvTyp::Tree if !kill => self.harvbiomass(pl, me, op),
+            HarvTyp::Tuber | HarvTyp::Peanuts => self.harvtuber(pl, op.eff),
+            HarvTyp::Stripper if kill => self.harvgrain(pl, op.eff),
+            HarvTyp::Stripper => self.harvbiomass(pl, me, op),
+            HarvTyp::Tree | HarvTyp::Other => {}
+        }
+    }
+
+    /// SWAT+ `mgt_harvbiomass`: the share `hi_ovr · eff` of the seed, leaves and stems is the
+    /// yield, taken only if more than the minimum biomass stays above ground; what the harvest
+    /// misses of it (`1 − eff`) goes to the plant's residue. (The yield counts even when it isn't
+    /// taken.)
+    fn harvbiomass(&mut self, pl: &mut Plant, me: usize, op: &HarvOp) {
+        let hi_tot = op.hi_ovr * op.eff;
+        let harv_seed = OrgMass::scale(hi_tot, pl.seed);
+        let harv_leaf = OrgMass::scale(hi_tot, pl.leaf);
+        let harv_stem = OrgMass::scale(hi_tot, pl.stem);
+        self.pl_yield = harv_seed + harv_leaf + harv_stem;
+        if pl.ab_gr.m - self.pl_yield.m > op.bm_min {
+            self.pl_yield = OrgMass::scale(1.0, self.pl_yield);
+            pl.seed = pl.seed - harv_seed;
+            pl.leaf = pl.leaf - harv_leaf;
+            pl.stem = pl.stem - harv_stem;
+            pl.tot = pl.tot - self.pl_yield;
+            pl.ab_gr = pl.ab_gr - self.pl_yield;
+            let clip = 1.0 - op.eff;
+            let harv_left = OrgMass::scale(clip, self.pl_yield);
+            pl.rsd = harv_left + pl.rsd;
+            self.rsd_tot = OrgMass::default();
+            for j in 0..self.plants.len() {
+                self.rsd_tot = self.rsd_tot + if j == me { pl.rsd } else { self.plants[j].rsd };
+            }
+            if pl.tot.m > 0.001 {
+                pl.lai *= 1.0 - 0.5 * hi_tot;
+                pl.phuacc *= 1.0 - 0.5 * hi_tot;
+                pl.root_frac = pl.root.m / pl.tot.m;
+            } else {
+                pl.tot.m = 0.0;
+                pl.lai = 0.0;
+                pl.phuacc = 0.0;
+            }
+        }
+    }
+
+    /// SWAT+ `mgt_harvtuber`: the share `eff` of the roots is the yield; the other roots go to the
+    /// layers' residue by the root distribution, the plant above ground to the surface residue,
+    /// and the plant is gone (it keeps growing, from nothing).
+    fn harvtuber(&mut self, pl: &mut Plant, eff: f32) {
+        self.pl_yield = OrgMass::scale(eff, pl.root);
+        pl.root = pl.root - self.pl_yield;
+        let layers: Vec<(f32, f32)> = self.layers.iter().map(|l| (l.d, l.thick)).collect();
+        pl.rootfr(&layers);
+        for ly in 0..pl.soil_rsd.len() {
+            pl.soil_rsd[ly] = pl.soil_rsd[ly] + OrgMass::scale(pl.rtfr[ly], pl.root);
+        }
+        self.pl_yield = OrgMass::scale(1.0, self.pl_yield);
+        self.rsd_tot = self.rsd_tot + pl.ab_gr;
+        pl.rsd = pl.rsd + pl.ab_gr;
+        pl.tot = OrgMass::default();
+        pl.ab_gr = OrgMass::default();
+        pl.leaf = OrgMass::default();
+        pl.stem = OrgMass::default();
+        pl.seed = OrgMass::default();
+        pl.root = OrgMass::default();
+    }
+
+    /// SWAT+ `mgt_harvresidue`: the share `eff · hi_ovr` of every plant's surface residue is
+    /// taken (`eff` the action's, or the row's when that is 0), leaving at least the minimum
+    /// biomass (a residue already under it grows back to it). The yield isn't set.
+    fn harvresidue(&mut self, pl: &mut Plant, me: usize, op: &HarvOp, harveff: f32) {
+        let eff = if harveff < 0.00001 { op.eff } else { harveff };
+        let net_eff = eff * op.hi_ovr;
+        for j in 0..self.plants.len() {
+            let rsd = if j == me { pl.rsd } else { self.plants[j].rsd };
+            let mut removed = OrgMass::scale(net_eff, rsd);
+            if rsd.m - removed.m < op.bm_min {
+                let reduction_frac = (rsd.m - op.bm_min) / rsd.m;
+                removed = OrgMass::scale(reduction_frac, rsd);
+            }
+            let new = rsd - removed;
+            if j == me {
+                pl.rsd = new;
+            } else {
+                self.plants[j].rsd = new;
+            }
+            self.rsd_tot = self.rsd_tot - removed;
+            if self.rsd_tot.m < 1.0e-6 {
+                self.rsd_tot = OrgMass::default();
             }
         }
     }

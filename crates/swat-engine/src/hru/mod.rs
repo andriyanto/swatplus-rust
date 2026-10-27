@@ -715,12 +715,14 @@ pub fn init_hrus(
     let surlag = project.params.get("surlag").unwrap_or(4.0);
     let hru_objs: Vec<_> = project.objects_of(swat_model::ObjectKind::Hru).collect();
     let mut out = Vec::with_capacity(project.hru_data.len());
-    // soil_nutcarb_init's `psp`, kept from the last layer for a layer without clay.
+    // soil_nutcarb_init's `psp`, kept from the last layer for a layer without clay, and
+    // plant_init's planting day (`igrow`, saved from call to call).
     let mut psp_saved = 0.0_f32;
+    let mut igrow_saved = 0_i32;
     for (i, hd) in project.hru_data.iter().enumerate() {
         let ob = hru_objs.get(i).ok_or_else(|| format!("HRU {} has no object in hru.con", i + 1))?;
         let g = wgn.get(i).and_then(|&k| wgns.get(k)).ok_or_else(|| format!("HRU {}: no weather generator", i + 1))?;
-        let mut h = init_hru(project, hd, ob, g, ffcb, ndays)?;
+        let mut h = init_hru(project, hd, ob, g, ffcb, ndays, &mut igrow_saved)?;
         h.wgn = wgn.get(i).copied().unwrap_or(0);
         init_bmix(&mut h, &bmix);
         time_conc(&mut h, surlag);
@@ -1065,6 +1067,7 @@ fn init_hru(
     g: &crate::climate::WgnState,
     ffcb: f32,
     ndays: &[i32; 13],
+    igrow: &mut i32,
 ) -> Result<Hru, String> {
     let n = &hd.name;
     let (lu, lu_found) = Row::find_or_first(project.landuse.as_ref(), schema::LANDUSE, &hd.land_use_mgt);
@@ -1254,7 +1257,7 @@ fn init_hru(
             // A name not in plants.plt keeps the default pointer, 1: the first plant.
             let r = t.find(&init.cpnm).unwrap_or(0);
             let db = PlantDb::new(t, r, project.params.get("rsdco").unwrap_or(0.05));
-            let pl = plant::plant_init(db, init, &months, ndays, g.lat, soil.zmx, &layers, hyd.real("epco"))?;
+            let pl = plant::plant_init(db, init, &months, ndays, g.lat, soil.zmx, &layers, hyd.real("epco"), igrow)?;
             h.rsd_tot = h.rsd_tot.add(pl.rsd);
             h.laimx_sum += pl.db.blai;
             h.plants.push(pl);

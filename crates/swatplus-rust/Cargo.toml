@@ -15,6 +15,7 @@ path = "src/main.rs"
 swat-model.workspace = true
 swat-io.workspace = true
 swat-engine.workspace = true
+swat-output.workspace = true
 
 [lints]
 workspace = true

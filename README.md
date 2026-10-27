@@ -3,21 +3,15 @@
 SWAT+ (Soil and Water Assessment Tool Plus) translated from Fortran into Rust, to run natively
 and in the browser (WebAssembly), and to be run by [RustGIS](https://github.com/andriyanto/rustgis).
 
-Status: **phase 2 done (stages 2a, 2b-1, 2b-2, management M1 and M2).** The daily weather matches SWAT+ exactly: precipitation,
-maximum, minimum and mean temperature, solar radiation, wind speed and relative humidity, measured
-and generated, are identical to the Fortran engine's on every day of both reference scenarios
-(Osu_1hru 2013–2023, Ames_sub1 1975–2020, 12 HRUs). The HRU water balance of bare soil (no plants,
-no management) matches too: all 28 columns the port writes to `hru_wb_day` (snow, soil
-temperature, soil evaporation, curve-number runoff and its lag, percolation, lateral flow, soil
-water) are identical on all 201 624 HRU-days of `Ames_bare`. With a pasture growing and the
-original carbon model (`Ames_past0`) and with the Century carbon model Ames uses
-(`Ames_past`), all four daily HRU tables — water balance, plants, nutrient balance and losses,
-77 columns — are identical too, and so are they with corn under Ames's scheduled management
-(planting, harvest, tillage, irrigation, fertilizer: `Ames_corn`, `Ames_cornf`), and with
-**Ames_sub1 itself**, unchanged: corn and soybean in one community, its 305 scheduled
-operations, irrigation by decision table and custom soil layers. CI checks this on every push.
-
-Phase 3 (routing units, aquifers, SWAT-DEG channels) works on two real projects from West Sumatra, Indonesia, in `testdata/`: `Batanghari` (upland, 284 channels, 1,858 HRUs) and `Pessel` (coastal, 1,454 channels, 3,966 HRUs, peat and paddy), each with its Fortran reference; the stages are in [`docs/phase3.md`](docs/phase3.md). Stage 3a-0 is done: Batanghari's 1,858 HRUs (`Bh_land`: Hargreaves PET, urban and wetland HRUs as forest) match SWAT+ on all four daily HRU tables over nine years. Stages 3a to 3c are done too: its 284 routing units, 44 aquifers and 284 SWAT-DEG channels (with QUAL2E and stream temperature) match SWAT+ bit for bit (`ru_day`, `aquifer_day`, `channel_sd_day`).
+Status: **engine 1.0.** The port runs SWAT+ projects from the land to the outlet — HRUs (weather,
+water balance, plants, nutrients, carbon, erosion, management by date, heat units and decision
+tables, paddies, wetlands, tile drains and other structures, septic systems, urban areas),
+landscape routing between HRUs, routing units, aquifers, SWAT-DEG channels, reservoirs and point
+sources — daily or by sub-daily steps (Green-Ampt or the curve number with unit hydrographs),
+and its output tables are those of SWAT+ commit `6f51536`, bit for bit, on two SWAT+ examples
+and two real projects from West Sumatra (`Batanghari`, 1,858 HRUs; `Pessel`, 3,966 HRUs) and 31
+variants that exercise each feature. CI runs both engines on every push and compares every
+table. What isn't ported is refused by name (`run` says why), never guessed.
 
 The design, decisions and phases are in RustGIS: [`docs/swat/design.md`](https://github.com/andriyanto/rustgis/blob/swat-plus-design/docs/swat/design.md).
 
@@ -34,16 +28,21 @@ relative difference of 1e-4 or one unit in the last printed decimal (decision K1
 | `swat-model` | The data of a project: `file.cio`, basin codes and parameters, simulation period, print settings, spatial objects and their outflows, weather, HRUs, soils, and the database tables (topography, hydrology, land use, curve numbers, snow…). No I/O. |
 | `swat-io` | Readers for TxtInOut files. Each follows the SWAT+ routine that reads the file, with Fortran list-directed input rules, from a folder or from files in memory (the browser). |
 | `swat-engine` | The simulation. So far the clock, the daily weather (measured and generated), the print schedule, HRUs (water balance, plant growth, soil nutrients with the original and Century carbon models, erosion, dated and decision-table management), and the objects they feed in SWAT+'s command order: routing units, aquifers and SWAT-DEG channels. |
+| `swat-output` | The output: SWAT+'s text tables, the same tables as Parquet, tar archives, progress as JSON lines. |
+| `swat-wasm` | The engine as a WebAssembly module for the browser: a scenario's tar archive in, its tables out. |
 | `swatplus-rust` | The command line program: `inspect`, `run`, `compare`. |
 
 No external dependencies, so the core builds anywhere, WebAssembly included.
 
 ```sh
 cargo test
-cargo run -p swatplus-rust -- inspect testdata/Osu_1hru
-cargo run -p swatplus-rust -- run testdata/Osu_1hru --out out
-cargo run -p swatplus-rust -- compare <SWAT+ hru_pw_day.txt> out/hru_pw_day.txt
+cargo run --release -p swatplus-rust -- inspect testdata/Osu_1hru
+cargo run --release -p swatplus-rust -- run testdata/Osu_1hru --out out --format both --progress json
+cargo run --release -p swatplus-rust -- compare <SWAT+ hru_pw_day.txt> out/hru_pw_day.txt
 ```
+
+How another program runs it (the command line, Parquet tables, JSON progress, the WebAssembly
+module) is in [`docs/runner.md`](docs/runner.md).
 
 The SWAT+ Fortran reference, built from the commit this port follows, is on the `fortran-bin`
 branch (`SWAT+ Fortran build` workflow).
@@ -61,8 +60,8 @@ The quirks that are plainly bugs can be corrected instead with `run <folder> --f
 results then differ from SWAT+'s. They are listed in [`docs/swat-fixes.md`](docs/swat-fixes.md).
 
 Batanghari and Pessel match SWAT+ bit for bit (phases 3d and 3e, [`docs/phase3.md`](docs/phase3.md)), and so does Osu_1hru, SWAT+'s rice paddy example: weir, ponding irrigation, puddling, manure and calibration, on every table over 14 years (phase 4). For a project the port can't
-simulate yet (other decision table conditions and actions, other operations, other PET
-methods…), `run` says why and writes the weather and precipitation only.
+simulate (a feature it refuses), `run` says why and passes that part's water on, or fails with
+`--strict`.
 
 ## License
 

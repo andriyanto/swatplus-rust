@@ -802,6 +802,113 @@ def ps_cal(base, dst):
     print(f"{os.path.basename(dst)}: {len(PS_CAL)} more calibration changes")
 
 
+def ps_harv(base, dst):
+    """A copy of project `base` with every kind of harvest: oil palm's fruit bunches picked each
+    month (a biomass harvest only, `harv`), the generic farmland's grain harvested, its stover
+    baled and the crop killed by separate operations, and the row crops lifted as tubers and
+    killed by a decision table's `harvest` and `kill` actions."""
+    if os.path.exists(dst):
+        shutil.rmtree(dst)
+    shutil.copytree(base, dst)
+    p = lambda f: os.path.join(dst, f)
+    # Fresh fruit bunches: 3 % of the palm's biomass above ground a month (about the 20-25 t a
+    # hectare a year of a mature plantation, for 60-80 t of standing biomass).
+    lines = read(p("harv.ops"))
+    while lines and not lines[-1].strip():
+        lines.pop()
+    lines.append(f"{'ffb':<18}{'biomass':>14}{0.03:14.5f}{1.0:14.5f}{0.0:14.5f}  ")
+    write(p("harv.ops"), lines + [""])
+    ops = lambda rows: [f"{'':<40}{o:<10}{mo:>6}{d:>6}{0.0:>10.5f}  {a1:<16}  {a2:<16}{a3:>10.5f}" for o, mo, d, a1, a2, a3 in rows]
+    lines = read(p("management.sch"))
+    while lines and not lines[-1].strip():
+        lines.pop()
+    lines += [f"{'oilp_sched':<34}{12:>3}{0:>11}  "] + ops([("harv", m, 15, "oilp", "ffb", 0.0) for m in range(1, 13)])
+    lines += [f"{'agrl_seq':<34}{4:>3}{0:>11}  "] + ops([("plnt", 3, 1, "agrl", "null", 0.0), ("harv", 7, 1, "agrl", "grain", 0.0),
+                                                      ("harv", 7, 5, "agrl", "stover_med", 0.5), ("kill", 7, 10, "agrl", "null", 0.0)])
+    lines += [f"{'agrr_dt':<34}{0:>3}{1:>11}  ", f"{'':<51}agrr_tuber  "]
+    write(p("management.sch"), lines + [""])
+    lines = read(p("lum.dtl"))
+    lines[1] = str(int(lines[1].split()[0]) + 1)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    lines += [
+        "",
+        "name                     conds      alts      acts  ",
+        "agrr_tuber                   3         3         3  ",
+        "var                        obj   obj_num           lim_var            lim_op     lim_const      alt1      alt2      alt3  ",
+        "jday                       hru         0              null                 -      60.00000         =         -         -  ",
+        "jday                       hru         0              null                 -     300.00000         -         =         -  ",
+        "jday                       hru         0              null                 -     305.00000         -         -         =  ",
+        "act_typ                    obj   obj_num              name            option         const        const2                fp  outcome           ",
+        "plant                      hru         0             plant              agrr       0.00000       1.00000              null  y   n   n   ",
+        "harvest                    hru         0        tuber_harv              agrr       0.00000       1.00000             tuber  n   y   n   ",
+        "kill                       hru         0              kill              agrr       0.00000       1.00000              null  n   n   y   ",
+        "",
+    ]
+    write(p("lum.dtl"), lines)
+    lines = read(p("landuse.lum"))
+    k = lines[1].split().index("mgt")
+    for i in range(2, len(lines)):
+        t = lines[i].split()
+        for lum, sch in (("oilp_lum", "oilp_sched"), ("agrl_lum", "agrl_seq"), ("agrr_lum", "agrr_dt")):
+            if t and t[0] == lum:
+                lines[i] = set_field(lines[i], k, sch)
+    write(p("landuse.lum"), lines)
+    print(f"{os.path.basename(dst)}: biomass, grain, residue and tuber harvests, kills")
+
+
+def ps_peren(base, dst):
+    """A copy of project `base` whose oil palm has days to maturity (a year from its planting
+    day, which for a perennial is the last one computed for an annual), and plant populations in
+    plant.ini (136 palms a hectare, the usual triangular spacing of 9 m; 50,000 row crop plants)."""
+    if os.path.exists(dst):
+        shutil.rmtree(dst)
+    shutil.copytree(base, dst)
+    p = lambda f: os.path.join(dst, f)
+    lines = read(p("plants.plt"))
+    k = lines[1].split().index("days_mat")
+    for i in range(2, len(lines)):
+        t = lines[i].split()
+        if t and t[0] == "oilp":
+            lines[i] = set_field(lines[i], k, "365.00000")
+    write(p("plants.plt"), lines)
+    lines = read(p("plant.ini"))
+    k = lines[1].split().index("plnt_pop") - 3
+    for i in range(2, len(lines)):
+        t = lines[i].split()
+        if t and t[0] in ("oilp", "agrr"):
+            lines[i] = set_field(lines[i], k, "136.00000" if t[0] == "oilp" else "50000.00000")
+    write(p("plant.ini"), lines)
+    print(f"{os.path.basename(dst)}: perennial days to maturity, plant populations")
+
+
+def ps_hu(base, dst):
+    """A copy of project `base` whose generic farmland is managed by heat units, as in SWAT:
+    ploughed at 0.10 of the base-0 year's heat units, planted at 0.15, fertilized with 100 kg of
+    urea at 0.30 of the crop's, harvested and killed at 1.20, then the rest of the year skipped."""
+    if os.path.exists(dst):
+        shutil.rmtree(dst)
+    shutil.copytree(base, dst)
+    p = lambda f: os.path.join(dst, f)
+    rows = [("till", 0.10, "fallplow", "null", 0.0), ("plnt", 0.15, "agrl", "null", 0.0),
+            ("fert", 0.30, "urea", "broadcast", 100.0), ("hvkl", 1.20, "agrl", "grain", 0.0),
+            ("skip", 0.0, "null", "null", 0.0)]
+    lines = read(p("management.sch"))
+    while lines and not lines[-1].strip():
+        lines.pop()
+    lines += [f"{'agrl_hu':<34}{len(rows):>3}{0:>11}  "]
+    lines += [f"{'':<40}{o:<10}{0:>6}{0:>6}{hu:>10.5f}  {a1:<16}  {a2:<16}{a3:>10.5f}" for o, hu, a1, a2, a3 in rows]
+    write(p("management.sch"), lines + [""])
+    lines = read(p("landuse.lum"))
+    k = lines[1].split().index("mgt")
+    for i in range(2, len(lines)):
+        t = lines[i].split()
+        if t and t[0] == "agrl_lum":
+            lines[i] = set_field(lines[i], k, "agrl_hu")
+    write(p("landuse.lum"), lines)
+    print(f"{os.path.basename(dst)}: generic farmland managed by heat units")
+
+
 def ps_urbhr(base, dst):
     """A copy of the hourly project `base` whose generic farmland is a medium-density town, its
     loads washed off the impervious area by the hour (`hru_urbanhr`)."""
@@ -874,5 +981,8 @@ if __name__ == "__main__":
     ps_urbhr(os.path.join(out, "Ps_hourly"), os.path.join(out, "Ps_urbhr"))
     ps_pet(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_pet"))
     ps_cal(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_cal"))
+    ps_harv(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_harv"))
+    ps_peren(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_peren"))
+    ps_hu(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_hu"))
     ps_uh(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_uh"))
     ps_gap(os.path.join(out, "Ps_hourly"), os.path.join(out, "Ps_gap"))
