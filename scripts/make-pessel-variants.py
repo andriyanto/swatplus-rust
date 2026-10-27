@@ -628,6 +628,57 @@ def ps_urban(base, dst):
     print(f"{os.path.basename(dst)}: a town by the USGS regressions")
 
 
+# Mononobe's distribution of a day's rain over a storm of T hours: the depth fallen by hour t is
+# R (t / T)^(1/3). Four hours is the dominant duration of heavy rain it matches best in Java
+# (Citanduy, Jurnal Sumber Daya Air 2024); over Sumatra's land convective rain peaks between 15:00
+# and 20:00 local time (Mori et al. 2004).
+STORM_HOURS = 4
+STORM_START = 15  # the storm falls in the hours ending 16:00 to 19:00
+
+
+def mononobe(depth, hours=STORM_HOURS):
+    cum = [depth * (t / hours) ** (1.0 / 3.0) for t in range(hours + 1)]
+    return [cum[t + 1] - cum[t] for t in range(hours)]
+
+
+def ps_hourly(base, dst, years=(2015, 2017)):
+    """A copy of project `base` run hourly with Green-Ampt infiltration: each day's rain of its
+    precipitation files falls in a four-hour afternoon storm (Mononobe)."""
+    if os.path.exists(dst):
+        shutil.rmtree(dst)
+    shutil.copytree(base, dst)
+    p = lambda f: os.path.join(dst, f)
+    lines = read(p("codes.bsn"))
+    lines[2] = set_field(lines[2], lines[1].split().index("gampt"), "1")
+    write(p("codes.bsn"), lines)
+    lines = read(p("time.sim"))
+    lines[2] = set_field(lines[2], 4, "24")
+    write(p("time.sim"), lines)
+    names = [l.split()[0] for l in read(p("pcp.cli"))[2:] if l.split()]
+    for name in names:
+        src = read(p(name))
+        head = src[2].split()
+        out = [src[0].split(":")[0] + ": hourly from the daily values, a four-hour Mononobe storm from 15:00 (Ps_hourly)",
+               "nbyr     tstep       lat       lon      elev",
+               f"{years[1] - years[0] + 1:4d}{24:10d}{head[2]:>10}{head[3]:>10}{head[4]:>10}"]
+        for line in src[3:]:
+            t = line.split()
+            if len(t) < 3:
+                continue
+            yr, jday, v = int(t[0]), int(t[1]), float(t[2])
+            if not years[0] <= yr <= years[1]:
+                continue
+            hourly = [0.0] * 24
+            if v > 0.0:
+                for k, x in enumerate(mononobe(v)):
+                    hourly[STORM_START + k] = x
+            d = __import__("datetime").date(yr, 1, 1) + __import__("datetime").timedelta(jday - 1)
+            for h in range(24):
+                out.append(f"{yr:4d}{jday:5d}{d.month:4d}{d.day:4d}{h + 1:4d}{hourly[h]:12.5f}")
+        write(p(name), out + [""])
+    print(f"{os.path.basename(dst)}: hourly, Green-Ampt ({len(names)} precipitation files)")
+
+
 if __name__ == "__main__":
     src, out = sys.argv[1], sys.argv[2]
     os.makedirs(out, exist_ok=True)
@@ -640,3 +691,4 @@ if __name__ == "__main__":
     ps_septic(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_septic"))
     ps_solp(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_solp"))
     ps_urban(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_urban"))
+    ps_hourly(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_hourly"))

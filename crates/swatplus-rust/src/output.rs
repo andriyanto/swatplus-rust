@@ -32,6 +32,10 @@ fn e15_4(v: f32) -> String {
 /// What a file's buffer holds before it is written.
 const CHUNK: usize = 4 << 20;
 
+/// The units line SWAT+ writes under `channel_sd_subday.txt`'s header (the daily channel
+/// table's, not the one meant for it).
+const SUBDAY_UNITS: &str = "                                                                   m^3/s           m^3/s           m^3/s           m^3/s           tons           tons           tons           tons           tons           tons           tons           tons              m              m            m/m              m              m              m             mm              mm              mm            tons       kg_N           kg_P            m/s             m/s        ";
+
 const KEYS: &str = "  jday   mon   day    yr    unit  gis_id  name            ";
 
 const WEATHER: [&str; 6] = ["tmx", "tmn", "tmpav", "solarad", "wndspd", "rhum"];
@@ -420,6 +424,23 @@ impl OutputSink for TextTables {
     fn cha_day(&mut self, d: Day, ich: usize, gis_id: i32, name: &str, w: &ChWat, stor: &Hyd, hin: &Hyd, hout: &Hyd, wtemp: f32) {
         self.cha_row("channel_sd", None, d, ich, gis_id, name, w, stor, hin, hout, Some(wtemp), false);
         self.flush(CHUNK);
+    }
+
+    fn cha_subday(&mut self, d: Day, ich: usize, gis_id: i32, name: &str, flo: &[f32]) {
+        if !self.wants("channel_sd", None) {
+            return;
+        }
+        let title = self.title.clone();
+        let out = self.file("channel_sd_subday.txt", |o| {
+            let _ = writeln!(o, "{title}");
+            let _ = writeln!(o, "  jday   mon   day    yr   unit  gis_id   tstep  name                   flo_out ");
+            let _ = writeln!(o, "{SUBDAY_UNITS}");
+        });
+        for (ii, v) in flo.iter().enumerate() {
+            let _ = write!(out, "{:6}{:6}{:6}{:6}{:8}{:8}{:8}  {:<16}", d.jday, d.mon, d.day, d.yr, ich, gis_id, ii + 1, name);
+            out.push_str(&e15_4(*v));
+            out.push('\n');
+        }
     }
 
     fn cha_period(

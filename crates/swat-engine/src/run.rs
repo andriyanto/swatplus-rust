@@ -9,9 +9,11 @@ use crate::hru::{DayCtx, Hru, HruBasin, HruDay, init_hrus};
 
 /// The weather an HRU sees on a day (`w` in `hru_control`): its station's, with the lapse-rate
 /// corrections for elevation when `codes.bsn` turns them on.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct HruWeather {
     pub precip: f32,
+    /// The station's precipitation by time step (sub-daily runs; the first `step` values).
+    pub ts: [f32; crate::hru::subdaily::MAX_STEP],
     pub tmax: f32,
     pub tmin: f32,
     pub tave: f32,
@@ -23,6 +25,24 @@ pub struct HruWeather {
     /// Atmospheric deposition today (`nut_nrain`): nitrate in rain (mg/L) and dry (kg/ha a day),
     /// ammonium in rain and dry; none without `atmo.cli`.
     pub atmo: Option<[f32; 4]>,
+}
+
+impl Default for HruWeather {
+    fn default() -> Self {
+        Self {
+            precip: 0.0,
+            ts: [0.0; crate::hru::subdaily::MAX_STEP],
+            tmax: 0.0,
+            tmin: 0.0,
+            tave: 0.0,
+            solrad: 0.0,
+            solradmx: 0.0,
+            windsp: 0.0,
+            rhum: 0.0,
+            phubase0: 0.0,
+            atmo: None,
+        }
+    }
 }
 
 /// The date and position of a printed day.
@@ -59,6 +79,10 @@ pub trait OutputSink {
         _wtemp: f32,
     ) {
     }
+
+    /// One SWAT-DEG channel's day by time step (`channel_sd_subday.txt`, sub-daily runs): its
+    /// outflow in each step (m3, though the table heads it m^3/s).
+    fn cha_subday(&mut self, _day: Day, _ich: usize, _gis_id: i32, _name: &str, _flo: &[f32]) {}
 
     /// One aquifer's day (`aquifer_day.txt`): its 1-based number, GIS id, name and state.
     fn aqu_day(&mut self, _day: Day, _iaq: usize, _gis_id: i32, _name: &str, _d: &crate::route::AquDay) {}
@@ -463,6 +487,10 @@ pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -
                     _ => None,
                 }
             };
+            // sim_initday
+            for v in saved.ubnrunoff.iter_mut() {
+                *v = 0.0;
+            }
             for (j, (ist, o, plaps, tlaps)) in hrus.iter().enumerate() {
                 let Some(st) = weather.stations.get(ist - 1) else { continue };
                 let s = &st.weat;
@@ -477,6 +505,13 @@ pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -
                     rhum: s.rhum,
                     phubase0: s.phubase0,
                     atmo: atmo_day(*ist),
+                    ts: {
+                        let mut ts = [0.0_f32; crate::hru::subdaily::MAX_STEP];
+                        for (t, v) in ts.iter_mut().zip(&s.ts) {
+                            *t = *v;
+                        }
+                        ts
+                    },
                 };
                 if lapse {
                     w.precip = (w.precip + plaps).max(0.0);
@@ -521,7 +556,7 @@ pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -
                     hd = Some(d);
                 }
                 if let (Some(n), Some(d)) = (network.as_mut(), hd.as_ref()) {
-                    n.set_hru(j, &d.hd);
+                    n.set_hru(j, &d.hd, &d.hhsurfq);
                     hru_wb[j] = [d.wb.snomlt, d.wb.surq_gen, d.wb.latq, d.wb.wateryld];
                 }
                 if printing {
@@ -605,7 +640,11 @@ pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -
                         }
                         basin_aqu_acc.day(&ba, &pday, |p, d| out.basin_aqu(Some(p), day, &bsn_name, d));
                     }
+                    let steps = n.channel_steps();
                     for (k, (ich, gis_id, name, w, st, i, o, wtemp)) in n.channels().into_iter().enumerate() {
+                        if printing && let Some((_, _, _, flo)) = steps.get(k) {
+                            out.cha_subday(day, ich, gis_id, name, flo);
+                        }
                         if printing {
                             out.cha_day(day, ich, gis_id, name, &w, &st, &i, &o, wtemp);
                         }

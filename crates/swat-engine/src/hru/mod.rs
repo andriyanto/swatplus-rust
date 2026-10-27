@@ -13,6 +13,7 @@ pub mod mgt;
 pub mod nutrient;
 pub mod plant;
 pub mod septic;
+pub mod subdaily;
 pub mod wetland;
 
 use std::ops::Add;
@@ -237,6 +238,8 @@ pub struct Hru {
     /// A septic system, when its type is operated, and its type's operation today.
     pub septic: Option<septic::Septic>,
     pub sep_opt: i32,
+    /// Sub-daily steps (Green and Ampt), when `time.sim` asks for them.
+    pub sub: Option<subdaily::SubDaily>,
     /// Tile flow and its nitrate held back (`bss(3)`, `bss(4)`).
     pub bss_tile: f32,
     pub bss_tno3: f32,
@@ -392,6 +395,8 @@ pub struct HruDay {
     pub hd: [crate::hyd::Hyd; 5],
     /// Today's harvests (plant number in the community, yield in kg/ha for the basin's crops).
     pub harvests: Vec<(usize, f32)>,
+    /// The surface runoff leaving by time step (mm, `hhsurfq` after the lag); empty when daily.
+    pub hhsurfq: Vec<f32>,
 }
 
 /// What an HRU's day needs besides its weather: the day of the year, its station's unadjusted
@@ -504,6 +509,8 @@ pub struct HruBasin {
     pub plant: PlantBasin,
     pub nut: NutBasin,
     pub carbon: Option<carbon::CarbonBasin>,
+    /// The sub-daily steps' parameters.
+    pub sub: subdaily::SubBasin,
     /// Correct SWAT+'s bugs instead of reproducing them (`RunOptions::fixes`).
     pub fixes: bool,
 }
@@ -532,6 +539,14 @@ impl HruBasin {
             plant: PlantBasin::new(project),
             nut: NutBasin::new(project),
             carbon: if project.codes.cswat == 2 { Some(carbon::CarbonBasin::new(project)) } else { None },
+            sub: subdaily::SubBasin {
+                cn_froz: project.params.get("cn_froz").unwrap_or(0.000862),
+                urb_init_abst: project.params.get("urb_init_abst").unwrap_or(0.0),
+                eros_spl: project.params.get("eros_spl").unwrap_or(0.0),
+                rill_mult: project.params.get("rill_mult").unwrap_or(0.0),
+                eros_expo: project.params.get("eros_expo").unwrap_or(0.0),
+                c_factor: project.params.get("c_factor").unwrap_or(0.0),
+            },
             fixes: false,
         }
     }
@@ -656,14 +671,17 @@ pub fn init_hrus(
     if codes.cswat != 0 && codes.cswat != 2 {
         return Err(format!("carbon model {}", codes.cswat));
     }
-    if step > 1 {
-        return Err("sub-daily time steps".into());
+    if step > 1 && codes.gampt != 1 {
+        return Err("sub-daily time steps with the curve number (unit hydrographs)".into());
+    }
+    if step <= 1 && codes.gampt != 0 {
+        return Err("Green and Ampt infiltration with daily time steps".into());
+    }
+    if step > 96 {
+        return Err(format!("{step} time steps a day (the port keeps up to 96)"));
     }
     if !(0..=2).contains(&codes.pet) {
         return Err(format!("potential ET method {} (read from a file)", codes.pet));
-    }
-    if codes.gampt != 0 {
-        return Err("Green and Ampt infiltration".into());
     }
     if codes.crk != 0 {
         return Err("crack flow".into());
@@ -688,6 +706,35 @@ pub fn init_hrus(
         h.wgn = wgn.get(i).copied().unwrap_or(0);
         init_bmix(&mut h, &bmix);
         time_conc(&mut h, surlag);
+        if step > 1 {
+            if h.urban.is_some() {
+                return Err(format!("{}: urban HRU with sub-daily steps (hru_urbanhr)", hd.name));
+            }
+            let dtm = 1440.0 / step as f32;
+            // time_conc_init: the share of runoff that leaves in a step.
+            h.brt = 1.0 - (-surlag / (h.tconc / (dtm / 60.0))).exp();
+            // soil_phys_init: the top layer's sand from clay and silt, for the infiltration.
+            let l1 = &mut h.layers[0];
+            l1.sand = 100.0 - l1.clay - l1.silt;
+            let wfsh = subdaily::wfsh(l1.por, l1.clay, l1.sand);
+            // plant_init: the community's average log of the minimum C factor.
+            let mut cvm_com = 0.0_f32;
+            for pl in &h.plants {
+                cvm_com += pl.db.cvm;
+            }
+            if !h.plants.is_empty() {
+                cvm_com /= h.plants.len() as f32;
+            }
+            h.sub = Some(subdaily::SubDaily {
+                step: step as usize,
+                dtm,
+                wfsh,
+                cvm_com,
+                bs_q: vec![0.0; step as usize],
+                bs_sed: vec![0.0; step as usize],
+                ..Default::default()
+            });
+        }
         out.push(h);
     }
     // et_act takes the wetland's evaporation coefficient from `wet_hyd(ihyd)`: the HRU numbered
@@ -1532,8 +1579,42 @@ impl Hru {
         self.sep_opt = self.septic.as_ref().map_or(0, |s| saved.septic_opt[s.isep]);
         self.soil_temperature(w, albday, c.tmp_an, c.yrc);
 
+        // The steps' rain (`w%ts`), which the canopy and snow change; the day's isn't, then.
+        let nstep = self.sub.as_ref().map_or(0, |s| s.step);
+        let mut ts: Vec<f32> = w.ts[..nstep].to_vec();
+
         // sq_canopyint
-        if !(self.lai_sum < 0.001 || self.laimx_sum < 0.001) {
+        if nstep > 0 {
+            if !(self.lai_sum < 0.001 || self.laimx_sum < 0.001) {
+                let canstori0 = self.canstor;
+                let canmxl = self.canmx * self.lai_sum / self.laimx_sum;
+                for t in ts.iter_mut() {
+                    let xx = *t;
+                    *t -= canmxl - self.canstor;
+                    if *t < 0.0 {
+                        self.canstor += xx;
+                        *t = 0.0;
+                    } else {
+                        self.canstor = canmxl;
+                    }
+                }
+                // The water the canopy took is taken from the steps again, against the station's
+                // rain.
+                if self.canstor > canstori0 {
+                    let mut canstori = canstori0;
+                    for (ii, t) in ts.iter_mut().enumerate() {
+                        let xx = w.ts[ii];
+                        *t -= self.canstor - canstori;
+                        if *t < 0.0 {
+                            canstori += xx;
+                            *t = 0.0;
+                        } else {
+                            canstori = self.canstor;
+                        }
+                    }
+                }
+            }
+        } else if !(self.lai_sum < 0.001 || self.laimx_sum < 0.001) {
             let canmxl = self.canmx * self.lai_sum / self.laimx_sum;
             if precip_eff < canmxl - self.canstor {
                 self.canstor += precip_eff;
@@ -1553,6 +1634,9 @@ impl Hru {
             self.sno_mm += precip_eff;
             snofall = precip_eff;
             precip_eff = 0.0;
+            for t in ts.iter_mut() {
+                *t = 0.0;
+            }
         }
         if w.tmax > s.melttmp && self.sno_mm > 0.0 {
             let smfac = (s.meltmx + s.meltmn) / 2.0 + ((c.day - 81) as f32 / 58.09).sin() * (s.meltmx - s.meltmn) / 2.0;
@@ -1572,6 +1656,9 @@ impl Hru {
             }
             self.sno_mm -= snomlt;
             precip_eff += snomlt;
+            for t in ts.iter_mut() {
+                *t += snomlt / nstep as f32;
+            }
             if precip_eff < 0.0 {
                 precip_eff = 0.0;
             }
@@ -1601,9 +1688,19 @@ impl Hru {
         // surface: daily curve number, runoff when there is enough water, erosion. Not for a
         // wetland: its runoff is what it releases, and its curve number is never set.
         let is_wet = self.wet.is_some();
-        let cnday = if is_wet { 0.0 } else { self.daily_cn(b.cn_froz) };
+        let mut cnday = if is_wet { 0.0 } else { self.daily_cn(b.cn_froz) };
         let mut surfq = 0.0_f32;
-        if precip_eff > 0.1 && !is_wet {
+        // The steps' runoff before the lag (`hhqday`) and leaving the land (`hhsurfq`).
+        let mut hhqday = vec![0.0_f32; nstep];
+        let mut hhsurfq = vec![0.0_f32; nstep];
+        if nstep > 0 && saved.ubnrunoff.len() != nstep {
+            saved.ubnrunoff = vec![0.0; nstep];
+        }
+        if precip_eff > 0.1 && !is_wet && nstep > 0 {
+            // sq_greenampt
+            let sta_ts: Vec<f32> = w.ts[..nstep].to_vec();
+            surfq = self.green_ampt(&ts, &sta_ts, &mut cnday, pet_day, &b.sub, &mut saved.ubnrunoff, &mut hhqday, &mut hhsurfq);
+        } else if precip_eff > 0.1 && !is_wet {
             let r2 = 25400.0 / cnday - 254.0;
             let bb = 0.2 * r2;
             let pb = precip_eff - bb;
@@ -1631,10 +1728,19 @@ impl Hru {
             // wetland_control
             surfq = self.wetland_control(w.precip, c.mo, c.station_tave, &b.nut, &mut nd);
             inflpcp = self.wet.as_ref().map_or(0.0, |wt| wt.water_seep).max(0.0);
+            // The release spread evenly over the steps.
+            for v in hhsurfq.iter_mut() {
+                *v = surfq / nstep as f32;
+            }
         } else {
             surfq += self.irr_runoff;
             self.erosion(surfq.max(0.0), surfq, w.precip, c.precip_half_hr, &b.nut, &mut nd);
             inflpcp = (precip_eff - surfq).max(0.0);
+        }
+        // ero_ovrsed: the sediment by step, which replaces the day's after the lag.
+        let mut hhsedy = vec![0.0_f32; nstep];
+        if nstep > 0 && !is_wet && surfq.max(0.0) > 1.0e-6 && nd.qp_cms > 1.0e-6 {
+            hhsedy = self.ero_ovrsed(&w.ts[..nstep], &hhqday, &b.sub);
         }
 
         // swr_percmain (a wetland's irrigation went into the pond)
@@ -1753,13 +1859,23 @@ impl Hru {
         let brt = self.brt;
         let mut lagged = [nd.sedyld, nd.sedorgn, nd.sedorgp, nd.surqno3, nd.surqsolp, nd.sedminpa, nd.sedminps];
         for (k, v) in lagged.iter_mut().enumerate() {
+            if k == 0 && nstep > 0 {
+                // By step: the steps' sediment is lagged and replaces the day's, which the store
+                // takes once a step.
+                for _ in 0..nstep {
+                    self.surf_bs_sed[0] = (self.surf_bs_sed[0] + *v).max(1.0e-9);
+                }
+                *v = self.lag_sediment(&mut hhsedy);
+                continue;
+            }
             self.surf_bs_sed[k] = (self.surf_bs_sed[k] + *v).max(1.0e-9);
             *v = self.surf_bs_sed[k] * brt;
             self.surf_bs_sed[k] -= *v;
         }
         // The sediment released is taken from its store twice (once after computing it, once
-        // with the other constituents), so the store goes negative after a sediment day.
-        if !b.fixes {
+        // with the other constituents), so the store goes negative after a sediment day. By
+        // steps it is taken once, with the other constituents.
+        if !b.fixes || nstep > 0 {
             self.surf_bs_sed[0] -= lagged[0];
         }
         // The detached sediment classes come only from lateral flow (`swr_latsed`, none so far):
@@ -1832,9 +1948,14 @@ impl Hru {
         }
 
         // sq_surfst
-        self.surf_bs = (self.surf_bs + surfq).max(1.0e-6);
-        let qday = self.surf_bs * self.brt;
-        self.surf_bs -= qday;
+        let qday = if nstep > 0 {
+            self.lag_runoff(&mut hhsurfq)
+        } else {
+            self.surf_bs = (self.surf_bs + surfq).max(1.0e-6);
+            let q = self.surf_bs * self.brt;
+            self.surf_bs -= q;
+            q
+        };
 
         let mut qdr = qday + latq + qtile;
         if qdr < 0.0 {
@@ -1991,7 +2112,7 @@ impl Hru {
             percn: nd.percn,
             ..HruLs::default()
         };
-        HruDay { wb, pw, nb, ls, nutrients: b.cswat == 0 || b.cswat == 2, hd, harvests: std::mem::take(&mut self.harvests) }
+        HruDay { wb, pw, nb, ls, nutrients: b.cswat == 0 || b.cswat == 2, hd, harvests: std::mem::take(&mut self.harvests), hhsurfq }
     }
 
     /// `time_control` at the end of a year: perennials age, the original carbon model's soil is
