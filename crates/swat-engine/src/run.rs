@@ -315,11 +315,11 @@ pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -
     let (mut atmo_ts, mut atmo_first) = (0_i32, true);
     if let Some(a) = atmo {
         let (yrc0, mo0) = (project.time.yrc_start, clock.mo);
-        if a.timestep == "yr" {
-            if let Some(iyr) = (1..=a.num as i32).find(|&iyr| a.yr_init + iyr - 1 == yrc0) {
-                atmo_ts = iyr;
-                atmo_first = false;
-            }
+        if a.timestep == "yr"
+            && let Some(iyr) = (1..=a.num as i32).find(|&iyr| a.yr_init + iyr - 1 == yrc0)
+        {
+            atmo_ts = iyr;
+            atmo_first = false;
         }
         if a.timestep == "mo" {
             let (mut iyrc, mut imo) = (a.yr_init, a.mo_init);
