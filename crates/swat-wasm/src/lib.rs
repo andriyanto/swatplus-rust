@@ -34,10 +34,7 @@ impl Options {
 pub fn run_tar(input: &[u8], opts: Options, progress: Box<dyn FnMut(usize, usize)>) -> Vec<u8> {
     let mut files: Vec<(String, Vec<u8>)> = Vec::new();
     let mut notes: Vec<String> = Vec::new();
-    let error = match run_inner(input, opts, progress, &mut files, &mut notes) {
-        Ok(()) => None,
-        Err(e) => Some(e),
-    };
+    let error = run_inner(input, opts, progress, &mut files, &mut notes).err();
     let q = swat_output::progress::quote;
     let notes_json: Vec<String> = notes.iter().map(|n| q(n)).collect();
     let tables: Vec<String> = files.iter().map(|(n, _)| q(n)).collect();
