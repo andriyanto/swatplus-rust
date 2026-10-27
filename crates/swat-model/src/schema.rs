@@ -479,6 +479,21 @@ pub const RES_HYD: &[Field] = &[
     f("br2", R, "0."),
 ];
 
+/// `septic.sep` (`septic_db`): the effluent of a septic tank type.
+pub const SEPTIC_SEP: &[Field] = &[
+    f("name", T, ""),
+    f("q_rate", R, "0."),
+    f("bod", R, "0."),
+    f("tss", R, "0."),
+    f("nh4_n", R, "0."),
+    f("no3_n", R, "0."),
+    f("no2_n", R, "0."),
+    f("org_n", R, "0."),
+    f("min_p", R, "0."),
+    f("org_p", R, "0."),
+    f("fcoli", R, "0."),
+];
+
 /// `filterstrip.str` (`filtstrip_operation`).
 pub const FSTRIP: &[Field] = &[f("name", T, ""), f("flag", I, "0"), f("fld_vfs", R, "0."), f("con_vfs", R, "0."), f("cha_q", R, "0.")];
 

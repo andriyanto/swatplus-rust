@@ -210,6 +210,8 @@ impl Hru {
     /// SWAT+ `nut_nminrl`: humus mineralization, soil residue decomposition and denitrification.
     /// The top layer's rates use the second layer's water and temperature.
     pub(super) fn nut_nminrl(&mut self, b: &NutBasin, nd: &mut NutDay) {
+        // No denitrification in an active septic biozone (`sep_biozone` denitrifies it).
+        let sep_bz = self.septic.as_ref().filter(|_| self.sep_opt == 1).map_or(usize::MAX, |s| s.bz);
         for k in 0..self.layers.len() {
             let kk = if k == 0 { 1.min(self.layers.len() - 1) } else { k };
             let (st, fc, tmp) = (self.layers[kk].st, self.layers[kk].fc, self.layers[kk].tmp);
@@ -265,20 +267,24 @@ impl Hru {
                 l.hsta.p += 0.2 * decomp.p;
             }
             let l = &mut self.layers[k];
-            let wdn = if sut >= b.sdnco { l.no3 * (1.0 - (-b.cdn * cdg * l.cbn / 100.0).exp()) } else { 0.0 };
-            l.no3 = (l.no3 - wdn).max(0.0001);
-            nd.denit += wdn;
+            if k != sep_bz {
+                let wdn = if sut >= b.sdnco { l.no3 * (1.0 - (-b.cdn * cdg * l.cbn / 100.0).exp()) } else { 0.0 };
+                l.no3 = (l.no3 - wdn).max(0.0001);
+                nd.denit += wdn;
+            }
         }
     }
 
     /// SWAT+ `nut_nitvol`: nitrification and volatilization of ammonium.
     pub(super) fn nut_nitvol(&mut self) {
         let cecf = 0.15_f32;
+        // An active septic biozone keeps its ammonium (`sep_biozone` nitrifies it).
+        let bz = self.septic.as_ref().filter(|_| self.sep_opt == 1).map_or(usize::MAX, |s| s.bz);
         for k in 0..self.layers.len() {
             let xx = if k == 0 { 0.0 } else { self.layers[k - 1].d };
             let l = &mut self.layers[k];
             let tf = 0.41 * (l.tmp - 5.0) / 10.0;
-            if l.nh4 > 0.0 && tf >= 0.001 {
+            if l.nh4 > 0.0 && tf >= 0.001 && k != bz {
                 let sw25 = l.wpmm + 0.25 * l.fc;
                 let swwp = l.wpmm + l.st;
                 let swf = if swwp < sw25 { (swwp - l.wpmm) / (sw25 - l.wpmm) } else { 1.0 };
@@ -580,7 +586,12 @@ impl Hru {
         }
         let ldrain = self.tile.map_or(0, |t| t.ldrain);
         let qtile = self.qtile;
+        // A septic biozone layer keeps its soluble P (`sep_biozone` moves it).
+        let sep_bz = self.septic.as_ref().map_or(usize::MAX, |s| s.bz);
         for ly in 0..nly {
+            if ly == sep_bz {
+                continue;
+            }
             let l = &mut self.layers[ly];
             let vap = -l.prk / (0.01 * l.st + 0.1 * b.pperco * l.bd);
             let mut plch = 0.001 * l.lab * (1.0 - exp_w(vap));

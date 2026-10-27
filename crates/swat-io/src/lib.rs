@@ -17,6 +17,7 @@ pub mod print;
 pub mod project;
 pub mod recall;
 pub mod routing;
+pub mod septic;
 pub mod source;
 pub mod table;
 pub mod time;

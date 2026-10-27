@@ -576,6 +576,30 @@ def ps_bmp(base, dst):
     print(f"{os.path.basename(dst)}: filter strips, grassed waterways, user practice")
 
 
+def ps_septic(base, dst):
+    """A copy of project `base` with septic systems under the villages of its dry fields."""
+    if os.path.exists(dst):
+        shutil.rmtree(dst)
+    shutil.copytree(base, dst)
+    path = os.path.join(dst, "septic.str")
+    lines = read(path)
+    h = lines[1].split()
+    for i in range(2, len(lines)):
+        if lines[i].startswith("standard"):
+            # Operated, for a household of four (BPS); the editor's biozone 0.5 m deep and
+            # 50 mm thick (Jeong et al. 2011).
+            lines[i] = set_field(set_field(lines[i], h.index("operation"), "1"), h.index("residents"), "4.00000")
+    write(path, lines)
+    path = os.path.join(dst, "landuse.lum")
+    lines = read(path)
+    h = lines[1].split()
+    for i in range(2, len(lines)):
+        if lines[i].startswith("agrr_lum"):
+            lines[i] = set_field(lines[i], h.index("sep"), "standard")
+    write(path, lines)
+    print(f"{os.path.basename(dst)}: septic systems in the dry fields")
+
+
 if __name__ == "__main__":
     src, out = sys.argv[1], sys.argv[2]
     os.makedirs(out, exist_ok=True)
@@ -585,3 +609,4 @@ if __name__ == "__main__":
     ps_atmo(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_atmo"))
     ps_tile(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_tile"))
     ps_bmp(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_bmp"))
+    ps_septic(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_septic"))

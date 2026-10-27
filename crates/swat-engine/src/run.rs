@@ -305,7 +305,8 @@ pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -
     let mut hru_wb = vec![[0.0_f32; 4]; hrus.len()];
     let basin = HruBasin::new(project).with_fixes(opts.fixes);
     let mut balance_started = false;
-    let mut saved = Saved { rndseed_cond: weather.rndseed_cond, ..Saved::default() };
+    let mut saved =
+        Saved { rndseed_cond: weather.rndseed_cond, septic_opt: project.septic.iter().map(|s| s.opt).collect(), ..Saved::default() };
     // cli_read_atmodep: the deposition station of each weather station, and the time step of
     // the first day (`atmodep_cont%ts`, `first`).
     let atmo = project.atmodep.as_ref();
@@ -504,6 +505,7 @@ pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -
                         precip_half_hr: s.precip_half_hr,
                         station_precip: s.precip,
                         day_end_yr: clock.day_end_yr,
+                        yrc: clock.yrc,
                         end_yr: clock.day == clock.day_end_yr,
                     };
                     let mut d = h.day(&w, &ctx, &basin, &mut saved);

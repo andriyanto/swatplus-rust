@@ -54,11 +54,52 @@ slope), and its generic farmland the editor's `bmpusr1` (20 % of each). Every ta
 SWAT+; the basin's sediment yield falls from 0.52 to 0.18 t/ha a year, its organic N from 69 to
 39 kg/ha.
 
+## Septic systems (`septic.str`)
+
+An HRU has a septic system when its land use names a `septic.str` row whose `operation` is 1
+(active) or 2 (failing). `soils_init` cuts a biozone layer `thk_bioz` thick at `dp_bioz` into its
+soil, and every day `sep_biozone` changes that layer's field capacity and saturation with the
+biozone's biomass and plaque, and moves its ammonium and soluble P down. The port follows SWAT+
+bit for bit, and so does what SWAT+ gets wrong:
+
+- **No effluent ever reaches the biozone**: the septic tank's daily flow (`qstemm`) is only
+  zeroed, never set from the residents, the systems' density or `septic.sep`, so neither water
+  nor its BOD, nitrogen, phosphorus or bacteria are added.
+- **The biozone fails on its first day and then seals the soil**: its saturation is reset to
+  `porosity · thk_bioz` (a few tens of mm) while it keeps the field capacity of the whole layer it
+  was cut from, so unless that layer was thin it is at or under field capacity at once, and the
+  system turns failing. A
+  failing biozone's percolation time is 10¹⁰ h: almost nothing drains through it. It isn't
+  repaired: the days since failure are only counted once they are above 0, and nothing starts
+  them.
+- **The operation is the septic type's, not the HRU's**: when one HRU's biozone fails, every HRU
+  with that `septic.str` row fails with it, from the next one computed that day.
+- **The split layers keep the original layer's water and capacities in mm** (`layersplit` copies
+  the layer and changes only depth and thickness), so a split soil holds more water.
+- **When the biozone starts within an inch of a layer's top, `i_sep` is the layer below it**,
+  and that layer is the one treated as the biozone.
+- **The soil is kept warmer from the biozone down** (under 10 °C, nine tenths of the difference
+  is taken off) once the system's first year has come, and an active biozone is left out of
+  `nut_nitvol`'s nitrification and `nut_nminrl`'s denitrification; any biozone layer is left out
+  of soluble P leaching.
+
+A system whose biozone would be the last layer, or the first two, is refused (SWAT+ would read
+outside the soil), as are septic systems with the carbon model (`cswat` 1 or 2).
+
+**Ps_septic** (`scripts/make-pessel-variants.py`) is Ps_coast with the editor's `standard`
+system, operated, under its 12 dry-field HRUs (households of four; a biozone 0.5 m deep and
+50 mm thick, the defaults of Jeong et al.'s biozone model). Every table matches SWAT+: on those
+HRUs percolation falls from about 1,350 mm a year to nothing and surface runoff rises from 270 to
+1,590 mm. Until SWAT+ sets the effluent, a septic system there only seals the soil.
+
 ## Sources
 
 - Arnold, J. G., et al. (2012). *SWAT input/output file documentation, version 2012*, chapter
   33 (management: filter strips, grassed waterways, user-defined BMPs). Texas A&M.
   https://swat.tamu.edu/media/69398/ch33_input_ops.pdf
+- Jeong, J., Santhi, C., Arnold, J. G., Srinivasan, R., Pradhan, S., & Flynn, K. (2011).
+  Development of algorithms for modeling onsite wastewater systems within SWAT. *Transactions
+  of the ASABE*, 54(5), 1693–1704. https://doi.org/10.13031/2013.39849
 - White, M. J., & Arnold, J. G. (2009). Development of a simplistic vegetative filter strip
   model for sediment and nutrient retention at the field scale. *Hydrological Processes*, 23,
   1602–1616. https://doi.org/10.1002/hyp.7291

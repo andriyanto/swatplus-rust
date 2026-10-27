@@ -12,6 +12,7 @@ pub mod carbon;
 pub mod mgt;
 pub mod nutrient;
 pub mod plant;
+pub mod septic;
 pub mod wetland;
 
 use std::ops::Add;
@@ -225,6 +226,9 @@ pub struct Hru {
     pub qtile: f32,
     /// Filter strips, grassed waterways and user-defined practices.
     pub bmps: bmp::Bmps,
+    /// A septic system, when its type is operated, and its type's operation today.
+    pub septic: Option<septic::Septic>,
+    pub sep_opt: i32,
     /// Tile flow and its nitrate held back (`bss(3)`, `bss(4)`).
     pub bss_tile: f32,
     pub bss_tno3: f32,
@@ -400,6 +404,7 @@ pub struct DayCtx {
     /// The station's precipitation (mm), and the year's last day.
     pub station_precip: f32,
     pub day_end_yr: i32,
+    pub yrc: i32,
     pub end_yr: bool,
 }
 
@@ -859,10 +864,6 @@ fn init_hru(
 ) -> Result<Hru, String> {
     let n = &hd.name;
     let (lu, lu_found) = Row::find_or_first(project.landuse.as_ref(), schema::LANDUSE, &hd.land_use_mgt);
-    let v = lu.text("septic");
-    if lu_found && !is_null(v) && !v.is_empty() {
-        return Err(format!("{n}: land use {} has septic {v}", hd.land_use_mgt));
-    }
 
     let mut h = Hru {
         area_ha: ob.area_ha,
@@ -989,6 +990,29 @@ fn init_hru(
         .find(|s| swat_model::table::fortran_eq(&s.name, &hd.soil))
         .ok_or_else(|| format!("{n}: soil {} not found", hd.soil))?;
     soil_layers(&mut h, soil, project.soil_lyr_depths.as_deref())?;
+    // proc_hru and soils_init: an operated septic system's biozone layer.
+    let sep_name = lu.text("septic");
+    if lu_found
+        && let Some(isep) = (1..project.septic.len()).find(|&k| project.septic[k].name == sep_name)
+        && project.septic[isep].opt != 0
+    {
+        let s = &project.septic[isep];
+        if project.codes.cswat != 0 {
+            return Err(format!("{n}: septic system with carbon model {}", project.codes.cswat));
+        }
+        let bz = septic::biozone(&mut h.layers, s).map_err(|e| format!("{n}: {e}"))?;
+        let mut eff = [0.0_f32; 10];
+        if let Some(t) = project.septic_sep.as_ref()
+            && s.typ >= 1
+            && (s.typ as usize) <= t.rows.len()
+        {
+            let r = s.typ as usize - 1;
+            for (k, f) in ["q_rate", "bod", "tss", "nh4_n", "no3_n", "no2_n", "org_n", "min_p", "org_p", "fcoli"].iter().enumerate() {
+                eff[k] = t.real(r, f).unwrap_or(0.0);
+            }
+        }
+        h.septic = Some(septic::Septic { isep, yr: s.yr, tfail: s.tfail, r: s.r, eff, bz, ..Default::default() });
+    }
 
     // plant_init: the community named by the land use (none when the name isn't in plant.ini).
     let com = if lu_found && !is_null(lu.text("plant_cov")) {
@@ -1484,7 +1508,8 @@ impl Hru {
         let eaj = (-5.0e-5_f32 * (cover + 0.1)).exp();
         let albday = if self.sno_mm <= 0.5 { if self.lai_sum > 0.0 { 0.23 * (1.0 - eaj) + alb1 * eaj } else { alb1 } } else { 0.8 };
 
-        self.soil_temperature(w, albday, c.tmp_an);
+        self.sep_opt = self.septic.as_ref().map_or(0, |s| saved.septic_opt[s.isep]);
+        self.soil_temperature(w, albday, c.tmp_an, c.yrc);
 
         // sq_canopyint
         if !(self.lai_sum < 0.001 || self.laimx_sum < 0.001) {
@@ -1613,6 +1638,13 @@ impl Hru {
         }
         self.nut_nitvol();
         self.nut_pminrl(&b.nut, &mut nd);
+        // sep_biozone
+        if let Some(sp) = self.septic.as_mut() {
+            let opt = &mut saved.septic_opt[sp.isep];
+            if *opt != 0 && c.yrc >= sp.yr && self.layers[sp.bz].tmp > 0.0 {
+                septic::sep_biozone(sp, &mut self.layers, self.area_ha, opt);
+            }
+        }
 
         // pl_community and pl_grow
         let mut pd = PlantDay { ep_max, pet_day, vpd, ..PlantDay::default() };
@@ -2081,7 +2113,7 @@ impl Hru {
     }
 
     /// SWAT+ `stmp_solt`: daily soil temperature by layer.
-    fn soil_temperature(&mut self, w: &HruWeather, albday: f32, tmp_an: f32) {
+    fn soil_temperature(&mut self, w: &HruWeather, albday: f32, tmp_an: f32, yrc: i32) {
         let tlag = 0.8_f32;
         let avbd = self.avbd;
         let mut f = avbd / (avbd + 686.0 * (-5.63_f32 * avbd).exp());
@@ -2105,12 +2137,17 @@ impl Hru {
         let tcov = bcv * tmp2 + (1.0 - bcv) * tbare;
         let tmp_srf = 0.5 * (tbare + tcov);
         let mut xx = 0.0_f32;
-        for l in self.layers.iter_mut() {
+        // Below the top of a septic biozone the soil is kept warmer.
+        let sep_from = self.septic.as_ref().filter(|s| self.sep_opt != 0 && yrc >= s.yr).map_or(usize::MAX, |s| s.bz);
+        for (k, l) in self.layers.iter_mut().enumerate() {
             let mut zd = (xx + l.d) / 2.0;
             zd /= dd;
             let df = zd / (zd + (-0.8669_f32 - 2.0775 * zd).exp());
             l.tmp = tlag * l.tmp + (1.0 - tlag) * (df * (tmp_an - tmp_srf) + tmp_srf);
             xx = l.d;
+            if k >= sep_from && l.tmp < 10.0 {
+                l.tmp = 10.0 - (10.0 - l.tmp) * 0.1;
+            }
         }
     }
 
@@ -2392,9 +2429,29 @@ impl Hru {
             latlyr = sw_excess;
         }
         l.hk = (l.ul - l.fc) / l.k;
+        // A septic biozone: active, its conductivity falls with its water; failing, it barely
+        // drains.
+        let bz = self.septic.as_ref().map(|s| s.bz);
+        let mut sol_k_sep = 0.0_f32;
+        if bz == Some(ly1) {
+            if self.sep_opt == 1 {
+                sol_k_sep = l.k * (l.st - l.fc) / (l.ul - l.fc);
+                sol_k_sep = sol_k_sep.max(1.0e-6);
+                sol_k_sep = sol_k_sep.min(l.k);
+                l.hk = (l.hk - l.fc) / sol_k_sep;
+            } else if self.sep_opt == 2 {
+                l.hk = 1.0e10;
+            }
+        }
         l.hk = l.hk.max(2.0);
         let mut sepday = (l.st - l.fc) * (1.0 - (-24.0_f32 / l.hk).exp());
         sepday = sepday.max(0.0);
+        if bz == Some(ly1) && self.sep_opt == 1 {
+            sepday = sepday.min(sol_k_sep * 24.0);
+            if let Some(s) = self.septic.as_mut() {
+                s.bz_perc = sepday;
+            }
+        }
         if ly1 == nly - 1 {
             sepday *= perco_lim;
         }

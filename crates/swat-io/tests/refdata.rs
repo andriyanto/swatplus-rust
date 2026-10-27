@@ -60,8 +60,9 @@ fn ames_sub1() {
     // no aquifers SWAT+ never opens it; neither does the loader. nutrients.sol is named but not
     // there: SWAT+ then uses its default soil nutrients. Nor is chem_app.ops: fertilizer then
     // goes on with element 0 of the chemical applications, all zero. Nor is urban.urb: no urban
-    // land types then. Nor is bmpuser.str: no user-defined practices.
-    assert_eq!(report.missing, ["nutrients.sol", "urban.urb", "chem_app.ops", "bmpuser.str"]);
+    // land types then. Nor are septic.sep and bmpuser.str: no septic effluents, no user-defined
+    // practices.
+    assert_eq!(report.missing, ["nutrients.sol", "urban.urb", "chem_app.ops", "septic.sep", "bmpuser.str"]);
     let mgt = p.management.iter().find(|m| m.name == "mgt_01").unwrap();
     assert_eq!(mgt.autos, ["irr_year_irr"]);
     assert_eq!(mgt.ops.len(), 305);
