@@ -695,9 +695,6 @@ pub fn init_hrus(
     if codes.cswat != 0 && codes.cswat != 2 {
         return Err(format!("carbon model {}", codes.cswat));
     }
-    if step > 1 && codes.gampt != 1 {
-        return Err("sub-daily time steps with the curve number (unit hydrographs)".into());
-    }
     if step <= 1 && codes.gampt != 0 {
         return Err("Green and Ampt infiltration with daily time steps".into());
     }
@@ -746,6 +743,7 @@ pub fn init_hrus(
             h.sub = Some(subdaily::SubDaily {
                 step: step as usize,
                 dtm,
+                ga: codes.gampt == 1,
                 wfsh,
                 cvm_com,
                 bs_q: vec![0.0; step as usize],
@@ -1744,6 +1742,7 @@ impl Hru {
 
         // The steps' rain (`w%ts`), which the canopy and snow change; the day's isn't, then.
         let nstep = self.sub.as_ref().map_or(0, |s| s.step);
+        let ga = self.sub.as_ref().is_some_and(|s| s.ga);
         let mut ts: Vec<f32> = w.ts[..nstep].to_vec();
 
         // sq_canopyint
@@ -1899,7 +1898,7 @@ impl Hru {
         let mut hhsurfq = vec![0.0_f32; nstep];
         // The impervious area's runoff by step (`varinit` zeroes it for each HRU).
         let mut ubnrunoff = vec![0.0_f32; nstep];
-        if precip_eff > 0.1 && !is_wet && nstep > 0 {
+        if precip_eff > 0.1 && !is_wet && ga {
             // sq_greenampt
             let sta_ts: Vec<f32> = w.ts[..nstep].to_vec();
             surfq = self.green_ampt(&ts, &sta_ts, &mut cnday, pet_day, &b.sub, &mut ubnrunoff, &mut hhqday, &mut hhsurfq);
@@ -1944,7 +1943,7 @@ impl Hru {
         }
         // ero_ovrsed: the sediment by step, which replaces the day's after the lag.
         let mut hhsedy = vec![0.0_f32; nstep];
-        if nstep > 0 && !is_wet && surfq.max(0.0) > 1.0e-6 && nd.qp_cms > 1.0e-6 {
+        if ga && !is_wet && surfq.max(0.0) > 1.0e-6 && nd.qp_cms > 1.0e-6 {
             hhsedy = self.ero_ovrsed(&w.ts[..nstep], &hhqday, &b.sub);
         }
 
@@ -2158,7 +2157,7 @@ impl Hru {
         }
 
         // sq_surfst
-        let qday = if nstep > 0 {
+        let qday = if ga {
             self.lag_runoff(&mut hhsurfq)
         } else {
             self.surf_bs = (self.surf_bs + surfq).max(1.0e-6);

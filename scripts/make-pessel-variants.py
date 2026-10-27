@@ -679,6 +679,49 @@ def ps_hourly(base, dst, years=(2015, 2017)):
     print(f"{os.path.basename(dst)}: hourly, Green-Ampt ({len(names)} precipitation files)")
 
 
+def ps_uh(base, dst):
+    """A copy of project `base` routed hourly with the daily curve number runoff (`gampt` 0):
+    each HRU's and routing unit's runoff is spread over the hours by its unit hydrograph, and
+    the channels are routed by the hour. The precipitation stays daily."""
+    if os.path.exists(dst):
+        shutil.rmtree(dst)
+    shutil.copytree(base, dst)
+    lines = read(os.path.join(dst, "time.sim"))
+    lines[2] = set_field(lines[2], 4, "24")
+    write(os.path.join(dst, "time.sim"), lines)
+    print(f"{os.path.basename(dst)}: hourly, curve number and unit hydrographs")
+
+
+def ps_gap(base, dst):
+    """A copy of the hourly project `base` with generated rain: one station's precipitation file
+    loses the hours of a few rainy days (-99, filled by `cli_pgenhr`), and another station has
+    no file at all (`sim`)."""
+    if os.path.exists(dst):
+        shutil.rmtree(dst)
+    shutil.copytree(base, dst)
+    p = lambda f: os.path.join(dst, f)
+    lines = read(p("weather-sta.cli"))
+    k = lines[1].split().index("pcp")
+    gap_file = None
+    for i in range(2, len(lines)):
+        t = lines[i].split()
+        if t and t[0] == "s2175s100875e":
+            gap_file = t[k]
+        if t and t[0] == "s2275s100875e":
+            lines[i] = set_field(lines[i], k, "sim")
+    write(p("weather-sta.cli"), lines)
+    # The hours from 17:00 of days 40, 41 and 300 of 2016 are missing.
+    src = read(p(gap_file))
+    out = src[:3]
+    for line in src[3:]:
+        t = line.split()
+        if len(t) == 6 and t[0] == "2016" and int(t[1]) in (40, 41, 300) and int(t[4]) >= 17:
+            line = line[:-12] + f"{-99.0:12.5f}"
+        out.append(line)
+    write(p(gap_file), out)
+    print(f"{os.path.basename(dst)}: hourly, gaps in {gap_file} and a generated station")
+
+
 def ps_pet(base, dst, years=(2015, 2017)):
     """A copy of project `base` whose PET is "read in" (`codes.bsn` pet 3), every station with
     the same measured PET file (pet.cli), a constant 4 mm a day."""
@@ -831,3 +874,5 @@ if __name__ == "__main__":
     ps_urbhr(os.path.join(out, "Ps_hourly"), os.path.join(out, "Ps_urbhr"))
     ps_pet(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_pet"))
     ps_cal(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_cal"))
+    ps_uh(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_uh"))
+    ps_gap(os.path.join(out, "Ps_hourly"), os.path.join(out, "Ps_gap"))

@@ -13,6 +13,9 @@ pub struct SubDaily {
     /// Time steps a day and their length (minutes, `time%dtm`).
     pub step: usize,
     pub dtm: f32,
+    /// Green and Ampt infiltration (`gampt` 1); otherwise the day's curve number runoff is
+    /// spread over the steps by a unit hydrograph when routed.
+    pub ga: bool,
     /// Wetting front suction (`wfsh`, mm), from the top layer's porosity, clay and sand.
     pub wfsh: f32,
     /// The plants' average log of their minimum C factor (`cvm_com`).

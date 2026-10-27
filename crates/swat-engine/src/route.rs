@@ -63,6 +63,9 @@ struct Ob {
     /// Sub-daily: the flow hydrograph by step of the days kept (`hyd_flo(day_max, step)`, flat),
     /// the current day (1-based, `day_cur`; 0 before the first) and the inflow by step (`tsin`).
     hyd_flo: Vec<f32>,
+    /// Sub-daily with the curve number: the unit hydrograph of an HRU or routing unit
+    /// (`uh(day_lag_mx, step)`, flat), from its time of concentration.
+    uh: Vec<f32>,
     day_cur: usize,
     day_max: usize,
     tsin: Vec<f32>,
@@ -82,6 +85,8 @@ struct Ru {
     ob: usize,
     da_km2: f32,
     elems: Vec<RuElem>,
+    /// Time of concentration (h, `ru_tc`).
+    tc: f32,
 }
 
 /// An aquifer's state (`aquifer_dynamic`), as `aquifer_day.txt` prints it.
@@ -179,6 +184,8 @@ pub struct Network {
     /// Time steps a day and their length (minutes); the HRUs' times of concentration and their
     /// runoff by step leaving today (Green and Ampt).
     step: usize,
+    /// Green and Ampt (`gampt` 1): the runoff by step; otherwise unit hydrographs.
+    ga: bool,
     dtm: f32,
     tconc: Vec<f32>,
     hhsurfq: Vec<Vec<f32>>,
@@ -235,6 +242,7 @@ impl Network {
                     subs: Vec::new(),
                     dfn_tot: 0,
                     hyd_flo: Vec::new(),
+                    uh: Vec::new(),
                     day_cur: 0,
                     day_max: 1,
                     tsin: Vec::new(),
@@ -359,7 +367,7 @@ impl Network {
                 }
             }
             ru_of[ob] = Some(iru);
-            rus.push(Ru { ob, da_km2, elems });
+            rus.push(Ru { ob, da_km2, elems, tc: ru_tc });
         }
 
         // aqu_initial
@@ -533,6 +541,25 @@ impl Network {
             o.hyd_flo = vec![0.0; o.day_max * step];
             o.tsin = vec![0.0; step];
         }
+        // unit_hyd_ru_hru: with the curve number, each HRU's and routing unit's unit hydrograph.
+        let ga = project.codes.gampt == 1;
+        if step > 1 && !ga {
+            let uhp = UhParams {
+                step,
+                dtm: 1440.0 / step as f32,
+                tb_adj: project.params.get("tb_adj").unwrap_or(0.0),
+                uhyd: project.codes.uhyd,
+                uhalpha: project.params.get("uhalpha").unwrap_or(1.0),
+            };
+            for (k, o) in obs.iter_mut().enumerate() {
+                if o.kind == ObjectKind::Hru {
+                    o.uh = unit_hyd(tconc.get(k).copied().unwrap_or(0.0), &uhp);
+                }
+            }
+            for r in &rus {
+                obs[r.ob].uh = unit_hyd(r.tc, &uhp);
+            }
+        }
         Ok(Some(Network {
             obs,
             order,
@@ -552,6 +579,7 @@ impl Network {
             recalls,
             rec_of,
             step,
+            ga,
             dtm: 1440.0 / step as f32,
             tconc: tconc.to_vec(),
             hhsurfq: vec![Vec::new(); n_hru],
@@ -577,6 +605,32 @@ impl Network {
 
     /// Moves the hydrograph of day `cur` on by `tinc` steps, the last into day `next`
     /// (`hru_hyds`, `ru_control`).
+    /// SWAT+ `flow_hyd_ru_hru`: `surfq` (m3) spread over today's and tomorrow's steps by the
+    /// object's unit hydrograph, tomorrow's first cleared. (The lateral and tile flow it is given
+    /// are left out.)
+    fn flow_hyd(o: &mut Ob, step: usize, surfq: f32) {
+        let day_max = o.day_max;
+        let mut iday_cur = o.day_cur;
+        let mut iday_prev = if o.day_cur <= 1 { day_max } else { o.day_cur - 1 };
+        for v in &mut o.hyd_flo[(iday_prev - 1) * step..iday_prev * step] {
+            *v = 0.0;
+        }
+        for iday in 1..=day_max {
+            for istep in 0..step {
+                let sq = o.uh.get((iday - 1) * step + istep).copied().unwrap_or(0.0) * surfq;
+                o.hyd_flo[(iday_cur - 1) * step + istep] += sq;
+            }
+            iday_cur += 1;
+            if iday_cur > day_max {
+                iday_cur = 1;
+            }
+            iday_prev += 1;
+            if iday_prev > day_max {
+                iday_prev = 1;
+            }
+        }
+    }
+
     fn shift(hyd: &mut [f32], step: usize, cur: usize, next: usize, tinc: usize) {
         let c = (cur - 1) * step;
         let n = (next - 1) * step;
@@ -630,12 +684,16 @@ impl Network {
 
     /// Sets HRU `j`'s hydrographs for today (0-based).
     pub fn set_hru(&mut self, j: usize, hd: &[Hyd; 5], hhsurfq: &[f32]) {
-        let (step, dtm) = (self.step, self.dtm);
+        let (step, dtm, ga) = (self.step, self.dtm, self.ga);
         let tconc = self.tconc.get(j).copied().unwrap_or(0.0);
         if let Some(o) = self.obs.get_mut(j) {
             o.hd.copy_from_slice(hd);
             Self::next_day(o);
-            if step > 1 {
+            if step > 1 && !ga {
+                // hru_hyds: the day's surface runoff spread by the unit hydrograph.
+                let surfq = o.hd[2].flo;
+                Self::flow_hyd(o, step, surfq);
+            } else if step > 1 {
                 // hru_hyds (Green and Ampt): the surface runoff by step, moved on by the time of
                 // concentration.
                 let cur = o.day_cur;
@@ -806,7 +864,7 @@ impl Network {
             // Green and Ampt: the unit's hydrograph is the element HRU's plus its runoff by step
             // (as m3/s), replaced by each element in turn, then moved on by a time of
             // concentration of 2 h.
-            if self.step > 1 && e.hru {
+            if self.step > 1 && self.ga && e.hru {
                 let (step, dtm) = (self.step, self.dtm);
                 let cur = self.obs[ob].day_cur;
                 let next = if cur + 1 > self.obs[ob].day_max { 1 } else { cur + 1 };
@@ -828,6 +886,11 @@ impl Network {
             }
         }
         self.obs[ob].hd.copy_from_slice(&hd);
+        // With the curve number: the unit's surface runoff spread by its unit hydrograph.
+        if self.step > 1 && !self.ga {
+            let step = self.step;
+            Self::flow_hyd(&mut self.obs[ob], step, hd[2].flo);
+        }
         self.ru_d[iru] = ru_d;
     }
 
@@ -953,4 +1016,59 @@ impl Network {
     pub fn routing_units(&self) -> impl Iterator<Item = (&str, &Hyd)> {
         self.rus.iter().zip(&self.ru_d).map(|(r, h)| (self.obs[r.ob].name.as_str(), h))
     }
+}
+
+/// What `unit_hyd` takes from the basin: the steps, the base time's adjustment (`tb_adj`, h),
+/// the hydrograph's shape (`uhyd` 0 triangular, 1 gamma) and the gamma's alpha.
+struct UhParams {
+    step: usize,
+    dtm: f32,
+    tb_adj: f32,
+    uhyd: i32,
+    uhalpha: f32,
+}
+
+/// SWAT+ `unit_hyd`: the dimensionless unit hydrograph over two days of steps for a time of
+/// concentration `tc` (h): a base time of `0.5 + 0.6 tc + tb_adj` h (at most 48), a peak at 3/8
+/// of it, integrated over a few points a step; a day's steps stop once the rate falls under
+/// 1e-4. Scaled to sum to 1 (flat, day by day).
+fn unit_hyd(tc: f32, p: &UhParams) -> Vec<f32> {
+    let step = p.step;
+    let mut uh = vec![0.0_f32; 2 * step];
+    let mut ql = 0.0_f32;
+    let mut sumq = 0.0_f32;
+    let mut tb = 0.5 + 0.6 * tc + p.tb_adj;
+    if tb > 48.0 {
+        tb = 48.0;
+    }
+    let tp = 0.375 * tb;
+    let mut t_tot = 0.0_f32;
+    let ts_base = ((tb / (p.dtm / 60.0)) as i32).max(1);
+    let t_inc = 20 / ts_base + 2;
+    let t_inc_hr = p.dtm / t_inc as f32 / 60.0;
+    let mut q = 0.0_f32;
+    for iday in 0..2 {
+        for istep in 0..step {
+            for _ in 0..t_inc {
+                t_tot += t_inc_hr;
+                if p.uhyd == 0 {
+                    q = if t_tot < tp { t_tot / tp } else { (tb - t_tot) / (tb - tp) };
+                }
+                if p.uhyd == 1 {
+                    q = crate::fortran::rpow(t_tot / tp, p.uhalpha) * ((1.0 - t_tot / tp) * p.uhalpha).exp();
+                }
+                q = q.max(0.0);
+                uh[iday * step + istep] += (q + ql) / 2.0;
+                sumq += (q + ql) / 2.0;
+                ql = q;
+            }
+            if q < 1.0e-4 {
+                break;
+            }
+        }
+    }
+    for v in uh.iter_mut() {
+        *v /= sumq;
+    }
+    uh
 }

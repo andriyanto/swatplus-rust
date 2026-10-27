@@ -28,9 +28,16 @@ time step (`time%step` a day, `time%dtm` = 1440 / step minutes). The port follow
   between storms); each step whose impervious runoff is above 0.025 mm/h washes the built-up
   solids off, and their nutrients replace that share of the HRU's.
 
-Not ported (`run` says so): sub-daily steps with the curve number (`gampt` 0, unit
-hydrographs) and generated sub-daily rain (`cli_pgenhr`, for stations without a file or gaps in
-it).
+- **The curve number with sub-daily routing** (`gampt` 0, `unit_hyd`, `flow_hyd_ru_hru`): the
+  HRUs keep the day's curve number runoff, and each HRU's and routing unit's surface runoff is
+  spread over today's and tomorrow's steps by a unit hydrograph of its time of concentration
+  (`codes.bsn` `uhyd` 0 triangular, 1 gamma with `parameters.bsn`'s `uhyd_alpha`; a base time of
+  `0.5 + 0.6 tc + adj_uhyd` hours, at most 48, peaking at 3/8 of it); the channels are routed by
+  step as with Green-Ampt.
+- **Generated rain by step** (`cli_pgenhr`), for a station without a precipitation file
+  (`sim`) or a gap (-99) in a sub-daily file: the day's rain as a storm rising and falling
+  exponentially around its peak, the peak rate twice the half-hour fraction of the generator,
+  lasting up to 24 hours.
 
 ## Quirks
 
@@ -66,6 +73,34 @@ it).
   only whole kilograms per hectare count, so in practice the impervious share has none and its
   organic N is the whole of its total N.
 
+### Generated rain
+
+- **A generated station has no rain at all**: `cli_pgenhr` zeroes today's steps before it
+  spreads today's rain into tomorrow's, and tomorrow's rain is taken as today's steps' sum.
+- **A gap generates the day before it**: the file is read a day ahead, so at a gap today's
+  steps are zeroed (today keeps its daily total) and today's rain fills tomorrow's steps from
+  the first, the file's hours after the storm staying as read. Tomorrow's daily total is still
+  the file's sum, gaps and all: negative, so no rain that day (the climate adjustment floors it
+  at 0, and the gaps in the steps too).
+- **Every storm has the same shape**: its peak's position comes from a random number whose seed
+  is set to 8 each time.
+- **The storm starts at midnight** and uses yesterday's half-hour fraction (today's is
+  generated afterwards).
+
+### With the curve number
+
+- **The rain of a daily file never reaches the steps**: `cli_pgenhr` only spreads generated
+  rain, so a station's steps stay dry. The canopy, which takes its water from the steps in a
+  sub-daily run, then intercepts nothing (and evaporates nothing from the canopy).
+- **No sediment leaves the HRUs**: by step, the sediment lag (`stor_surfstor`) releases the
+  steps' erosion, which only Green-Ampt computes (`ero_ovrsed`); the day's MUSLE sediment goes
+  into a store that is never released (and its nutrients still leave by the day).
+- **The unit hydrograph carries only the surface runoff**: `flow_hyd_ru_hru` is given the
+  lateral and tile flow but doesn't add them; they reach the channels evenly over the steps, with
+  the total hydrograph.
+- **A day's steps of the unit hydrograph stop once its rate falls under 1e-4**, but the next
+  day's are still computed.
+
 ## Validation: Ps_hourly
 
 None of the projects has sub-daily rain, so **Ps_hourly** (`scripts/make-pessel-variants.py`)
@@ -82,6 +117,17 @@ the day's mean hour; upstream channels peak up to 12 times their day's mean.
 (`urmd`, 38 % impervious, 30 % directly connected) by build-up and wash-off. Every table matches
 SWAT+; those HRUs' surface runoff rises from 15 to 939 mm a year, their organic N from 5 to
 31 kg/ha.
+
+**Ps_gap** is Ps_hourly with the hours from 17:00 of three rainy days of 2016 missing from one
+station's file, and another station generated. Every table and hourly flow matches SWAT+; the
+generated station's HRUs get no rain in three years, and the gap station loses the daily rain of
+the gap days and the hours of the days before them.
+
+**Ps_uh** is Ps_coast run hourly with the curve number (its daily precipitation, `gampt` 0,
+the gamma unit hydrograph). Every table matches SWAT+, and so do its 1.9 million hourly channel
+flows. Without interception the basin's ET falls from 1,253 to 1,170 mm a year and its surface
+runoff rises from 598 to 622 mm; the HRUs' sediment yield is nil. A channel's wettest hour
+carries up to 13.6 times its day's mean (5 for the median channel; 4.2 at the largest outlet).
 
 ## Sources
 
