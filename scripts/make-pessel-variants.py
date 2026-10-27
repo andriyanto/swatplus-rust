@@ -857,6 +857,31 @@ def ps_harv(base, dst):
     print(f"{os.path.basename(dst)}: biomass, grain, residue and tuber harvests, kills")
 
 
+def ps_peren(base, dst):
+    """A copy of project `base` whose oil palm has days to maturity (a year from its planting
+    day, which for a perennial is the last one computed for an annual), and plant populations in
+    plant.ini (136 palms a hectare, the usual triangular spacing of 9 m; 50,000 row crop plants)."""
+    if os.path.exists(dst):
+        shutil.rmtree(dst)
+    shutil.copytree(base, dst)
+    p = lambda f: os.path.join(dst, f)
+    lines = read(p("plants.plt"))
+    k = lines[1].split().index("days_mat")
+    for i in range(2, len(lines)):
+        t = lines[i].split()
+        if t and t[0] == "oilp":
+            lines[i] = set_field(lines[i], k, "365.00000")
+    write(p("plants.plt"), lines)
+    lines = read(p("plant.ini"))
+    k = lines[1].split().index("plnt_pop") - 3
+    for i in range(2, len(lines)):
+        t = lines[i].split()
+        if t and t[0] in ("oilp", "agrr"):
+            lines[i] = set_field(lines[i], k, "136.00000" if t[0] == "oilp" else "50000.00000")
+    write(p("plant.ini"), lines)
+    print(f"{os.path.basename(dst)}: perennial days to maturity, plant populations")
+
+
 def ps_urbhr(base, dst):
     """A copy of the hourly project `base` whose generic farmland is a medium-density town, its
     loads washed off the impervious area by the hour (`hru_urbanhr`)."""
@@ -930,5 +955,6 @@ if __name__ == "__main__":
     ps_pet(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_pet"))
     ps_cal(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_cal"))
     ps_harv(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_harv"))
+    ps_peren(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_peren"))
     ps_uh(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_uh"))
     ps_gap(os.path.join(out, "Ps_hourly"), os.path.join(out, "Ps_gap"))

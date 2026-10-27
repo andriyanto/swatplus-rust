@@ -137,6 +137,21 @@ baled on 5 July (`stover_med`) and the crop killed on 10 July, and the row crops
 60 and lifted as tubers on day 300 (`tuber`) and killed on day 305 by a decision table. Every
 table, crop yields too, matches SWAT+.
 
+## Plants: days to maturity and population
+
+- **Days to maturity for a perennial** (`plants.plt` `days_mat` above 0): its heat units to
+  maturity are summed from a planting day over `days_mat` days, like an annual's. A perennial's
+  planting day isn't computed: `plant_init` keeps it from call to call, so it is the last one
+  computed for an annual (HRU by HRU, plant by plant), or day 0 before any. Plants of type
+  `null` (whose day comes from the day length) are still refused.
+- **`plant.ini`'s population (`plnt_pop`) changes nothing**: it is read, but never given to the
+  plant (`pop_com` stays 0), so the potential leaf area is always `blai`. The port accepts it.
+
+**Ps_peren** is Ps_coast with oil palm maturing in 365 days, 136 palms a hectare (the usual
+9 m triangular spacing) and 50,000 row crop plants. Every table matches SWAT+; reaching
+maturity within the year, the palms' leaf area falls from 4.9 to 1.1 and the basin's ET from
+1,253 to 657 mm a year.
+
 ## Sources
 
 - Arheimer, B., Pimentel, R., Isberg, K., Crochemore, L., Andersson, J. C. M., Hasan, A., &
