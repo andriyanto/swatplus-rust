@@ -679,6 +679,39 @@ def ps_hourly(base, dst, years=(2015, 2017)):
     print(f"{os.path.basename(dst)}: hourly, Green-Ampt ({len(names)} precipitation files)")
 
 
+def ps_pet(base, dst, years=(2015, 2017)):
+    """A copy of project `base` whose PET is "read in" (`codes.bsn` pet 3), every station with
+    the same measured PET file (pet.cli), a constant 4 mm a day."""
+    if os.path.exists(dst):
+        shutil.rmtree(dst)
+    shutil.copytree(base, dst)
+    p = lambda f: os.path.join(dst, f)
+    lines = read(p("codes.bsn"))
+    lines[2] = set_field(lines[2], lines[1].split().index("pet"), "3")
+    write(p("codes.bsn"), lines)
+    write(p("pet.cli"), ["pet.cli: measured PET", "filename", "const4.pet"])
+    rows = ["const4.pet: a constant 4 mm a day", "nbyr     tstep       lat       lon      elev",
+            f"{years[1] - years[0] + 1:4d}{0:10d}{-1.675:10.3f}{100.975:10.3f}{10.0:10.3f}"]
+    for y in range(years[0], years[1] + 1):
+        for d in range(1, 366 + (y % 4 == 0)):
+            rows.append(f"{y}{d:5d}{4.0:11.5f}")
+    write(p("const4.pet"), rows)
+    lines = read(p("weather-sta.cli"))
+    k = lines[1].split().index("pet")
+    for i in range(2, len(lines)):
+        if lines[i].split():
+            lines[i] = set_field(lines[i], k, "const4.pet")
+    write(p("weather-sta.cli"), lines)
+    lines = read(p("file.cio"))
+    for i, l in enumerate(lines):
+        if l.startswith("climate"):
+            t = l.split()
+            t[3] = "pet.cli"
+            lines[i] = "".join(f"{x:<18}" for x in t)
+    write(p("file.cio"), lines)
+    print(f"{os.path.basename(dst)}: PET read in")
+
+
 def ps_urbhr(base, dst):
     """A copy of the hourly project `base` whose generic farmland is a medium-density town, its
     loads washed off the impervious area by the hour (`hru_urbanhr`)."""
@@ -749,3 +782,4 @@ if __name__ == "__main__":
     ps_hourly(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_hourly"))
     ps_land(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_land"))
     ps_urbhr(os.path.join(out, "Ps_hourly"), os.path.join(out, "Ps_urbhr"))
+    ps_pet(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_pet"))

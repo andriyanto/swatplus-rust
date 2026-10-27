@@ -696,8 +696,8 @@ pub fn init_hrus(
     if step > 96 {
         return Err(format!("{step} time steps a day (the port keeps up to 96)"));
     }
-    if !(0..=2).contains(&codes.pet) {
-        return Err(format!("potential ET method {} (read from a file)", codes.pet));
+    if !(0..=3).contains(&codes.pet) {
+        return Err(format!("potential ET method {}", codes.pet));
     }
     if codes.crk != 0 {
         return Err("crack flow".into());
@@ -1723,7 +1723,10 @@ impl Hru {
         let (pet_raw, ep_pm) = match b.pet {
             0 => (self.pet_priestley_taylor(w, ea, ed), 0.0),
             1 => self.pet_penman_monteith(w, albday, ea, ed, vpd, b),
-            _ => (pet_hargreaves(w), 0.0),
+            2 => (pet_hargreaves(w), 0.0),
+            // "Read in": the station's PET, which `climate_control` has replaced with Hargreaves'
+            // for the moisture index whatever `pet.cli` gave.
+            _ => (w.station_pet, 0.0),
         };
         let pet_day = self.pet_co * pet_raw;
 

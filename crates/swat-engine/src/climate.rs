@@ -723,9 +723,8 @@ impl Weather {
             }
         }
 
-        if self.stations.iter().any(|s| s.petgage > 0) {
-            return Err("measured PET (pet.cli) is not supported yet".into());
-        }
+        // Measured PET (`pet.cli`) would be set here, but the moisture index below replaces every
+        // station's with Hargreaves', so it is never used.
 
         // Hargreaves PET, the moving 30-day precipitation and PET sums, and the air temperature lag.
         self.ppet_mce += 1;
