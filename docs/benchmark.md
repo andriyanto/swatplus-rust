@@ -17,6 +17,25 @@ FORTRAN=... REPS=3 END_YEAR=2017 scripts/bench.sh Pessel             # a shorter
 gfortran, Ninja). On Windows, run everything in WSL 2 (Ubuntu), in the Linux file system (`~`,
 not `/mnt/c`), on mains power, with other programs closed.
 
+After the runs it compares every table the port wrote with SWAT+'s from the same machine
+(`agreement.csv`, and a table in `summary.md`): identical, within decision K12's tolerance, or
+not.
+
+**On ARM64 (aarch64: Snapdragon, Apple silicon under Linux, Graviton)**, gcc fuses `a*b + c` into
+one rounding (FMA) by default; the x86-64 reference and the port don't. SWAT+ built there can then
+differ from the port in the last bits, and differences grow through the days. Build it a second
+time without the fusion and time both:
+
+```sh
+FORTRAN=$(scripts/build-fortran.sh) scripts/bench.sh                                     # as SWAT+ builds by default
+FORTRAN=$(FORTRAN_FLAGS=-ffp-contract=off scripts/build-fortran.sh) REPS=3 scripts/bench.sh  # without FMA
+```
+
+The second shows how much of the agreement and of the speed comes from the fusion.
+
+SWAT+'s own Release build uses `-O` (gcc's `-O1`), as its `CMakeLists.txt` sets it; the port is
+built with `opt-level` 3 and thin LTO. Each is timed as its project builds it.
+
 What to keep in mind when reading the numbers:
 
 - **SWAT+ writes more than the port**: besides the tables `print.prt` asks for, its logs and

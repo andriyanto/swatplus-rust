@@ -32,4 +32,16 @@ for scen in dict.fromkeys(r["scenario"] for r in rows):
 print()
 for scen, x in speed:
     print(f"- **{scen}**: swatplus-rust takes {1 / x:.2f} of SWAT+ Fortran's time ({x:.2f}× as fast).")
+if len(sys.argv) > 3:
+    agree = list(csv.DictReader(open(sys.argv[3])))
+    print("\n## Agreement of the tables\n")
+    print("Each table the port wrote, against SWAT+'s from the same run: identical (the same text, spacing aside), ok (within decision K12's tolerance, `swatplus-rust compare`) or mismatch.\n")
+    print("| Scenario | Tables | Identical | Within tolerance | Mismatch |")
+    print("| --- | ---: | ---: | ---: | ---: |")
+    for scen in dict.fromkeys(a["scenario"] for a in agree):
+        rs = [a["result"] for a in agree if a["scenario"] == scen]
+        print(f"| {scen} | {len(rs)} | {rs.count('identical')} | {rs.count('ok')} | {rs.count('mismatch')} |")
+    bad = [f"{a['scenario']} {a['table']}" for a in agree if a["result"] == "mismatch"]
+    if bad:
+        print("\nMismatches: " + ", ".join(bad) + " (the .cmp files say where).")
 print("\nSWAT+ Fortran writes more files than the port (its other outputs and logs); the columns of files written show how much.")

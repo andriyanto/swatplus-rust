@@ -37,6 +37,7 @@ echo "scenario,engine,rep,wall_s,user_s,sys_s,max_rss_kb,files,bytes" > "$csv"
 {
   echo "date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "host: $(uname -srm)"
+  echo "arch: $(uname -m)"
   grep -m1 "model name" /proc/cpuinfo 2>/dev/null | sed 's/^/cpu: /' || true
   echo "cores: $(nproc)"
   awk '/MemTotal/ {printf "memory: %.1f GB\n", $2/1048576}' /proc/meminfo 2>/dev/null || true
@@ -96,7 +97,22 @@ for s in "${scenarios[@]}"; do
   done
 done
 
-python3 scripts/bench-summary.py "$csv" "$out/machine.txt" > "$out/summary.md"
+# Do the two engines agree here? Every table the port wrote against SWAT+'s, by
+# `swatplus-rust compare` (decision K12's tolerance), from each scenario's last runs.
+echo "scenario,table,result" > "$out/agreement.csv"
+for s in "${scenarios[@]}"; do
+  for t in "$WORK/$s-rust/out"/*.txt; do
+    [ -e "$t" ] || continue
+    f="$WORK/$s-fortran/$(basename "$t")"
+    [ -f "$f" ] || continue
+    if "$RUST" compare "$f" "$t" > "$out/$s-$(basename "$t" .txt).cmp" 2>&1; then r=ok; else r=mismatch; fi
+    cmp -s <(tail -n +2 "$f" | tr -s ' ') <(tail -n +2 "$t" | tr -s ' ') && r=identical
+    echo "$s,$(basename "$t" .txt),$r" >> "$out/agreement.csv"
+  done
+done
+echo "agreement: $(tail -n +2 "$out/agreement.csv" | cut -d, -f3 | sort | uniq -c | tr '\n' ' ')"
+
+python3 scripts/bench-summary.py "$csv" "$out/machine.txt" "$out/agreement.csv" > "$out/summary.md"
 cat "$out/summary.md"
 echo
-echo "results: $out (runs.csv, machine.txt, summary.md)"
+echo "results: $out (runs.csv, agreement.csv, machine.txt, summary.md)"
