@@ -448,7 +448,19 @@ impl Channels {
             let msk1 = co1 / (co1 + co2);
             let msk2 = co2 / (co1 + co2);
             let xkm = stor[1] * msk1 + stor[0] * msk2;
-            let det = 24.0_f32;
+            // The coefficients come from the step that would keep the routing stable (Jeong
+            // 2011): the day cut into `substeps`. A daily run then routes the day in one step
+            // with them (ch_rtmusk sets one step).
+            let detmax = 2.0 * xkm * (1.0 - x);
+            let mut det = 24.0_f32;
+            let mut substeps = 1;
+            if det > detmax {
+                substeps = (det / detmax) as i32 + 1;
+            }
+            if codes.rte == 0 {
+                substeps = 1;
+            }
+            det /= substeps as f32;
             let denom = 2.0 * xkm * (1.0 - x) + det;
             let mut c1 = (det - 2.0 * xkm * x) / denom;
             c1 = c1.max(0.0);

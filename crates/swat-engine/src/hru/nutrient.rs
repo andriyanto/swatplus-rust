@@ -72,6 +72,9 @@ impl Default for SoilTest {
 /// The day's nutrient flows the outputs report (`hnb_d`, `hls_d` before the lag).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct NutDay {
+    /// Nitrate and ammonium from the atmosphere (kg/ha, `nut_nrain`).
+    pub no3atmo: f32,
+    pub nh4atmo: f32,
     pub act_nit_n: f32,
     pub org_lab_p: f32,
     pub act_sta_n: f32,

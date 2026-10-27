@@ -206,6 +206,8 @@ pub struct Hru {
     /// The initial soil water as a share of field capacity (`soil%ffc`), and `hyd%epco`.
     pub ffc: f32,
     pub epco: f32,
+    /// The last day's atmospheric nitrate and ammonium (kg/ha), printed again on days without.
+    pub atmo_prev: [f32; 2],
     /// A paddy's target and threshold ponding depths (mm, `hru%irr_hmax`, `irr_hmin`).
     pub irr_hmax: f32,
     pub irr_hmin: f32,
@@ -275,12 +277,15 @@ pub struct HruNb {
     pub org_lab_p: f32,
     pub rsd_nitorg_n: f32,
     pub rsd_laborg_p: f32,
+    /// Nitrate and ammonium from the atmosphere, in rain and dry (`no3atmo`, `nh4atmo`).
+    pub no3atmo: f32,
+    pub nh4atmo: f32,
     pub nuptake: f32,
     pub puptake: f32,
 }
 
 impl HruNb {
-    pub fn columns(&self) -> [(&'static str, f32); 13] {
+    pub fn columns(&self) -> [(&'static str, f32); 15] {
         [
             ("lab_min_p", self.lab_min_p),
             ("act_sta_p", self.act_sta_p),
@@ -293,6 +298,8 @@ impl HruNb {
             ("org_lab_p", self.org_lab_p),
             ("rsd_nitorg_n", self.rsd_nitorg_n),
             ("rsd_laborg_p", self.rsd_laborg_p),
+            ("no3atmo", self.no3atmo),
+            ("nh4atmo", self.nh4atmo),
             ("nuptake", self.nuptake),
             ("puptake", self.puptake),
         ]
@@ -616,9 +623,6 @@ pub fn init_hrus(
     }
     if codes.sol_p_model != 0 {
         return Err("soil phosphorus model 1 (nut_pminrl2)".into());
-    }
-    if project.cio.file("climate", "atmo_cli").is_some() {
-        return Err("atmospheric deposition".into());
     }
     if step > 1 {
         return Err("sub-daily time steps".into());
@@ -1614,6 +1618,22 @@ impl Hru {
                 nd.sedorgn = self.nut_orgnc2(surfq, nd.sedyld, nd.enratio, cb, saved);
             }
         }
+        // nut_nrain: nitrate and ammonium in rain and dry deposition, into the top layer.
+        // Past the deposition data nothing is added, and the table repeats the last day's
+        // (`hnb_d` isn't zeroed).
+        if let Some([no3_rf, no3_dry, nh4_rf, nh4_dry]) = w.atmo {
+            nd.no3atmo = 0.01 * no3_rf * w.precip + no3_dry;
+            if let Some(l) = self.layers.first_mut() {
+                l.no3 = nd.no3atmo + l.no3;
+            }
+            nd.nh4atmo = 0.01 * nh4_rf * w.precip + nh4_dry;
+            if let Some(l) = self.layers.first_mut() {
+                l.nh4 += nd.nh4atmo;
+            }
+            self.atmo_prev = [nd.no3atmo, nd.nh4atmo];
+        } else {
+            [nd.no3atmo, nd.nh4atmo] = self.atmo_prev;
+        }
         self.nut_nlch(surfq, &b.nut, &mut nd);
         self.nut_solp(surfq, &b.nut, &mut nd);
 
@@ -1805,6 +1825,8 @@ impl Hru {
             org_lab_p: nd.org_lab_p,
             rsd_nitorg_n: 0.0,
             rsd_laborg_p: 0.0,
+            no3atmo: nd.no3atmo,
+            nh4atmo: nd.nh4atmo,
             nuptake: pd.nuptake,
             puptake: pd.puptake,
         };

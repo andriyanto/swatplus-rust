@@ -141,6 +141,40 @@ pub fn read_series(var: ClimateVar, file: &str, text: &str) -> Result<StationSer
     Ok(s)
 }
 
+/// `cli_read_atmodep`: the stations of `atmo.cli`, a record each value list. Reading stops,
+/// as in SWAT+, where the file ends.
+pub fn read_atmodep(name: &str, text: &str) -> crate::Result<swat_model::AtmoDep> {
+    let mut rec = crate::list::Records::new(name, text);
+    rec.skip()?;
+    rec.skip()?;
+    let f = rec.read(5)?;
+    let num_sta = f.int_or(0, 0)?.max(0) as usize;
+    let mut d = swat_model::AtmoDep {
+        timestep: f.text_or(1, ""),
+        mo_init: f.int_or(2, 0)?,
+        yr_init: f.int_or(3, 0)?,
+        num: f.int_or(4, 0)?.max(0) as usize,
+        stations: Vec::new(),
+    };
+    let n = if d.timestep == "aa" { 1 } else { d.num };
+    for _ in 0..num_sta {
+        let Ok(f) = rec.read(1) else { break };
+        let mut st = swat_model::AtmoStation { name: f.text_or(0, ""), ..Default::default() };
+        let mut vals = Vec::new();
+        for _ in 0..4 {
+            let Ok(f) = rec.read(n) else { break };
+            vals.push((0..n).map(|k| f.real_or(k, 0.0)).collect::<crate::Result<Vec<f32>>>()?);
+        }
+        vals.resize(4, vec![0.0; n]);
+        st.nh4_rf = vals[0].clone();
+        st.no3_rf = vals[1].clone();
+        st.nh4_dry = vals[2].clone();
+        st.no3_dry = vals[3].clone();
+        d.stations.push(st);
+    }
+    Ok(d)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

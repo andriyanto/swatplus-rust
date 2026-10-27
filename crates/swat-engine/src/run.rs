@@ -20,6 +20,9 @@ pub struct HruWeather {
     pub windsp: f32,
     pub rhum: f32,
     pub phubase0: f32,
+    /// Atmospheric deposition today (`nut_nrain`): nitrate in rain (mg/L) and dry (kg/ha a day),
+    /// ammonium in rain and dry; none without `atmo.cli`.
+    pub atmo: Option<[f32; 4]>,
 }
 
 /// The date and position of a printed day.
@@ -303,6 +306,42 @@ pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -
     let basin = HruBasin::new(project).with_fixes(opts.fixes);
     let mut balance_started = false;
     let mut saved = Saved { rndseed_cond: weather.rndseed_cond, ..Saved::default() };
+    // cli_read_atmodep: the deposition station of each weather station, and the time step of
+    // the first day (`atmodep_cont%ts`, `first`).
+    let atmo = project.atmodep.as_ref();
+    let atmo_names: Vec<String> = atmo.map(|a| a.stations.iter().map(|s| s.name.clone()).collect()).unwrap_or_default();
+    let atmo_of: Vec<usize> =
+        project.stations.iter().map(|s| s.atmo_dep.as_deref().and_then(|n| crate::fortran::search(&atmo_names, n)).unwrap_or(0)).collect();
+    let (mut atmo_ts, mut atmo_first) = (0_i32, true);
+    if let Some(a) = atmo {
+        let (yrc0, mo0) = (project.time.yrc_start, clock.mo);
+        if a.timestep == "yr" {
+            let mut iyrc = a.yr_init;
+            for iyr in 1..=a.num as i32 {
+                if iyrc == yrc0 {
+                    atmo_ts = iyr;
+                    atmo_first = false;
+                    break;
+                }
+                iyrc += 1;
+            }
+        }
+        if a.timestep == "mo" {
+            let (mut iyrc, mut imo) = (a.yr_init, a.mo_init);
+            for _ in 0..a.num {
+                if iyrc == yrc0 && imo == mo0 {
+                    atmo_ts = 12 * (yrc0 - a.yr_init) + imo;
+                    atmo_first = false;
+                    break;
+                }
+                imo += 1;
+                if imo > 12 {
+                    imo = 1;
+                    iyrc += 1;
+                }
+            }
+        }
+    }
 
     clock.before_loop();
     weather.precip_control(0, &clock)?;
@@ -384,6 +423,50 @@ pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -
                 yrs_prt: prt.yrs_prt,
                 days_prt: prt.days_prt,
             };
+            // cli_atmodep_time_control (the day's end-of-month and -year flags are already set,
+            // so the last day of a month or year takes the next one's deposition).
+            let end_mo_today = clock.day == clock.ndays[mo];
+            if let Some(a) = atmo
+                && !a.stations.is_empty()
+            {
+                if atmo_first {
+                    if (a.timestep == "yr" && a.yr_init == clock.yrc)
+                        || (a.timestep == "mo" && a.yr_init == clock.yrc && a.mo_init == clock.mo)
+                    {
+                        atmo_ts = 1;
+                        atmo_first = false;
+                    }
+                } else if (a.timestep == "yr" && clock.end_yr) || (a.timestep == "mo" && end_mo_today) {
+                    atmo_ts += 1;
+                }
+            }
+            let atmo_day = |ist: usize| -> Option<[f32; 4]> {
+                let a = atmo?;
+                let st = a.stations.get(atmo_of.get(ist.wrapping_sub(1)).copied().unwrap_or(0).wrapping_sub(1));
+                let v = |x: Option<&Vec<f32>>, k: usize| x.and_then(|x| x.get(k)).copied().unwrap_or(0.0);
+                match a.timestep.as_str() {
+                    "aa" => {
+                        let s = st;
+                        Some([
+                            v(s.map(|s| &s.no3_rf), 0),
+                            v(s.map(|s| &s.no3_dry), 0) / 365.0,
+                            v(s.map(|s| &s.nh4_rf), 0),
+                            v(s.map(|s| &s.nh4_dry), 0) / 365.0,
+                        ])
+                    }
+                    "mo" | "yr" if atmo_ts > 0 && atmo_ts as usize <= a.num => {
+                        let k = atmo_ts as usize - 1;
+                        let c = if a.timestep == "mo" { (clock.ndays[mo] - clock.ndays[mo - 1]) as f32 } else { 365.0 };
+                        Some([
+                            v(st.map(|s| &s.no3_rf), k),
+                            v(st.map(|s| &s.no3_dry), k) / c,
+                            v(st.map(|s| &s.nh4_rf), k),
+                            v(st.map(|s| &s.nh4_dry), k) / c,
+                        ])
+                    }
+                    _ => None,
+                }
+            };
             for (j, (ist, o, plaps, tlaps)) in hrus.iter().enumerate() {
                 let Some(st) = weather.stations.get(ist - 1) else { continue };
                 let s = &st.weat;
@@ -397,6 +480,7 @@ pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -
                     windsp: s.windsp,
                     rhum: s.rhum,
                     phubase0: s.phubase0,
+                    atmo: atmo_day(*ist),
                 };
                 if lapse {
                     w.precip = (w.precip + plaps).max(0.0);
@@ -649,7 +733,7 @@ fn regions(
 ) {
     use crate::periods::{region_add, region_start};
     let elems = &project.lsu_elems;
-    let empty = HruRows { wb: [0.0; 32], nb: [0.0; 13], ls: [0.0; 13], pw: [0.0; 25] };
+    let empty = HruRows { wb: [0.0; 32], nb: [0.0; 15], ls: [0.0; 13], pw: [0.0; 25] };
     if basin_on {
         let mut r = region_start(&empty);
         let mut init = [0.0_f32; 2];

@@ -80,6 +80,8 @@ pub struct Project {
     /// `reservoir.res` and `hydrology.res`.
     pub res_dat: Option<Table>,
     pub res_hyd: Option<Table>,
+    /// `atmo.cli`.
+    pub atmodep: Option<AtmoDep>,
     /// `recall.rec` and the files it names (`recall_read`).
     pub recalls: Vec<RecallDb>,
     /// Read by these names whatever `file.cio` says: `puddle.ops`, `manure_db.frt`,
@@ -162,4 +164,26 @@ pub struct RecallRow {
     pub day_mo: i32,
     pub iyr: i32,
     pub vals: [f32; 18],
+}
+
+/// `atmo.cli` (`cli_read_atmodep`): nitrogen deposition by station, average annual (`aa`),
+/// yearly (`yr`) or monthly (`mo`) from `yr_init`/`mo_init`, `num` values.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AtmoDep {
+    pub timestep: String,
+    pub mo_init: i32,
+    pub yr_init: i32,
+    pub num: usize,
+    pub stations: Vec<AtmoStation>,
+}
+
+/// A deposition station: ammonium and nitrate in rain (mg/L) and dry (kg/ha a year), one value
+/// a time step (one for `aa`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AtmoStation {
+    pub name: String,
+    pub nh4_rf: Vec<f32>,
+    pub no3_rf: Vec<f32>,
+    pub nh4_dry: Vec<f32>,
+    pub no3_dry: Vec<f32>,
 }
