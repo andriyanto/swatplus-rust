@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! swatplus-rust inspect <TxtInOut folder>
-//! swatplus-rust run <TxtInOut folder> [--out <folder>] [--fix-swat] [--format text|parquet|both] [--progress json]
+//! swatplus-rust run <TxtInOut folder> [--out <folder>] [--fix-swat] [--format text|parquet|both] [--progress json] [--strict]
 //! swatplus-rust compare <SWAT+ table> <our table> [--abs 0.001] [--rel 1e-4]
 //! ```
 //!
@@ -19,7 +19,7 @@ use swat_model::{ClimateVar, ObjectKind};
 
 const USAGE: &str = "usage:
   swatplus-rust inspect <TxtInOut folder>
-  swatplus-rust run <TxtInOut folder> [--out <folder>] [--fix-swat] [--format text|parquet|both] [--progress json]
+  swatplus-rust run <TxtInOut folder> [--out <folder>] [--fix-swat] [--format text|parquet|both] [--progress json] [--strict]
   swatplus-rust compare <SWAT+ table> <our table> [--abs 0.001] [--rel 1e-4]";
 
 fn main() -> ExitCode {
@@ -28,7 +28,7 @@ fn main() -> ExitCode {
     match rest.as_slice() {
         ["inspect", dir] => inspect(dir),
         ["run", dir, opts @ ..] => {
-            let mut o = RunArgs { out: dir, fixes: false, text: true, parquet: false, json: false };
+            let mut o = RunArgs { out: dir, fixes: false, text: true, parquet: false, json: false, strict: false };
             let mut it = opts.iter();
             while let Some(a) = it.next() {
                 match (*a, it.clone().next().copied()) {
@@ -46,6 +46,7 @@ fn main() -> ExitCode {
                         o.json = true;
                         it.next();
                     }
+                    ("--strict", _) => o.strict = true,
                     _ => {
                         eprintln!("{USAGE}");
                         return ExitCode::from(2);
@@ -129,6 +130,8 @@ struct RunArgs<'a> {
     parquet: bool,
     /// Progress and events as JSON lines on standard output (`swat_output::progress`).
     json: bool,
+    /// Fail (exit code 3) when part of the project isn't simulated.
+    strict: bool,
 }
 
 fn run(dir: &str, o: &RunArgs) -> ExitCode {
@@ -185,6 +188,13 @@ fn run(dir: &str, o: &RunArgs) -> ExitCode {
     }
     match swat_engine::run::run_with(&project, &mut tables, swat_engine::run::RunOptions { fixes: o.fixes }) {
         Ok(report) => {
+            let skipped: Vec<&String> =
+                [&report.hru_skipped, &report.channel_skipped, &report.routing_skipped].into_iter().flatten().collect();
+            if o.strict && !skipped.is_empty() {
+                let why: Vec<&str> = skipped.iter().map(|s| s.as_str()).collect();
+                fail(&format!("not simulated: {}", why.join("; ")));
+                return ExitCode::from(3);
+            }
             if let Some(why) = report.hru_skipped {
                 note(&format!("HRU water balance not simulated ({why}); hru_wb_day.txt has precipitation only"));
             }
