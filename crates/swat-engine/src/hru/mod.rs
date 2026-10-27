@@ -1624,7 +1624,7 @@ impl Hru {
         if let Some([no3_rf, no3_dry, nh4_rf, nh4_dry]) = w.atmo {
             nd.no3atmo = 0.01 * no3_rf * w.precip + no3_dry;
             if let Some(l) = self.layers.first_mut() {
-                l.no3 = nd.no3atmo + l.no3;
+                l.no3 += nd.no3atmo;
             }
             nd.nh4atmo = 0.01 * nh4_rf * w.precip + nh4_dry;
             if let Some(l) = self.layers.first_mut() {
