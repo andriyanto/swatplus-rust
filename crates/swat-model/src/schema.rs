@@ -458,3 +458,23 @@ pub const MANURE_OM: &[Field] = &[
 
 /// `transplant.ops` (`transplant_operation`), only its names so far: a transplant isn't ported.
 pub const TRANSPLANT: &[Field] = &[f("name", T, "")];
+
+/// `reservoir.res` (`reservoir_data_char_input`, after the row number).
+pub const RES_DAT: &[Field] =
+    &[f("id", I, "0"), f("name", T, "default"), f("init", T, ""), f("hyd", T, ""), f("rel", T, ""), f("sed", T, ""), f("nut", T, "")];
+
+/// `hydrology.res` (`reservoir_hyd_data`): areas (ha) and volumes (ha-m) at the principal and
+/// emergency spillways.
+pub const RES_HYD: &[Field] = &[
+    f("name", T, "default"),
+    f("iyres", I, "0"),
+    f("mores", I, "0"),
+    f("psa", R, "0."),
+    f("pvol", R, "0."),
+    f("esa", R, "0."),
+    f("evol", R, "0."),
+    f("k", R, ".01"),
+    f("evrsv", R, ".7"),
+    f("br1", R, "0."),
+    f("br2", R, "0."),
+];

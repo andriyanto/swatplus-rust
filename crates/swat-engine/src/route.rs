@@ -163,6 +163,11 @@ pub struct Network {
     chan_in: Vec<(Vec<bool>, Vec<usize>)>,
     /// Why the channels aren't routed, when they aren't.
     pub channel_skipped: Option<String>,
+    /// Reservoirs and recall objects, by object index.
+    pub reservoirs: Vec<crate::res::Reservoir>,
+    res_of: Vec<Option<usize>>,
+    pub recalls: Vec<crate::res::Recall>,
+    rec_of: Vec<Option<usize>>,
 }
 
 /// A channel's printed day: number (1-based), GIS id, name, water body, storage, inflow,
@@ -179,6 +184,10 @@ pub struct NetDay<'a> {
     pub hru_wb: &'a [[f32; 4]],
     pub yrs: i32,
     pub jday: i32,
+    /// Calendar year, month, and whether the day is printed (`time%yrs > nyskip`).
+    pub yrc: i32,
+    pub mo: i32,
+    pub print: bool,
 }
 
 impl Network {
@@ -222,7 +231,13 @@ impl Network {
             let n = project.objects_of(kind).count();
             let ok = matches!(
                 kind,
-                ObjectKind::Hru | ObjectKind::RoutingUnit | ObjectKind::Aquifer | ObjectKind::ChannelDeg | ObjectKind::Outlet
+                ObjectKind::Hru
+                    | ObjectKind::RoutingUnit
+                    | ObjectKind::Aquifer
+                    | ObjectKind::ChannelDeg
+                    | ObjectKind::Outlet
+                    | ObjectKind::Reservoir
+                    | ObjectKind::Recall
             );
             if n > 0 && !ok {
                 return Err(format!("{kind:?} objects"));
@@ -429,6 +444,27 @@ impl Network {
             let rus_in: Vec<usize> = ins.iter().filter_map(|i| ru_of[i.from]).collect();
             chan_in.push((from_ch, rus_in));
         }
+        // res_read, res_initial; recall_read.
+        let (yrc, yrc_end) = (project.time.yrc_start, project.time.yrc_end);
+        let nbyr = (yrc_end - yrc + 1).max(1) as usize;
+        let mut reservoirs = Vec::new();
+        let mut res_of = vec![None; obs.len()];
+        let r0 = first[&ObjectKind::Reservoir];
+        let n_res = project.objects_of(ObjectKind::Reservoir).count();
+        if n_res > 0 && project.codes.lapse == 1 {
+            return Err("reservoirs with lapse rates".into());
+        }
+        for k in 0..n_res {
+            res_of[r0 + k] = Some(k);
+            reservoirs.push(crate::res::Reservoir::new(project, k, r0 + k, obs[r0 + k].props, yrc)?);
+        }
+        let mut recalls = Vec::new();
+        let mut rec_of = vec![None; obs.len()];
+        let c0 = first[&ObjectKind::Recall];
+        for k in 0..project.objects_of(ObjectKind::Recall).count() {
+            rec_of[c0 + k] = Some(k);
+            recalls.push(crate::res::Recall::new(project, c0 + k, obs[c0 + k].props, yrc, yrc_end, nbyr)?);
+        }
         let n_ru = rus.len();
         Ok(Some(Network {
             obs,
@@ -443,6 +479,10 @@ impl Network {
             chan_of,
             chan_in,
             channel_skipped,
+            reservoirs,
+            res_of,
+            recalls,
+            rec_of,
         }))
     }
 
@@ -495,6 +535,21 @@ impl Network {
                     let ins = crate::channel::ChanInflows { from_chandeg: from_ch, hin_d: &hin_d, rus };
                     let area = self.obs[icmd].area_ha;
                     self.obs[icmd].hd[0] = chs.control(ich, hin, area, &ins, &cx);
+                }
+                ObjectKind::Reservoir => {
+                    // A reservoir with no inflow isn't run.
+                    if let Some(k) = self.res_of[icmd]
+                        && !self.obs[icmd].ins.is_empty()
+                    {
+                        let w = nd.weat.get(wst);
+                        let (precip, pet, tave) = w.map_or((0.0, 0.0, 0.0), |w| (w.precip, w.pet, w.tave));
+                        self.obs[icmd].hd[0] = self.reservoirs[k].control(hin, nd.yrc, nd.mo, precip, pet, tave, nd.print);
+                    }
+                }
+                ObjectKind::Recall => {
+                    if let Some(k) = self.rec_of[icmd] {
+                        self.obs[icmd].hd[0] = self.recalls[k].day(nd.jday, nd.mo, nd.yrc, nd.yrs);
+                    }
                 }
                 _ => {
                     // Outlets, and channels not routed yet.
@@ -622,6 +677,16 @@ impl Network {
             }
         }
         out
+    }
+
+    /// The reservoirs: number (1-based), GIS id, name and the reservoir.
+    pub fn reservoir_days(&self) -> impl Iterator<Item = (usize, i32, &str, &crate::res::Reservoir)> {
+        self.reservoirs.iter().enumerate().map(|(i, r)| (i + 1, self.obs[r.ob].gis_id, self.obs[r.ob].name.as_str(), r))
+    }
+
+    /// The recall objects: number (1-based), name and today's load.
+    pub fn recall_days(&self) -> impl Iterator<Item = (usize, &str, &Hyd)> {
+        self.recalls.iter().enumerate().map(|(i, r)| (i + 1, self.obs[r.ob].name.as_str(), &r.d))
     }
 
     /// Today's routing units: name and `ru_d`.

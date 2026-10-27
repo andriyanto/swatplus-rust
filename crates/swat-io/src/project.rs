@@ -188,6 +188,14 @@ pub fn load_project(src: &dyn FileSource) -> Result<(Project, LoadReport)> {
     project.res_nut = it.next().flatten();
     project.wetland = it.next().flatten();
     project.wet_hyd = it.next().flatten();
+    for (slot, fields, dst) in [("res", schema::RES_DAT, &mut project.res_dat), ("hyd_res", schema::RES_HYD, &mut project.res_hyd)] {
+        if let Some((name, text)) = fetch("reservoir", slot)? {
+            *dst = Some(table::read_table(&name, &text, fields)?);
+        }
+    }
+    if let Some((name, text)) = fetch("recall", "recall_rec")? {
+        project.recalls = crate::recall::read_recalls(src, &name, &text)?;
+    }
     project.weir_res = match fetch("reservoir", "weir_res")? {
         Some((name, text)) => Some(table::read_table(&name, &text, schema::WEIR_RES)?),
         None => None,

@@ -701,3 +701,79 @@ impl BasinChaAcc {
 pub fn wat_sum(acc: &mut ChWat, w: &ChWat) {
     wat_add(acc, w);
 }
+
+/// A reservoir's or the basin's reservoir sums (`reservoir_output`, `basin_reservoir_output`):
+/// inflow and outflow summed over the period (divided by the years for the average annual), the
+/// water body's precipitation, evaporation and seepage summed and its area averaged: over the
+/// month's days, then the months' means over 12, then the years. Storage is the day's.
+#[derive(Clone, Debug, Default)]
+pub struct ResAcc {
+    hin: [Hyd; 3],
+    hout: [Hyd; 3],
+    wat: [ChWat; 3],
+}
+
+impl ResAcc {
+    #[allow(clippy::type_complexity)]
+    pub fn day(&mut self, w: &ChWat, hin: &Hyd, hout: &Hyd, c: &PeriodDay, mut emit: impl FnMut(Period, &ChWat, &Hyd, &Hyd)) {
+        let (m, y, a) = (0, 1, 2);
+        self.hin[m] = self.hin[m].plus(*hin);
+        self.hout[m] = self.hout[m].plus(*hout);
+        wat_add(&mut self.wat[m], w);
+        if c.end_mo {
+            self.hin[y] = self.hin[y].plus(self.hin[m]);
+            self.hout[y] = self.hout[y].plus(self.hout[m]);
+            self.wat[m].area_ha /= c.mon_days;
+            let wm = self.wat[m];
+            wat_add(&mut self.wat[y], &wm);
+            emit(Period::Mon, &self.wat[m], &self.hin[m], &self.hout[m]);
+            self.hin[m] = Hyd::default();
+            self.hout[m] = Hyd::default();
+            self.wat[m] = ChWat::default();
+        }
+        if c.end_yr {
+            self.hin[a] = self.hin[a].plus(self.hin[y]);
+            self.hout[a] = self.hout[a].plus(self.hout[y]);
+            self.wat[y].area_ha /= 12.0;
+            let wy = self.wat[y];
+            wat_add(&mut self.wat[a], &wy);
+            emit(Period::Yr, &self.wat[y], &self.hin[y], &self.hout[y]);
+            self.hin[y] = Hyd::default();
+            self.hout[y] = Hyd::default();
+            self.wat[y] = ChWat::default();
+        }
+        if c.end_sim {
+            let k = c.yrs_prt;
+            let wa = &self.wat[a];
+            let wat = ChWat { area_ha: wa.area_ha / k, precip: wa.precip / k, evap: wa.evap / k, seep: wa.seep / k };
+            emit(Period::Aa, &wat, &self.hin[a].over(k), &self.hout[a].over(k));
+        }
+    }
+}
+
+/// A recall object's or the basin's recall sums (`recall_output`, `basin_recall_output`):
+/// summed over the period, the average annual divided by the years.
+#[derive(Clone, Debug, Default)]
+pub struct RecAcc {
+    h: [Hyd; 3],
+}
+
+impl RecAcc {
+    pub fn day(&mut self, d: &Hyd, c: &PeriodDay, mut emit: impl FnMut(Period, &Hyd)) {
+        let (m, y, a) = (0, 1, 2);
+        self.h[m] = self.h[m].plus(*d);
+        if c.end_mo {
+            self.h[y] = self.h[y].plus(self.h[m]);
+            emit(Period::Mon, &self.h[m]);
+            self.h[m] = Hyd::default();
+        }
+        if c.end_yr {
+            self.h[a] = self.h[a].plus(self.h[y]);
+            emit(Period::Yr, &self.h[y]);
+            self.h[y] = Hyd::default();
+        }
+        if c.end_sim {
+            emit(Period::Aa, &self.h[a].over(c.yrs_prt));
+        }
+    }
+}

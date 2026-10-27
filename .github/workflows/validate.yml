@@ -48,20 +48,22 @@ jobs:
           # Phase 3e: Pessel's coastal lowland, 2015-2017 (the script cuts it out and shortens it), and
           # phase 4: the same with its rice as paddies (Ps_paddy).
           scripts/make-pessel-variants.py testdata/Pessel variants
+          # Phase 4: Batanghari with a reservoir and two point sources, 2015-2017.
+          scripts/make-reservoir-variants.py testdata/Batanghari variants
           # And the whole of Pessel, 2015 only, printed from the first day.
           sed -i '3s/2025/2015/' testdata/Pessel/time.sim
           sed -i '3s/^2 /0 /' testdata/Pessel/print.prt
-          for scenario in Osu_1hru Ames_sub1 Ames_bare Ames_past0 Ames_past Ames_corn Ames_cornf Ames_cosy Ames_cosy2 Ames_dtbl Bh_land Batanghari Ps_coast Ps_paddy Pessel; do
+          for scenario in Osu_1hru Ames_sub1 Ames_bare Ames_past0 Ames_past Ames_corn Ames_cornf Ames_cosy Ames_cosy2 Ames_dtbl Bh_land Batanghari Bh_res Ps_coast Ps_paddy Pessel; do
             src=testdata/$scenario
             test -d "$src" || src=variants/$scenario
             mkdir -p runs/$scenario
             cp -r "$src" runs/$scenario/fortran
-            scripts/print-daily.sh runs/$scenario/fortran hru_wb,hru_pw,hru_nb,hru_ls,ru,aquifer,channel_sd,basin_wb,basin_nb,basin_ls,basin_pw,lsunit_wb,lsunit_nb,lsunit_ls,lsunit_pw,basin_sd_cha hru_cb,hru_cb_vars
+            scripts/print-daily.sh runs/$scenario/fortran hru_wb,hru_pw,hru_nb,hru_ls,ru,aquifer,channel_sd,basin_wb,basin_nb,basin_ls,basin_pw,lsunit_wb,lsunit_nb,lsunit_ls,lsunit_pw,basin_sd_cha,reservoir,basin_res,recall,basin_psc hru_cb,hru_cb_vars
             (cd runs/$scenario/fortran && "$FORTRAN" > run.log 2>&1)
             test -f runs/$scenario/fortran/success.fin
             # The port reads the same print.prt (the folder's SWAT+ output is no input).
             "$RUST" run runs/$scenario/fortran --out runs/$scenario/rust
-            for stem in hru_wb hru_pw hru_nb hru_ls ru aquifer channel_sd basin_wb basin_nb basin_ls basin_pw lsunit_wb lsunit_nb lsunit_ls lsunit_pw basin_sd_cha; do for period in day mon yr aa; do
+            for stem in hru_wb hru_pw hru_nb hru_ls ru aquifer channel_sd basin_wb basin_nb basin_ls basin_pw lsunit_wb lsunit_nb lsunit_ls lsunit_pw basin_sd_cha reservoir basin_res recall basin_psc; do for period in day mon yr aa; do
               table=${stem}_$period
               # The port writes the nutrient tables, and the period tables, only for the HRUs it
               # simulates in full.

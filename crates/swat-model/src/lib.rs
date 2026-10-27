@@ -77,6 +77,11 @@ pub struct Project {
     pub res_nut: Option<Table>,
     pub res_dtl: Vec<DecisionTable>,
     pub weir_res: Option<Table>,
+    /// `reservoir.res` and `hydrology.res`.
+    pub res_dat: Option<Table>,
+    pub res_hyd: Option<Table>,
+    /// `recall.rec` and the files it names (`recall_read`).
+    pub recalls: Vec<RecallDb>,
     /// Read by these names whatever `file.cio` says: `puddle.ops`, `manure_db.frt`,
     /// `manure_om.frt`, and whether `transplant.ops` is there.
     pub puddle_ops: Option<Table>,
@@ -133,4 +138,28 @@ impl Project {
     pub fn objects_of(&self, kind: ObjectKind) -> impl Iterator<Item = &SpatialObject> {
         self.objects.iter().filter(move |o| o.kind == kind)
     }
+}
+
+/// A recall object's data (`recall.rec` and its file): measured or modelled loads.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RecallDb {
+    /// The row number in `recall.rec`, the name, the time step (0 subdaily, 1 daily, 2 monthly,
+    /// 3 yearly, 4 an export coefficient) and the file.
+    pub id: usize,
+    pub name: String,
+    pub typ: i32,
+    pub file: String,
+    /// The file's records: day of the year, month, day of the month, year, and the 18 values
+    /// of a hydrograph (flow m3, sediment t, nutrients kg…, temperature).
+    pub rows: Vec<RecallRow>,
+}
+
+/// A record of a recall file.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RecallRow {
+    pub jday: i32,
+    pub mo: i32,
+    pub day_mo: i32,
+    pub iyr: i32,
+    pub vals: [f32; 18],
 }

@@ -15,5 +15,7 @@ pub mod fortran;
 pub mod hru;
 pub mod hyd;
 pub mod periods;
+pub mod res;
 pub mod route;
 pub mod run;
+pub mod waterbody;

@@ -37,7 +37,11 @@ const KEYS: &str = "  jday   mon   day    yr    unit  gis_id  name            ";
 const WEATHER: [&str; 6] = ["tmx", "tmn", "tmpav", "solarad", "wndspd", "rhum"];
 
 /// The tables the port writes, as `print.prt` names them, and their file name stems.
-const TABLES: [&str; 17] = [
+const TABLES: [&str; 21] = [
+    "reservoir",
+    "basin_res",
+    "recall",
+    "basin_psc",
     "hru_wb",
     "hru_nb",
     "hru_ls",
@@ -249,6 +253,7 @@ impl TextTables {
         hin: &Hyd,
         hout: &Hyd,
         wtemp: Option<f32>,
+        area_fixed: bool,
     ) {
         if !self.wants(stem, p) {
             return;
@@ -273,8 +278,8 @@ impl TextTables {
             let _ = writeln!(o);
         });
         keys(out, d, ich, gis_id, name);
-        // basin_sdchannel_output prints the area as f16.4.
-        if wtemp.is_none() {
+        // basin_sdchannel_output and basin_reservoir_output print the area as fixed point.
+        if area_fixed {
             let _ = write!(out, "{:16.4}", w.area_ha);
         } else {
             out.push_str(&e15_4(w.area_ha));
@@ -289,6 +294,42 @@ impl TextTables {
         }
         if let Some(t) = wtemp {
             out.push_str(&e15_4(t));
+        }
+        out.push('\n');
+    }
+
+    /// A recall table's row (`recall_output`, `basin_recall_output`: list-directed): the date,
+    /// the name (and the object type), and the load.
+    fn rec_row(&mut self, stem: &str, p: Option<Period>, d: Day, name: &str, typ: Option<&str>, h: &Hyd) {
+        if !self.wants(stem, p) {
+            return;
+        }
+        let title = self.title.clone();
+        let out = self.sheet(stem, p, |o| {
+            let _ = writeln!(o, "{title}");
+            let _ = write!(o, "{:>12}{:>12}{:>12}{:>12} {:<16}", "jday", "mon", "day", "yr", "name");
+            if typ.is_some() {
+                let _ = write!(o, "{:<8}", "type");
+            }
+            for (n, _) in h.columns() {
+                let _ = write!(o, " {n:>14}");
+            }
+            let _ = writeln!(o);
+            let _ = write!(o, "{:>65}", "");
+            for u in [
+                "m^3/s", "tons", "kgN", "kgP", "kgN", "kgP", "kg", "kgN", "kgN", "kg", "kg", "tons", "tons", "tons", "tons", "tons",
+                "tons", "degc",
+            ] {
+                let _ = write!(o, " {u:>14}");
+            }
+            let _ = writeln!(o);
+        });
+        let _ = write!(out, "{:>12}{:>12}{:>12}{:>12} {:<16}", d.jday, d.mon, d.day, d.yr, name);
+        if let Some(t) = typ {
+            let _ = write!(out, "{t:<8}");
+        }
+        for (_, v) in h.columns() {
+            let _ = write!(out, " {v:>14e}");
         }
         out.push('\n');
     }
@@ -377,7 +418,7 @@ impl OutputSink for TextTables {
     }
 
     fn cha_day(&mut self, d: Day, ich: usize, gis_id: i32, name: &str, w: &ChWat, stor: &Hyd, hin: &Hyd, hout: &Hyd, wtemp: f32) {
-        self.cha_row("channel_sd", None, d, ich, gis_id, name, w, stor, hin, hout, Some(wtemp));
+        self.cha_row("channel_sd", None, d, ich, gis_id, name, w, stor, hin, hout, Some(wtemp), false);
         self.flush(CHUNK);
     }
 
@@ -394,7 +435,7 @@ impl OutputSink for TextTables {
         hout: &Hyd,
         wtemp: f32,
     ) {
-        self.cha_row("channel_sd", Some(p), d, ich, gis_id, name, w, stor, hin, hout, Some(wtemp));
+        self.cha_row("channel_sd", Some(p), d, ich, gis_id, name, w, stor, hin, hout, Some(wtemp), false);
     }
 
     fn aqu_day(&mut self, d: Day, iaq: usize, gis_id: i32, name: &str, a: &AquDay) {
@@ -450,6 +491,25 @@ impl OutputSink for TextTables {
     }
 
     fn basin_cha(&mut self, p: Option<Period>, d: Day, name: &str, w: &ChWat, stor: &Hyd, hin: &Hyd, hout: &Hyd) {
-        self.cha_row("basin_sd_cha", p, d, 1, 1, name, w, stor, hin, hout, None);
+        self.cha_row("basin_sd_cha", p, d, 1, 1, name, w, stor, hin, hout, None, true);
+    }
+
+    fn res(&mut self, p: Option<Period>, d: Day, j: usize, gis_id: i32, name: &str, w: &ChWat, stor: &Hyd, hin: &Hyd, hout: &Hyd) {
+        self.cha_row("reservoir", p, d, j, gis_id, name, w, stor, hin, hout, None, false);
+        if p.is_none() {
+            self.flush(CHUNK);
+        }
+    }
+
+    fn basin_res(&mut self, p: Option<Period>, d: Day, unit: usize, name: &str, w: &ChWat, stor: &Hyd, hin: &Hyd, hout: &Hyd) {
+        self.cha_row("basin_res", p, d, unit, 1, name, w, stor, hin, hout, None, true);
+    }
+
+    fn recall(&mut self, p: Option<Period>, d: Day, name: &str, h: &Hyd) {
+        self.rec_row("recall", p, d, name, Some("recall"), h);
+    }
+
+    fn basin_psc(&mut self, p: Option<Period>, d: Day, name: &str, h: &Hyd) {
+        self.rec_row("basin_psc", p, d, name, None, h);
     }
 }

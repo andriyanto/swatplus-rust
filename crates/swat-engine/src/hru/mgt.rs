@@ -361,7 +361,7 @@ fn row_real(t: Option<&Table>, name: &str, field: &str, default: f32) -> f32 {
 
 /// `cond_real` and `cond_integer`: alternatives still hit whose operator fails for `cur`
 /// against `tbl` are no longer hit.
-pub(super) fn cond_test<T: PartialOrd>(hit: &mut [bool], alt: &[String], cur: T, tbl: T) {
+pub(crate) fn cond_test<T: PartialOrd>(hit: &mut [bool], alt: &[String], cur: T, tbl: T) {
     for (h, op) in hit.iter_mut().zip(alt) {
         if op == "-" || !*h {
             continue;

@@ -118,6 +118,44 @@ pub trait OutputSink {
         _hout: &crate::hyd::Hyd,
     ) {
     }
+
+    /// A reservoir's day (`p` None) or period (`reservoir_*`): its 1-based number, GIS id, name,
+    /// water body, storage, inflow and outflow.
+    #[allow(clippy::too_many_arguments)]
+    fn res(
+        &mut self,
+        _p: Option<Period>,
+        _day: Day,
+        _j: usize,
+        _gis_id: i32,
+        _name: &str,
+        _w: &crate::channel::ChWat,
+        _stor: &crate::hyd::Hyd,
+        _hin: &crate::hyd::Hyd,
+        _hout: &crate::hyd::Hyd,
+    ) {
+    }
+
+    /// The basin's reservoirs (`basin_res_*`), added; `unit` is one past the last reservoir.
+    #[allow(clippy::too_many_arguments)]
+    fn basin_res(
+        &mut self,
+        _p: Option<Period>,
+        _day: Day,
+        _unit: usize,
+        _name: &str,
+        _w: &crate::channel::ChWat,
+        _stor: &crate::hyd::Hyd,
+        _hin: &crate::hyd::Hyd,
+        _hout: &crate::hyd::Hyd,
+    ) {
+    }
+
+    /// A recall object's day or period (`recall_*`): its name and load.
+    fn recall(&mut self, _p: Option<Period>, _day: Day, _name: &str, _h: &crate::hyd::Hyd) {}
+
+    /// The basin's recall objects (`basin_psc_*`), added.
+    fn basin_psc(&mut self, _p: Option<Period>, _day: Day, _name: &str, _h: &crate::hyd::Hyd) {}
 }
 
 /// A region of the basin-level tables.
@@ -284,6 +322,10 @@ pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -
     let mut day_rows: Vec<Option<HruRows>> = vec![None; hrus.len()];
     let mut basin_aqu_acc = crate::periods::AquAcc::default();
     let mut basin_cha_acc = crate::periods::BasinChaAcc::default();
+    let mut res_acc: Vec<crate::periods::ResAcc> = Vec::new();
+    let mut basin_res_acc = crate::periods::ResAcc::default();
+    let mut rec_acc: Vec<crate::periods::RecAcc> = Vec::new();
+    let mut basin_rec_acc = crate::periods::RecAcc::default();
     let aqu_area: Vec<f32> = project.objects_of(swat_model::ObjectKind::Aquifer).map(|o| o.area_ha).collect();
     let ru_gis: Vec<i32> = project.objects_of(swat_model::ObjectKind::RoutingUnit).map(|o| o.gis_id).collect();
     let bsn_name = project.basin_name.clone();
@@ -445,6 +487,9 @@ pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -
                     hru_wb: &hru_wb,
                     yrs: clock.yrs,
                     jday: clock.day,
+                    yrc: clock.yrc,
+                    mo: clock.mo,
+                    print: clock.yrs > nyskip,
                 };
                 n.day(&nd);
                 if output {
@@ -496,6 +541,55 @@ pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -
                             aqu_acc.resize(k + 1, Default::default());
                         }
                         aqu_acc[k].day(d, &pday, |p, d| out.aqu_period(p, day, iaq, gis_id, name, d));
+                    }
+                    for (k, (j, gis_id, name, r)) in n.reservoir_days().enumerate() {
+                        if printing {
+                            out.res(None, day, j, gis_id, name, &r.wat, &r.water, &r.in_d, &r.out_d);
+                        }
+                        if res_acc.len() <= k {
+                            res_acc.resize(k + 1, Default::default());
+                        }
+                        res_acc[k]
+                            .day(&r.wat, &r.in_d, &r.out_d, &pday, |p, w, i, o| out.res(Some(p), day, j, gis_id, name, w, &r.water, i, o));
+                    }
+                    if !n.reservoirs.is_empty() {
+                        let mut bw = crate::channel::ChWat::default();
+                        let (mut bs, mut bi, mut bo) = (crate::hyd::Hyd::default(), crate::hyd::Hyd::default(), crate::hyd::Hyd::default());
+                        for r in &n.reservoirs {
+                            bs = bs.plus(r.water);
+                            bi = bi.plus(r.in_d);
+                            bo = bo.plus(r.out_d);
+                            crate::periods::wat_sum(&mut bw, &r.wat);
+                        }
+                        let unit = n.reservoirs.len() + 1;
+                        if printing {
+                            out.basin_res(None, day, unit, &bsn_name, &bw, &bs, &bi, &bo);
+                        }
+                        basin_res_acc.day(&bw, &bi, &bo, &pday, |p, w, i, o| out.basin_res(Some(p), day, unit, &bsn_name, w, &bs, i, o));
+                        // basin_reservoir_output zeroes the day's inflow and outflow.
+                        for r in n.reservoirs.iter_mut() {
+                            r.in_d = crate::hyd::Hyd::default();
+                            r.out_d = crate::hyd::Hyd::default();
+                        }
+                    }
+                    for (k, (_, name, h)) in n.recall_days().enumerate() {
+                        if printing {
+                            out.recall(None, day, name, h);
+                        }
+                        if rec_acc.len() <= k {
+                            rec_acc.resize(k + 1, Default::default());
+                        }
+                        rec_acc[k].day(h, &pday, |p, h| out.recall(Some(p), day, name, h));
+                    }
+                    if !n.recalls.is_empty() {
+                        let mut b = crate::hyd::Hyd::default();
+                        for r in &n.recalls {
+                            b = b.plus(r.d);
+                        }
+                        if printing {
+                            out.basin_psc(None, day, &bsn_name, &b);
+                        }
+                        basin_rec_acc.day(&b, &pday, |p, h| out.basin_psc(Some(p), day, &bsn_name, h));
                     }
                     for (k, (name, h)) in n.routing_units().enumerate() {
                         if printing {
