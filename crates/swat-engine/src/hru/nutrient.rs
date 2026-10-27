@@ -19,10 +19,13 @@ pub struct NutBasin {
     pub phoskd: f32,
     pub pperco: f32,
     pub nperco: f32,
+    pub nperco_lchtile: f32,
     pub decr_min: f32,
     pub prf: f32,
     pub rsd_covco: f32,
     pub sed_det: i32,
+    /// `codes.bsn` `sol_p_model`: 1 for the dynamic P sorption of White et al. (`nut_pminrl2`).
+    pub sol_p_model: i32,
     /// `n_act_frac` (carbon module, 0.02 unless `carbon.bsn` sets it).
     pub n_act_frac: f32,
     /// Correct SWAT+'s bugs instead of reproducing them (`RunOptions::fixes`).
@@ -41,10 +44,12 @@ impl NutBasin {
             phoskd: p("phoskd"),
             pperco: p("pperco"),
             nperco: p("nperco"),
+            nperco_lchtile: p("nperco_lchtile"),
             decr_min: p("decr_min"),
             prf: p("prf"),
             rsd_covco: p("rsd_covco"),
             sed_det: project.codes.sed_det,
+            sol_p_model: project.codes.sol_p_model,
             n_act_frac,
             fixes: false,
         }
@@ -72,6 +77,12 @@ impl Default for SoilTest {
 /// The day's nutrient flows the outputs report (`hnb_d`, `hls_d` before the lag).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct NutDay {
+    /// Nitrate and ammonium from the atmosphere (kg/ha, `nut_nrain`).
+    pub no3atmo: f32,
+    pub nh4atmo: f32,
+    /// Nitrate and labile P in tile flow (kg/ha).
+    pub tileno3: f32,
+    pub tilelabp: f32,
     pub act_nit_n: f32,
     pub org_lab_p: f32,
     pub act_sta_n: f32,
@@ -135,7 +146,7 @@ fn residue_ca(r: &OrgMass) -> f32 {
 
 impl Hru {
     /// `soil_nutcarb_init` for `cswat` 0: mineral N and P by depth, and humus pools.
-    pub(super) fn nutcarb_init(&mut self, t: &SoilTest, psp: f32, cswat: i32) {
+    pub(super) fn nutcarb_init(&mut self, t: &SoilTest, psp_bsn: f32, cswat: i32, sol_p_model: i32, psp_saved: &mut f32) {
         for l in self.layers.iter_mut() {
             l.cbn = l.cbn.max(0.001);
         }
@@ -147,8 +158,40 @@ impl Hru {
             l.no3 *= wt1;
             l.lab = if t.lab_p > 1.0e-9 { t.lab_p * dep_frac } else { 5.0 * dep_frac };
             l.lab *= wt1;
+            let psp = if sol_p_model == 1 {
+                // The dynamic sorption ratio (a layer without clay keeps the last one).
+                let solp = l.lab / wt1;
+                let mut psp = *psp_saved;
+                if l.clay > 0.0 {
+                    psp = -0.045 * l.clay.ln() + (0.001 * solp);
+                    psp = psp - (0.035 * l.cbn) + 0.43;
+                }
+                if psp < 0.10 {
+                    psp = 0.10;
+                } else if psp > 0.7 {
+                    psp = 0.7;
+                }
+                *psp_saved = psp;
+                psp
+            } else {
+                psp_bsn
+            };
             l.act = l.lab * (1.0 - psp) / psp;
-            l.sta = 4.0 * l.act;
+            l.sta = if sol_p_model == 1 {
+                // The stable pool from total mineral P (White et al. 2009, from Sharpley 2004).
+                let actp = l.act / wt1;
+                let solp = l.lab / wt1;
+                let mut ssp = 25.044_f32 * (actp + solp).powf(-0.3833);
+                if ssp > 7.0 {
+                    ssp = 7.0;
+                }
+                if ssp < 1.0 {
+                    ssp = 1.0;
+                }
+                ssp * (l.act + l.lab)
+            } else {
+                4.0 * l.act
+            };
         }
         if cswat != 0 {
             return;
@@ -202,6 +245,8 @@ impl Hru {
     /// SWAT+ `nut_nminrl`: humus mineralization, soil residue decomposition and denitrification.
     /// The top layer's rates use the second layer's water and temperature.
     pub(super) fn nut_nminrl(&mut self, b: &NutBasin, nd: &mut NutDay) {
+        // No denitrification in an active septic biozone (`sep_biozone` denitrifies it).
+        let sep_bz = self.septic.as_ref().filter(|_| self.sep_opt == 1).map_or(usize::MAX, |s| s.bz);
         for k in 0..self.layers.len() {
             let kk = if k == 0 { 1.min(self.layers.len() - 1) } else { k };
             let (st, fc, tmp) = (self.layers[kk].st, self.layers[kk].fc, self.layers[kk].tmp);
@@ -257,20 +302,24 @@ impl Hru {
                 l.hsta.p += 0.2 * decomp.p;
             }
             let l = &mut self.layers[k];
-            let wdn = if sut >= b.sdnco { l.no3 * (1.0 - (-b.cdn * cdg * l.cbn / 100.0).exp()) } else { 0.0 };
-            l.no3 = (l.no3 - wdn).max(0.0001);
-            nd.denit += wdn;
+            if k != sep_bz {
+                let wdn = if sut >= b.sdnco { l.no3 * (1.0 - (-b.cdn * cdg * l.cbn / 100.0).exp()) } else { 0.0 };
+                l.no3 = (l.no3 - wdn).max(0.0001);
+                nd.denit += wdn;
+            }
         }
     }
 
     /// SWAT+ `nut_nitvol`: nitrification and volatilization of ammonium.
     pub(super) fn nut_nitvol(&mut self) {
         let cecf = 0.15_f32;
+        // An active septic biozone keeps its ammonium (`sep_biozone` nitrifies it).
+        let bz = self.septic.as_ref().filter(|_| self.sep_opt == 1).map_or(usize::MAX, |s| s.bz);
         for k in 0..self.layers.len() {
             let xx = if k == 0 { 0.0 } else { self.layers[k - 1].d };
             let l = &mut self.layers[k];
             let tf = 0.41 * (l.tmp - 5.0) / 10.0;
-            if l.nh4 > 0.0 && tf >= 0.001 {
+            if l.nh4 > 0.0 && tf >= 0.001 && k != bz {
                 let sw25 = l.wpmm + 0.25 * l.fc;
                 let swwp = l.wpmm + l.st;
                 let swf = if swwp < sw25 { (swwp - l.wpmm) / (sw25 - l.wpmm) } else { 1.0 };
@@ -299,6 +348,124 @@ impl Hru {
                     l.nh4 = 0.0;
                 }
             }
+        }
+    }
+
+    /// SWAT+ `nut_pminrl2` (`sol_p_model` 1): phosphorus between the pools with a sorption
+    /// ratio and stable-to-active ratio that change with the soil and its P (Vadas and White
+    /// 2010).
+    pub(super) fn nut_pminrl2(&mut self, nd: &mut NutDay) {
+        nd.lab_min_p = 0.0;
+        nd.act_sta_p = 0.0;
+        // exp(-0.29), folded by gfortran.
+        let e029 = ((-0.29_f32) as f64).exp() as f32;
+        for l in self.layers.iter_mut() {
+            if l.lab <= 1.0e-6 {
+                l.lab = 1.0e-6;
+            }
+            if l.act <= 1.0e-6 {
+                l.act = 1.0e-6;
+            }
+            if l.sta <= 1.0e-6 {
+                l.sta = 1.0e-6;
+            }
+            let conv_wt = l.bd * l.thick / 100.0;
+            let solp = l.lab / conv_wt;
+            let actpp = l.act / conv_wt;
+            let stap = l.sta / conv_wt;
+            let mut psp = if l.clay > 0.0 {
+                let p = -0.045 * l.clay.ln() + (0.001 * solp);
+                p - (0.035 * l.cbn) + 0.43
+            } else {
+                0.4
+            };
+            if psp < 0.1 {
+                psp = 0.1;
+            }
+            if psp > 0.7 {
+                psp = 0.7;
+            }
+            if l.psp_store > 0.0 {
+                psp = (l.psp_store * 29.0 + psp * 1.0) / 30.0;
+            }
+            l.psp_store = psp;
+            let rto = psp / (1.0 - psp);
+            let mut rmp1 = l.lab - l.act * rto;
+            if rmp1 >= 0.0 {
+                rmp1 = rmp1.max(-l.lab);
+                let vara = 0.918 * (-4.603 * psp).exp();
+                let varb = (-0.238 * vara.ln()) - 1.126;
+                let mut arate = if l.a_days > 0 { vara * (l.a_days as f32).powf(varb) } else { vara * 1.0_f32.powf(varb) };
+                if arate > 0.5 {
+                    arate = 0.5;
+                }
+                if arate < 0.1 {
+                    arate = 0.1;
+                }
+                rmp1 *= arate;
+                l.a_days += 1;
+                l.b_days = 0;
+            }
+            if rmp1 < 0.0 {
+                rmp1 = rmp1.min(l.act);
+                let base = (-1.08 * psp) + 0.79;
+                let mut varc = base * e029;
+                if varc > 1.0 {
+                    varc = 1.0;
+                }
+                if varc < 0.1 {
+                    varc = 0.1;
+                }
+                rmp1 *= varc;
+                l.a_days = 0;
+                l.b_days += 1;
+            }
+            let mut as_p_coeff = 0.0023 * l.cal + 0.005;
+            if as_p_coeff > 0.05 {
+                as_p_coeff = 0.05;
+            }
+            if as_p_coeff < 0.002 {
+                as_p_coeff = 0.002;
+            }
+            let mut ssp = 25.044_f32 * (actpp + (actpp * rto)).powf(-0.3833);
+            if ssp > 10.0 {
+                ssp = 10.0;
+            }
+            if ssp < 0.7 {
+                ssp = 0.7;
+            }
+            if l.ssp_store > 0.0 {
+                ssp = (ssp + l.ssp_store * 99.0) / 100.0;
+            }
+            let mut roc = ssp * (l.act + l.act * rto);
+            roc -= l.sta;
+            roc *= as_p_coeff;
+            l.ssp_store = ssp;
+            let mut wetness = l.st / l.fc;
+            if wetness > 1.0 {
+                wetness = 1.0;
+            }
+            if wetness < 0.25 {
+                wetness = 0.25;
+            }
+            rmp1 *= wetness;
+            roc *= wetness;
+            if (solp + actpp + stap) < 10000.0 {
+                l.sta += roc;
+                if l.sta < 0.0 {
+                    l.sta = 0.0;
+                }
+                l.act = l.act - roc + rmp1;
+                if l.act < 0.0 {
+                    l.act = 0.0;
+                }
+                l.lab -= rmp1;
+                if l.lab < 0.0 {
+                    l.lab = 0.0;
+                }
+            }
+            nd.lab_min_p += rmp1;
+            nd.act_sta_p += roc;
         }
     }
 
@@ -494,6 +661,8 @@ impl Hru {
     pub(super) fn nut_nlch(&mut self, surfq: f32, b: &NutBasin, nd: &mut NutDay) {
         let anion_excl = self.anion_excl;
         let nly = self.layers.len();
+        let ldrain = self.tile.map_or(0, |t| t.ldrain);
+        let qtile = self.qtile;
         let mut percnlyr = 0.0_f32;
         for jj in 0..nly {
             let l = &mut self.layers[jj];
@@ -502,18 +671,47 @@ impl Hru {
                 l.no3 = 0.0;
             }
             let sro = if jj == 0 { surfq } else { 0.0 };
-            let vv = l.prk + sro + l.flat + 1.0e-10;
+            let mut vv = l.prk + sro + l.flat + 1.0e-10;
+            if ldrain == jj + 1 {
+                vv += qtile;
+            }
             let mut ww = -vv / ((1.0 - anion_excl) * l.ul);
             if ww < -80.0 {
                 ww = -80.0;
             }
             let vno3 = l.no3 * (1.0 - ww.exp());
-            let co = (vno3 / vv).max(0.0);
+            let mut co = (vno3 / vv).max(0.0);
             if jj == 0 {
                 nd.surqno3 = surfq * b.nperco * co;
                 nd.surqno3 = nd.surqno3.min(l.no3);
                 l.no3 = (l.no3 - nd.surqno3).max(0.0001);
             }
+            // Tile flow takes nitrate from the tile's layer down; its concentration is then the
+            // one the layer's lateral flow and percolation take too.
+            if ldrain == jj + 1 && qtile > 0.0 {
+                let (mut ul_sum, mut no3_sum) = (0.0_f32, 0.0_f32);
+                for lo in &self.layers[jj..] {
+                    ul_sum += lo.ul;
+                    no3_sum += lo.no3;
+                }
+                let vv = qtile;
+                let ww = -vv / ((1.0 - anion_excl) * ul_sum);
+                let vno3 = no3_sum * (1.0 - ww.exp());
+                co = (vno3 / vv).max(0.0);
+                nd.tileno3 = co * b.nperco_lchtile * qtile;
+                let mut left = nd.tileno3;
+                for lo in self.layers[jj..].iter_mut() {
+                    lo.no3 -= left;
+                    if lo.no3 < 0.0 {
+                        left = -lo.no3;
+                        lo.no3 = 0.0;
+                    } else {
+                        left = 0.0;
+                    }
+                }
+                nd.tileno3 -= left;
+            }
+            let l = &mut self.layers[jj];
             let mut ssfnlyr = co * l.flat;
             ssfnlyr = ssfnlyr.min(l.no3);
             nd.latno3 += ssfnlyr;
@@ -539,7 +737,14 @@ impl Hru {
             nd.surqsolp = nd.surqsolp.max(0.0);
             l.lab -= nd.surqsolp;
         }
+        let ldrain = self.tile.map_or(0, |t| t.ldrain);
+        let qtile = self.qtile;
+        // A septic biozone layer keeps its soluble P (`sep_biozone` moves it).
+        let sep_bz = self.septic.as_ref().map_or(usize::MAX, |s| s.bz);
         for ly in 0..nly {
+            if ly == sep_bz {
+                continue;
+            }
             let l = &mut self.layers[ly];
             let vap = -l.prk / (0.01 * l.st + 0.1 * b.pperco * l.bd);
             let mut plch = 0.001 * l.lab * (1.0 - exp_w(vap));
@@ -549,6 +754,14 @@ impl Hru {
                 nd.lchlabp = plch;
             } else {
                 self.layers[ly + 1].lab += plch;
+            }
+            if ly + 1 == ldrain {
+                let l = &mut self.layers[ly];
+                let vap = -qtile / (0.01 * l.st + 0.1 * b.pperco * l.bd);
+                let mut plch = 0.001 * l.lab * (1.0 - exp_w(vap));
+                plch = plch.min(l.lab);
+                l.lab -= plch;
+                nd.tilelabp = plch;
             }
         }
     }

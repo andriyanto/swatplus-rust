@@ -80,6 +80,17 @@ pub struct Project {
     /// `reservoir.res` and `hydrology.res`.
     pub res_dat: Option<Table>,
     pub res_hyd: Option<Table>,
+    /// `tiledrain.str`.
+    pub tiledrain: Option<Table>,
+    /// `filterstrip.str`, `grassedww.str` and `bmpuser.str`.
+    pub fstrip: Option<Table>,
+    pub grassww: Option<Table>,
+    pub bmpuser: Option<Table>,
+    /// `septic.str` (row 0 is SWAT+'s empty element 0) and `septic.sep`.
+    pub septic: Vec<SepticSys>,
+    pub septic_sep: Option<Table>,
+    /// `atmo.cli`.
+    pub atmodep: Option<AtmoDep>,
     /// `recall.rec` and the files it names (`recall_read`).
     pub recalls: Vec<RecallDb>,
     /// Read by these names whatever `file.cio` says: `puddle.ops`, `manure_db.frt`,
@@ -140,6 +151,45 @@ impl Project {
     }
 }
 
+/// A septic system (`septic.str`, `septic_system`), read as SWAT+ reads it (`sep_read`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SepticSys {
+    pub name: String,
+    /// The effluent type (row of `septic.sep`), the first operational year, the operation (0 not
+    /// operated, 1 active, 2 failing) and the days a failing system takes to be fixed.
+    pub typ: i32,
+    pub yr: i32,
+    pub opt: i32,
+    pub tfail: i32,
+    /// `cap`, `area`, `z`, `thk`, `strm_dist`, `density`, `bd`, `bod_dc`, `bod_conv`, `fc1`,
+    /// `fc2`, `fecal`, `plq`, `mrt`, `rsp`, `slg1`, `slg2`, `nitr`, `denitr`, `pdistrb`,
+    /// `psorpmax`, `solpslp`, `solpintc`, in this order.
+    pub r: [f32; 23],
+}
+
+impl SepticSys {
+    pub const CAP: usize = 0;
+    pub const Z: usize = 2;
+    pub const THK: usize = 3;
+    pub const BD: usize = 6;
+    pub const BOD_DC: usize = 7;
+    pub const BOD_CONV: usize = 8;
+    pub const FC1: usize = 9;
+    pub const FC2: usize = 10;
+    pub const FECAL: usize = 11;
+    pub const PLQ: usize = 12;
+    pub const MRT: usize = 13;
+    pub const RSP: usize = 14;
+    pub const SLG1: usize = 15;
+    pub const SLG2: usize = 16;
+    pub const NITR: usize = 17;
+    pub const DENITR: usize = 18;
+    pub const PDISTRB: usize = 19;
+    pub const PSORPMAX: usize = 20;
+    pub const SOLPSLP: usize = 21;
+    pub const SOLPINTC: usize = 22;
+}
+
 /// A recall object's data (`recall.rec` and its file): measured or modelled loads.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RecallDb {
@@ -162,4 +212,26 @@ pub struct RecallRow {
     pub day_mo: i32,
     pub iyr: i32,
     pub vals: [f32; 18],
+}
+
+/// `atmo.cli` (`cli_read_atmodep`): nitrogen deposition by station, average annual (`aa`),
+/// yearly (`yr`) or monthly (`mo`) from `yr_init`/`mo_init`, `num` values.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AtmoDep {
+    pub timestep: String,
+    pub mo_init: i32,
+    pub yr_init: i32,
+    pub num: usize,
+    pub stations: Vec<AtmoStation>,
+}
+
+/// A deposition station: ammonium and nitrate in rain (mg/L) and dry (kg/ha a year), one value
+/// a time step (one for `aa`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AtmoStation {
+    pub name: String,
+    pub nh4_rf: Vec<f32>,
+    pub no3_rf: Vec<f32>,
+    pub nh4_dry: Vec<f32>,
+    pub no3_dry: Vec<f32>,
 }

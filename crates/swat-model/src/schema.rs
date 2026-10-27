@@ -478,3 +478,58 @@ pub const RES_HYD: &[Field] = &[
     f("br1", R, "0."),
     f("br2", R, "0."),
 ];
+
+/// `septic.sep` (`septic_db`): the effluent of a septic tank type.
+pub const SEPTIC_SEP: &[Field] = &[
+    f("name", T, ""),
+    f("q_rate", R, "0."),
+    f("bod", R, "0."),
+    f("tss", R, "0."),
+    f("nh4_n", R, "0."),
+    f("no3_n", R, "0."),
+    f("no2_n", R, "0."),
+    f("org_n", R, "0."),
+    f("min_p", R, "0."),
+    f("org_p", R, "0."),
+    f("fcoli", R, "0."),
+];
+
+/// `filterstrip.str` (`filtstrip_operation`).
+pub const FSTRIP: &[Field] = &[f("name", T, ""), f("flag", I, "0"), f("fld_vfs", R, "0."), f("con_vfs", R, "0."), f("cha_q", R, "0.")];
+
+/// `grassedww.str` (`grwaterway_operation`).
+pub const GRASSWW: &[Field] = &[
+    f("name", T, ""),
+    f("flag", I, "0"),
+    f("mann", R, "0."),
+    f("sed_co", R, "0."),
+    f("dp", R, "0."),
+    f("wd", R, "0."),
+    f("len", R, "0."),
+    f("slp", R, "0."),
+];
+
+/// `bmpuser.str` (`bmpuser_operation`): removal shares.
+pub const BMPUSER: &[Field] = &[
+    f("name", T, ""),
+    f("flag", I, "0"),
+    f("sed_eff", R, "0."),
+    f("ptlp_eff", R, "0."),
+    f("solp_eff", R, "0."),
+    f("ptln_eff", R, "0."),
+    f("soln_eff", R, "0."),
+    f("bact_eff", R, "0."),
+];
+
+/// `tiledrain.str` (`subsurface_drainage_parameters`).
+pub const TILEDRAIN: &[Field] = &[
+    f("name", T, "null"),
+    f("depth", R, "0."),
+    f("time", R, "0."),
+    f("lag", R, "0."),
+    f("radius", R, "0."),
+    f("dist", R, "0."),
+    f("drain_co", R, "0."),
+    f("pumpcap", R, "0."),
+    f("latksat", R, "0."),
+];

@@ -100,10 +100,11 @@ const PW_BMMAX: usize = 22;
 const PW_BIOMS: usize = 1;
 
 const ALL_SUM_13: [Rule; 13] = [S; 13];
+const ALL_SUM_15: [Rule; 15] = [S; 15];
 
 /// One HRU day's values for the period tables: water balance, nutrients, losses, and plants
 /// with the weather in SWAT+'s order.
-pub fn hru_values(d: &HruDay, weather: [f32; 6]) -> ([f32; 32], [f32; 13], [f32; 13], [f32; 25]) {
+pub fn hru_values(d: &HruDay, weather: [f32; 6]) -> ([f32; 32], [f32; 15], [f32; 13], [f32; 25]) {
     let wb = d.wb.columns().map(|(_, v)| v);
     let nb = d.nb.columns().map(|(_, v)| v);
     let ls = d.ls.columns().map(|(_, v)| v);
@@ -121,7 +122,7 @@ pub fn hru_values(d: &HruDay, weather: [f32; 6]) -> ([f32; 32], [f32; 13], [f32;
 #[derive(Clone, Copy, Debug)]
 pub struct HruRows {
     pub wb: [f32; 32],
-    pub nb: [f32; 13],
+    pub nb: [f32; 15],
     pub ls: [f32; 13],
     pub pw: [f32; 25],
 }
@@ -174,7 +175,7 @@ impl PrintYears {
 #[derive(Clone, Debug)]
 pub struct HruAcc {
     wb: [[f32; 32]; 3],
-    nb: [[f32; 13]; 3],
+    nb: [[f32; 15]; 3],
     ls: [[f32; 13]; 3],
     pw: [[f32; 25]; 3],
     started: bool,
@@ -182,7 +183,7 @@ pub struct HruAcc {
 
 impl Default for HruAcc {
     fn default() -> Self {
-        HruAcc { wb: [[0.0; 32]; 3], nb: [[0.0; 13]; 3], ls: [[0.0; 13]; 3], pw: [[0.0; 25]; 3], started: false }
+        HruAcc { wb: [[0.0; 32]; 3], nb: [[0.0; 15]; 3], ls: [[0.0; 13]; 3], pw: [[0.0; 25]; 3], started: false }
     }
 }
 
@@ -207,7 +208,7 @@ impl HruAcc {
         let bm_max_m = self.pw[m][PW_BMMAX];
         let bm_max_a = self.pw[a][PW_BMMAX];
         add(&mut self.wb[m], &wb, &WB);
-        add(&mut self.nb[m], &nb, &ALL_SUM_13);
+        add(&mut self.nb[m], &nb, &ALL_SUM_15);
         add(&mut self.ls[m], &ls, &ALL_SUM_13);
         add_pw(&mut self.pw[m], &pw);
         self.pw[m][PW_BMMAX] = bm_max_m;
@@ -223,7 +224,7 @@ impl HruAcc {
             let bm_max_m = self.pw[m][PW_BMMAX];
             let (wbm, nbm, lsm, pwm) = (self.wb[m], self.nb[m], self.ls[m], self.pw[m]);
             add(&mut self.wb[y], &wbm, &WB);
-            add(&mut self.nb[y], &nbm, &ALL_SUM_13);
+            add(&mut self.nb[y], &nbm, &ALL_SUM_15);
             add(&mut self.ls[y], &lsm, &ALL_SUM_13);
             let bm_max_y = self.pw[y][PW_BMMAX];
             add_pw(&mut self.pw[y], &pwm);
@@ -238,7 +239,7 @@ impl HruAcc {
             self.wb[m] = [0.0; 32];
             self.wb[m][WB_SW_INIT] = sw;
             self.wb[m][WB_SNO_INIT] = sno;
-            self.nb[m] = [0.0; 13];
+            self.nb[m] = [0.0; 15];
             self.ls[m] = [0.0; 13];
             self.pw[m] = [0.0; 25];
         }
@@ -246,7 +247,7 @@ impl HruAcc {
             let bm_max_y = self.pw[y][PW_BMMAX];
             let (wby, nby, lsy, pwy) = (self.wb[y], self.nb[y], self.ls[y], self.pw[y]);
             add(&mut self.wb[a], &wby, &WB);
-            add(&mut self.nb[a], &nby, &ALL_SUM_13);
+            add(&mut self.nb[a], &nby, &ALL_SUM_15);
             add(&mut self.ls[a], &lsy, &ALL_SUM_13);
             add_pw(&mut self.pw[a], &pwy);
             ave(&mut self.wb[y], c.day_end_yr, &WB);
@@ -263,7 +264,7 @@ impl HruAcc {
             self.wb[y] = [0.0; 32];
             self.wb[y][WB_SW_INIT] = sw;
             self.wb[y][WB_SNO_INIT] = sno;
-            self.nb[y] = [0.0; 13];
+            self.nb[y] = [0.0; 15];
             self.ls[y] = [0.0; 13];
             self.pw[y] = [0.0; 25];
         }
@@ -277,7 +278,7 @@ impl HruAcc {
             wba[WB_SNO_INIT] = sno_init;
             wba[WB_SNO_FINAL] = wb[WB_SNO_FINAL];
             let mut nba = self.nb[a];
-            div(&mut nba, c.yrs_prt, &ALL_SUM_13);
+            div(&mut nba, c.yrs_prt, &ALL_SUM_15);
             let mut lsa = self.ls[a];
             div(&mut lsa, c.yrs_prt, &ALL_SUM_13);
             let mut pwa = self.pw[a];
@@ -475,9 +476,11 @@ pub fn region_add(r: &mut HruRows, h: &HruRows, c: f32) {
     }
     r.wb[WB_SW_FINAL] += h.wb[WB_SW_FINAL] * c;
     r.wb[WB_SNO_FINAL] += h.wb[WB_SNO_FINAL] * c;
-    for k in 0..13 {
+    for k in 0..15 {
         let x = if (k == 9 || k == 10) && h.nb[k] < 1.0e-10 { 0.0 } else { h.nb[k] * c };
         r.nb[k] += x;
+    }
+    for k in 0..13 {
         r.ls[k] += h.ls[k] * c;
     }
     for k in 0..25 {
@@ -488,7 +491,7 @@ pub fn region_add(r: &mut HruRows, h: &HruRows, c: f32) {
 
 /// An empty region day, keeping the soil water and snow at its start.
 pub fn region_start(prev: &HruRows) -> HruRows {
-    let mut r = HruRows { wb: [0.0; 32], nb: [0.0; 13], ls: [0.0; 13], pw: [0.0; 25] };
+    let mut r = HruRows { wb: [0.0; 32], nb: [0.0; 15], ls: [0.0; 13], pw: [0.0; 25] };
     r.wb[WB_SW_INIT] = prev.wb[WB_SW_INIT];
     r.wb[WB_SNO_INIT] = prev.wb[WB_SNO_INIT];
     r
@@ -502,7 +505,7 @@ pub struct RegionAcc {
     /// printed).
     pub d_init: [f32; 2],
     wb: [[f32; 32]; 3],
-    nb: [[f32; 13]; 3],
+    nb: [[f32; 15]; 3],
     ls: [[f32; 13]; 3],
     pw: [[f32; 25]; 3],
     point: bool,
@@ -514,7 +517,7 @@ impl RegionAcc {
         RegionAcc {
             d_init: [0.0; 2],
             wb: [[0.0; 32]; 3],
-            nb: [[0.0; 13]; 3],
+            nb: [[0.0; 15]; 3],
             ls: [[0.0; 13]; 3],
             pw: [[0.0; 25]; 3],
             point,
@@ -551,7 +554,7 @@ impl RegionAcc {
     pub fn day(&mut self, d: &HruRows, c: &PeriodDay, mut emit: impl FnMut(Period, &HruRows)) {
         let (m, y, a) = (0, 1, 2);
         add(&mut self.wb[m], &d.wb, &WB);
-        add(&mut self.nb[m], &d.nb, &ALL_SUM_13);
+        add(&mut self.nb[m], &d.nb, &ALL_SUM_15);
         add(&mut self.ls[m], &d.ls, &ALL_SUM_13);
         add_pw(&mut self.pw[m], &d.pw);
         let point = |p: [f32; 25], on: bool| {
@@ -565,7 +568,7 @@ impl RegionAcc {
         if c.end_mo {
             let (wbm, nbm, lsm, pwm) = (self.wb[m], self.nb[m], self.ls[m], self.pw[m]);
             add(&mut self.wb[y], &wbm, &WB);
-            add(&mut self.nb[y], &nbm, &ALL_SUM_13);
+            add(&mut self.nb[y], &nbm, &ALL_SUM_15);
             add(&mut self.ls[y], &lsm, &ALL_SUM_13);
             add_pw(&mut self.pw[y], &pwm);
             ave(&mut self.wb[m], c.mon_days, &WB);
@@ -577,14 +580,14 @@ impl RegionAcc {
             self.wb[m] = [0.0; 32];
             self.wb[m][WB_SW_INIT] = sw;
             self.wb[m][WB_SNO_INIT] = sno;
-            self.nb[m] = [0.0; 13];
+            self.nb[m] = [0.0; 15];
             self.ls[m] = [0.0; 13];
             self.pw[m] = [0.0; 25];
         }
         if c.end_yr {
             let (wby, nby, lsy, pwy) = (self.wb[y], self.nb[y], self.ls[y], self.pw[y]);
             add(&mut self.wb[a], &wby, &WB);
-            add(&mut self.nb[a], &nby, &ALL_SUM_13);
+            add(&mut self.nb[a], &nby, &ALL_SUM_15);
             add(&mut self.ls[a], &lsy, &ALL_SUM_13);
             add_pw(&mut self.pw[a], &pwy);
             ave(&mut self.wb[y], c.day_end_yr, &WB);
@@ -596,7 +599,7 @@ impl RegionAcc {
             self.wb[y] = [0.0; 32];
             self.wb[y][WB_SW_INIT] = sw;
             self.wb[y][WB_SNO_INIT] = sno;
-            self.nb[y] = [0.0; 13];
+            self.nb[y] = [0.0; 15];
             self.ls[y] = [0.0; 13];
             self.pw[y] = [0.0; 25];
         }
@@ -610,7 +613,7 @@ impl RegionAcc {
             wba[WB_SNO_INIT] = sno_init;
             wba[WB_SNO_FINAL] = d.wb[WB_SNO_FINAL];
             let mut nba = self.nb[a];
-            div(&mut nba, c.yrs_prt, &ALL_SUM_13);
+            div(&mut nba, c.yrs_prt, &ALL_SUM_15);
             let mut lsa = self.ls[a];
             div(&mut lsa, c.yrs_prt, &ALL_SUM_13);
             let mut pwa = self.pw[a];

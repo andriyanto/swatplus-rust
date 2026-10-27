@@ -193,6 +193,27 @@ pub fn load_project(src: &dyn FileSource) -> Result<(Project, LoadReport)> {
             *dst = Some(table::read_table(&name, &text, fields)?);
         }
     }
+    if let Some((name, text)) = fetch("structural", "tiledrain_str")? {
+        project.tiledrain = Some(table::read_table(&name, &text, schema::TILEDRAIN)?);
+    }
+    if let Some((_, text)) = fetch("structural", "septic_str")? {
+        project.septic = crate::septic::read_septic(&text);
+    }
+    if let Some((name, text)) = fetch("hru_parm_db", "septic_sep")? {
+        project.septic_sep = Some(table::read_table(&name, &text, schema::SEPTIC_SEP)?);
+    }
+    for (slot, fields, dst) in [
+        ("fstrip_str", schema::FSTRIP, &mut project.fstrip),
+        ("grassww_str", schema::GRASSWW, &mut project.grassww),
+        ("bmpuser_str", schema::BMPUSER, &mut project.bmpuser),
+    ] {
+        if let Some((name, text)) = fetch("structural", slot)? {
+            *dst = Some(table::read_table(&name, &text, fields)?);
+        }
+    }
+    if let Some((name, text)) = fetch("climate", "atmo_cli")? {
+        project.atmodep = Some(climate::read_atmodep(&name, &text)?);
+    }
     if let Some((name, text)) = fetch("recall", "recall_rec")? {
         project.recalls = crate::recall::read_recalls(src, &name, &text)?;
     }

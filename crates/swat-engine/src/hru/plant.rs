@@ -430,7 +430,7 @@ pub struct PlantWeather {
 }
 
 /// Variables the Fortran keeps from one call to the next (implicit SAVE), shared by all HRUs.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Saved {
     /// The random number seed of decision table conditions (`rndseed_cond`).
     pub rndseed_cond: i32,
@@ -454,6 +454,8 @@ pub struct Saved {
     /// `pest_enrsb`'s enrichment ratio (`enratio` of the HRU module; `varinit` zeroes a local of
     /// the same name), so `swr_subwq` uses the last one computed for any HRU.
     pub enratio: f32,
+    /// Each septic system type's operation (`sep(isep)%opt`), shared by its HRUs.
+    pub septic_opt: Vec<i32>,
 }
 
 impl Default for Saved {
@@ -470,6 +472,7 @@ impl Default for Saved {
             fr_stamin: 0.0,
             c_microb_sed: 0.0,
             enratio: 0.0,
+            septic_opt: Vec::new(),
         }
     }
 }

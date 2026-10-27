@@ -20,6 +20,16 @@ null). Hard calibration (calibration.cal) keeps its HRUs, renumbered.
             120-day rice, split urea and SP-36. The parameters and their sources are in
             docs/paddy.md.
 
+  Ps_musk   Ps_coast with its channels routed by Muskingum (codes.bsn rte_cha 1) instead of the
+            variable storage method.
+
+  Ps_atmo   Ps_coast with monthly nitrogen deposition (atmo.cli), 2015-2017: two deposition
+            stations for its weather stations in turn; dry deposition three times higher in the
+            haze of September-October 2015 (docs/atmo.md).
+
+  Ps_tile   Ps_coast with its oil palm drained (tiledrain.str peat_canal): drains 600 mm deep,
+            the water table Indonesian peat rules keep under 0.4 m (docs/structures.md).
+
 usage: scripts/make-pessel-variants.py <Pessel folder> <output folder>
 """
 import os
@@ -463,8 +473,170 @@ def ps_paddy(base, dst):
     print(f"{os.path.basename(dst)}: {n} rice HRUs as paddies")
 
 
+def ps_musk(base, dst):
+    """A copy of project `base` routing its channels by Muskingum."""
+    if os.path.exists(dst):
+        shutil.rmtree(dst)
+    shutil.copytree(base, dst)
+    path = os.path.join(dst, "codes.bsn")
+    lines = read(path)
+    k = lines[1].split().index("rte_cha")
+    lines[2] = set_field(lines[2], k, "1")
+    write(path, lines)
+    print(f"{os.path.basename(dst)}: Muskingum routing")
+
+
+def ps_atmo(base, dst):
+    """A copy of project `base` (2015-2017) with monthly nitrogen deposition."""
+    if os.path.exists(dst):
+        shutil.rmtree(dst)
+    shutil.copytree(base, dst)
+
+    def p(name):
+        return os.path.join(dst, name)
+
+    # (name, rain NH4-N, rain NO3-N in mg/L, dry NH4-N, dry NO3-N in kg/ha a year)
+    stations = [("dep_inland", 0.15, 0.25, 1.5, 1.0), ("dep_coast", 0.30, 0.30, 2.5, 1.5)]
+    months = [(y, m) for y in (2015, 2016, 2017) for m in range(1, 13)]
+    lines = ["atmo.cli: Ps_atmo (scripts/make-pessel-variants.py)", "num_sta timestep mo_init yr_init num",
+             f"{len(stations)}  mo  1  2015  {len(months)}"]
+    for name, nh4, no3, dnh4, dno3 in stations:
+        haze = [3.0 if (y, m) in ((2015, 9), (2015, 10)) else 1.0 for y, m in months]
+        lines.append(name)
+        lines.append(" ".join(f"{nh4:.3f}" for _ in months))
+        lines.append(" ".join(f"{no3:.3f}" for _ in months))
+        lines.append(" ".join(f"{dnh4 * h:.3f}" for h in haze))
+        lines.append(" ".join(f"{dno3 * h:.3f}" for h in haze))
+    write(p("atmo.cli"), lines + [""])
+    sta = read(p("weather-sta.cli"))
+    k = sta[1].split().index("atmo_dep")
+    for i in range(2, len(sta)):
+        if sta[i].split():
+            sta[i] = set_field(sta[i], k, stations[i % 2][0])
+    write(p("weather-sta.cli"), sta)
+    cio = read(p("file.cio"))
+    for i, line in enumerate(cio):
+        t = line.split()
+        if t and t[0] == "climate":
+            assert t[9] == "null", t
+            t[9] = "atmo.cli"
+            cio[i] = t[0].ljust(18) + "".join(x.ljust(18) for x in t[1:])
+    write(p("file.cio"), cio)
+    print(f"{os.path.basename(dst)}: monthly nitrogen deposition")
+
+
+def ps_tile(base, dst):
+    """A copy of project `base` with its oil palm on drains."""
+    if os.path.exists(dst):
+        shutil.rmtree(dst)
+    shutil.copytree(base, dst)
+    path = os.path.join(dst, "tiledrain.str")
+    lines = read(path)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    # depth (mm), time to drain to field capacity (h), lag (h), radius (mm), spacing (mm),
+    # drainage coefficient (mm a day), pump capacity, lateral conductivity factor.
+    lines.append("peat_canal           600.00000      48.00000      96.00000     100.00000   30000.00000      20.00000       0.00000       1.00000  ")
+    write(path, lines + [""])
+    path = os.path.join(dst, "landuse.lum")
+    lines = read(path)
+    k = lines[1].split().index("tile")
+    for i in range(2, len(lines)):
+        if lines[i].startswith("oilp_lum"):
+            lines[i] = set_field(lines[i], k, "peat_canal")
+    write(path, lines)
+    print(f"{os.path.basename(dst)}: oil palm on drains")
+
+
+def ps_bmp(base, dst):
+    """A copy of project `base` with filter strips along its oil palm, grassed waterways in its
+    row crops and the editor's user-defined practice on its generic agricultural land."""
+    if os.path.exists(dst):
+        shutil.rmtree(dst)
+    shutil.copytree(base, dst)
+    path = os.path.join(dst, "filterstrip.str")
+    lines = read(path)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    # SWAT's documented defaults (field 40 times the strip, half the runoff into its most
+    # concentrated tenth, none of it channelized), White and Arnold (2009).
+    lines.append("riparian                 1      40.00000       0.50000       0.00000  Riparian_buffer")
+    write(path, lines + [""])
+    path = os.path.join(dst, "landuse.lum")
+    lines = read(path)
+    h = lines[1].split()
+    for i in range(2, len(lines)):
+        if lines[i].startswith("oilp_lum"):
+            lines[i] = set_field(lines[i], h.index("vfs"), "riparian")
+        elif lines[i].startswith("agrr_lum"):
+            lines[i] = set_field(lines[i], h.index("grww"), "grwway_low")
+        elif lines[i].startswith("agrl_lum"):
+            lines[i] = set_field(lines[i], h.index("bmp"), "bmpusr1")
+    write(path, lines)
+    print(f"{os.path.basename(dst)}: filter strips, grassed waterways, user practice")
+
+
+def ps_septic(base, dst):
+    """A copy of project `base` with septic systems under the villages of its dry fields."""
+    if os.path.exists(dst):
+        shutil.rmtree(dst)
+    shutil.copytree(base, dst)
+    path = os.path.join(dst, "septic.str")
+    lines = read(path)
+    h = lines[1].split()
+    for i in range(2, len(lines)):
+        if lines[i].startswith("standard"):
+            # Operated, for a household of four (BPS); the editor's biozone 0.5 m deep and
+            # 50 mm thick (Jeong et al. 2011).
+            lines[i] = set_field(set_field(lines[i], h.index("operation"), "1"), h.index("residents"), "4.00000")
+    write(path, lines)
+    path = os.path.join(dst, "landuse.lum")
+    lines = read(path)
+    h = lines[1].split()
+    for i in range(2, len(lines)):
+        if lines[i].startswith("agrr_lum"):
+            lines[i] = set_field(lines[i], h.index("sep"), "standard")
+    write(path, lines)
+    print(f"{os.path.basename(dst)}: septic systems in the dry fields")
+
+
+def ps_solp(base, dst):
+    """A copy of project `base` with the dynamic soil P model (`codes.bsn` soil_p 1)."""
+    if os.path.exists(dst):
+        shutil.rmtree(dst)
+    shutil.copytree(base, dst)
+    path = os.path.join(dst, "codes.bsn")
+    lines = read(path)
+    lines[2] = set_field(lines[2], lines[1].split().index("soil_p"), "1")
+    write(path, lines)
+    print(f"{os.path.basename(dst)}: dynamic soil P")
+
+
+def ps_urban(base, dst):
+    """A copy of project `base` whose generic farmland is a medium-density town, its loads from
+    the USGS regression equations (`urb_ro` usgs_reg)."""
+    if os.path.exists(dst):
+        shutil.rmtree(dst)
+    shutil.copytree(base, dst)
+    path = os.path.join(dst, "landuse.lum")
+    lines = read(path)
+    h = lines[1].split()
+    for i in range(2, len(lines)):
+        if lines[i].startswith("agrl_lum"):
+            lines[i] = set_field(set_field(lines[i], h.index("urban"), "urmd"), h.index("urb_ro"), "usgs_reg")
+    write(path, lines)
+    print(f"{os.path.basename(dst)}: a town by the USGS regressions")
+
+
 if __name__ == "__main__":
     src, out = sys.argv[1], sys.argv[2]
     os.makedirs(out, exist_ok=True)
     ps_coast(src, out)
     ps_paddy(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_paddy"))
+    ps_musk(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_musk"))
+    ps_atmo(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_atmo"))
+    ps_tile(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_tile"))
+    ps_bmp(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_bmp"))
+    ps_septic(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_septic"))
+    ps_solp(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_solp"))
+    ps_urban(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_urban"))

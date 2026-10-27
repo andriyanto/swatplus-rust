@@ -7,10 +7,12 @@
 //! (`nutrient`) or of the carbon model (`carbon`, `cswat` 2), and dated management (`mgt`). [`init_hrus`] says which inputs
 //! need what isn't ported yet.
 
+pub mod bmp;
 pub mod carbon;
 pub mod mgt;
 pub mod nutrient;
 pub mod plant;
+pub mod septic;
 pub mod wetland;
 
 use std::ops::Add;
@@ -55,6 +57,14 @@ pub struct Layer {
     pub cbn: f32,
     pub wpmm: f32,
     pub usle_k: f32,
+    /// Calcium carbonate (%), and the dynamic P model's (`sol_p_model` 1) running sorption
+    /// and stable P ratios and days since a P surplus or deficit (`psp_store`, `ssp_store`,
+    /// `a_days`, `b_days`).
+    pub cal: f32,
+    pub psp_store: f32,
+    pub ssp_store: f32,
+    pub a_days: i32,
+    pub b_days: i32,
     /// The day's percolation out of the layer and lateral flow from it (`ly%prk`, `ly%flat`).
     pub prk: f32,
     pub flat: f32,
@@ -76,6 +86,19 @@ pub struct Layer {
     /// The tillage part of `tillagef`, and the biological mixing efficiency of the day (`ly%bmix`).
     pub tillagef_tillmix: f32,
     pub bmix: f32,
+}
+
+/// A tile drain (`tiledrain.str`): its depth (mm), the time to drain the soil to field capacity
+/// (h), the drainage coefficient (mm a day), and the layer it is in (1-based, 0 for none).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Tile {
+    pub depth: f32,
+    pub time: f32,
+    pub drain_co: f32,
+    pub ldrain: usize,
+    /// The lag (h) and the share of the held-back tile flow released a day (`tile_ttime`).
+    pub lag: f32,
+    pub ttime: f32,
 }
 
 /// Snow parameters (`snow.sno` row).
@@ -206,6 +229,19 @@ pub struct Hru {
     /// The initial soil water as a share of field capacity (`soil%ffc`), and `hyd%epco`.
     pub ffc: f32,
     pub epco: f32,
+    /// Tile drains (`hru%sdr`), if any, and today's tile flow (mm, `qtile`).
+    pub tile: Option<Tile>,
+    pub qtile: f32,
+    /// Filter strips, grassed waterways and user-defined practices.
+    pub bmps: bmp::Bmps,
+    /// A septic system, when its type is operated, and its type's operation today.
+    pub septic: Option<septic::Septic>,
+    pub sep_opt: i32,
+    /// Tile flow and its nitrate held back (`bss(3)`, `bss(4)`).
+    pub bss_tile: f32,
+    pub bss_tno3: f32,
+    /// The last day's atmospheric nitrate and ammonium (kg/ha), printed again on days without.
+    pub atmo_prev: [f32; 2],
     /// A paddy's target and threshold ponding depths (mm, `hru%irr_hmax`, `irr_hmin`).
     pub irr_hmax: f32,
     pub irr_hmin: f32,
@@ -275,12 +311,15 @@ pub struct HruNb {
     pub org_lab_p: f32,
     pub rsd_nitorg_n: f32,
     pub rsd_laborg_p: f32,
+    /// Nitrate and ammonium from the atmosphere, in rain and dry (`no3atmo`, `nh4atmo`).
+    pub no3atmo: f32,
+    pub nh4atmo: f32,
     pub nuptake: f32,
     pub puptake: f32,
 }
 
 impl HruNb {
-    pub fn columns(&self) -> [(&'static str, f32); 13] {
+    pub fn columns(&self) -> [(&'static str, f32); 15] {
         [
             ("lab_min_p", self.lab_min_p),
             ("act_sta_p", self.act_sta_p),
@@ -293,6 +332,8 @@ impl HruNb {
             ("org_lab_p", self.org_lab_p),
             ("rsd_nitorg_n", self.rsd_nitorg_n),
             ("rsd_laborg_p", self.rsd_laborg_p),
+            ("no3atmo", self.no3atmo),
+            ("nh4atmo", self.nh4atmo),
             ("nuptake", self.nuptake),
             ("puptake", self.puptake),
         ]
@@ -371,6 +412,7 @@ pub struct DayCtx {
     /// The station's precipitation (mm), and the year's last day.
     pub station_precip: f32,
     pub day_end_yr: i32,
+    pub yrc: i32,
     pub end_yr: bool,
 }
 
@@ -614,12 +656,6 @@ pub fn init_hrus(
     if codes.cswat != 0 && codes.cswat != 2 {
         return Err(format!("carbon model {}", codes.cswat));
     }
-    if codes.sol_p_model != 0 {
-        return Err("soil phosphorus model 1 (nut_pminrl2)".into());
-    }
-    if project.cio.file("climate", "atmo_cli").is_some() {
-        return Err("atmospheric deposition".into());
-    }
     if step > 1 {
         return Err("sub-daily time steps".into());
     }
@@ -643,10 +679,12 @@ pub fn init_hrus(
     let surlag = project.params.get("surlag").unwrap_or(4.0);
     let hru_objs: Vec<_> = project.objects_of(swat_model::ObjectKind::Hru).collect();
     let mut out = Vec::with_capacity(project.hru_data.len());
+    // soil_nutcarb_init's `psp`, kept from the last layer for a layer without clay.
+    let mut psp_saved = 0.0_f32;
     for (i, hd) in project.hru_data.iter().enumerate() {
         let ob = hru_objs.get(i).ok_or_else(|| format!("HRU {} has no object in hru.con", i + 1))?;
         let g = wgn.get(i).and_then(|&k| wgns.get(k)).ok_or_else(|| format!("HRU {}: no weather generator", i + 1))?;
-        let mut h = init_hru(project, hd, ob, g, ffcb, ndays)?;
+        let mut h = init_hru(project, hd, ob, g, ffcb, ndays, &mut psp_saved)?;
         h.wgn = wgn.get(i).copied().unwrap_or(0);
         init_bmix(&mut h, &bmix);
         time_conc(&mut h, surlag);
@@ -721,8 +759,9 @@ fn cal_conditions(project: &Project, hrus: &mut [Hru]) -> Result<(), String> {
         for e in elems {
             let h = hrus.get_mut(e.wrapping_sub(1)).ok_or_else(|| format!("calibration of {}: HRU {e}", u.name))?;
             match u.name.as_str() {
+                // Not for tile-drained HRUs.
+                "perco" | "cn3_swf" if h.tile.is_some() => {}
                 "perco" => {
-                    // Not for tile-drained HRUs (none are, so far).
                     h.perco = chg(h.perco);
                     h.perco_lim = if h.perco > 1.0e-6 {
                         let perc_ln_func = 1.0052_f32 * (-(h.perco - 1.0e-6).ln()).ln() + 5.6862;
@@ -829,15 +868,10 @@ fn init_hru(
     g: &crate::climate::WgnState,
     ffcb: f32,
     ndays: &[i32; 13],
+    psp_saved: &mut f32,
 ) -> Result<Hru, String> {
     let n = &hd.name;
     let (lu, lu_found) = Row::find_or_first(project.landuse.as_ref(), schema::LANDUSE, &hd.land_use_mgt);
-    for f in ["tiledrain", "septic", "fstrip", "grassww", "bmpuser"] {
-        let v = lu.text(f);
-        if lu_found && !is_null(v) && !v.is_empty() {
-            return Err(format!("{n}: land use {} has {f} {v}", hd.land_use_mgt));
-        }
-    }
 
     let mut h = Hru {
         area_ha: ob.area_ha,
@@ -869,7 +903,14 @@ fn init_hru(
         let x = |f: &str| t.real(r, f).unwrap_or(0.0);
         let ro = match lu.text("urb_ro") {
             "buildup_washoff" => UrbanRunoff::BuildupWashoff,
-            "usgs_reg" => return Err(format!("{n}: urban loads by USGS regression (usgs_reg)")),
+            // regres: the precipitation category of the HRU's weather generator.
+            "usgs_reg" => UrbanRunoff::UsgsReg(if g.pcp_an < 508.0 {
+                0
+            } else if g.pcp_an < 1016.0 {
+                1
+            } else {
+                2
+            }),
             _ => UrbanRunoff::None,
         };
         h.urban = Some(Urban {
@@ -904,8 +945,33 @@ fn init_hru(
     h.esco = hyd.real("esco");
     h.epco = hyd.real("epco");
     h.cn3_swf = hyd.real("cn3_swf");
-    let perco = hyd.real("perco");
+    if hyd.real("lat_sed") > 0.0 {
+        return Err(format!("{n}: sediment in lateral flow (lat_sed)"));
+    }
+    let mut perco = hyd.real("perco");
+    // topohyd_init: a tile-drained HRU's curve number and percolation are set for tiles.
+    let tile_name = lu.text("tiledrain").to_string();
+    if lu_found && !is_null(&tile_name) && !tile_name.is_empty() {
+        let t = project.tiledrain.as_ref().and_then(|t| t.find(&tile_name).map(|r| (t, r)));
+        let Some((t, r)) = t else {
+            return Err(format!("{n}: tile drain {tile_name} not in tiledrain.str"));
+        };
+        if project.codes.tdrn == 1 {
+            return Err(format!("{n}: tile drains by the DRAINMOD equations"));
+        }
+        if project.codes.wtdn == 1 {
+            return Err(format!("{n}: tile drains with the water table of the soil moisture (wtable 1)"));
+        }
+        let x = |f: &str| t.real(r, f).unwrap_or(0.0);
+        h.tile = Some(Tile { depth: x("depth"), time: x("time"), drain_co: x("drain_co"), ldrain: 0, lag: x("lag"), ttime: 0.0 });
+        h.cn3_swf = 0.95;
+        perco = 0.1;
+    }
     h.perco = perco;
+    // structure_init
+    if lu_found {
+        h.bmps = bmp::init(project, [lu.text("fstrip"), lu.text("grassww"), lu.text("bmpuser")], h.km, h.slope);
+    }
     h.sno = Snow {
         falltmp: sno.real("falltmp"),
         melttmp: sno.real("melttmp"),
@@ -939,6 +1005,29 @@ fn init_hru(
         .find(|s| swat_model::table::fortran_eq(&s.name, &hd.soil))
         .ok_or_else(|| format!("{n}: soil {} not found", hd.soil))?;
     soil_layers(&mut h, soil, project.soil_lyr_depths.as_deref())?;
+    // proc_hru and soils_init: an operated septic system's biozone layer.
+    let sep_name = lu.text("septic");
+    if lu_found
+        && let Some(isep) = (1..project.septic.len()).find(|&k| project.septic[k].name == sep_name)
+        && project.septic[isep].opt != 0
+    {
+        let s = &project.septic[isep];
+        if project.codes.cswat != 0 {
+            return Err(format!("{n}: septic system with carbon model {}", project.codes.cswat));
+        }
+        let bz = septic::biozone(&mut h.layers, s).map_err(|e| format!("{n}: {e}"))?;
+        let mut eff = [0.0_f32; 10];
+        if let Some(t) = project.septic_sep.as_ref()
+            && s.typ >= 1
+            && (s.typ as usize) <= t.rows.len()
+        {
+            let r = s.typ as usize - 1;
+            for (k, f) in ["q_rate", "bod", "tss", "nh4_n", "no3_n", "no2_n", "org_n", "min_p", "org_p", "fcoli"].iter().enumerate() {
+                eff[k] = t.real(r, f).unwrap_or(0.0);
+            }
+        }
+        h.septic = Some(septic::Septic { isep, yr: s.yr, tfail: s.tfail, r: s.r, eff, bz, ..Default::default() });
+    }
 
     // plant_init: the community named by the land use (none when the name isn't in plant.ini).
     let com = if lu_found && !is_null(lu.text("plant_cov")) {
@@ -1055,6 +1144,12 @@ fn init_hru(
         }
     }
     h.zmx = h.layers.last().map(|l| l.d).unwrap_or(0.0);
+    // structure_set_parms: the layer the tiles are in.
+    let depths: Vec<f32> = h.layers.iter().map(|l| l.d).collect();
+    if let Some(t) = h.tile.as_mut() {
+        t.ldrain = if t.depth > 0.0 { depths.iter().position(|&d| t.depth < d).map_or(0, |k| k + 1) } else { 0 };
+        t.ttime = if t.ldrain > 0 && t.lag > 0.01 { 1.0 - (-24.0 / t.lag).exp() } else { 0.0 };
+    }
     h.lat_ttime = if h.lat_ttime <= 0.0 {
         let mut scmx = 0.0_f32;
         for l in &h.layers {
@@ -1091,7 +1186,7 @@ fn init_hru(
             hum_c_p: x("hum_c_p"),
         };
     }
-    h.nutcarb_init(&test, project.params.get("psp").unwrap_or(0.4), project.codes.cswat);
+    h.nutcarb_init(&test, project.params.get("psp").unwrap_or(0.4), project.codes.cswat, project.codes.sol_p_model, psp_saved);
     if project.codes.cswat == 2 {
         h.carbon_init(&carbon::CarbonBasin::new(project));
     }
@@ -1165,11 +1260,11 @@ fn custom_layers(soil: &Soil, depths: &[i32]) -> Vec<Layer> {
             }
             d = csld as f32;
         }
-        let mut sum = [0.0_f32; 10];
+        let mut sum = [0.0_f32; 11];
         let mut n = 0;
         for jj in pcd..=csld {
             let l = &db[cell.get(jj.max(0) as usize).copied().unwrap_or(0)];
-            for (s, v) in sum.iter_mut().zip([l.bd, l.awc, l.k, l.cbn, l.clay, l.silt, l.sand, l.rock, l.alb, l.usle_k]) {
+            for (s, v) in sum.iter_mut().zip([l.bd, l.awc, l.k, l.cbn, l.clay, l.silt, l.sand, l.rock, l.alb, l.usle_k, l.cal]) {
                 *s += v;
             }
             n += 1;
@@ -1187,6 +1282,7 @@ fn custom_layers(soil: &Soil, depths: &[i32]) -> Vec<Layer> {
             rock: sum[7] / nf,
             alb: sum[8] / nf,
             usle_k: sum[9] / nf,
+            cal: sum[10] / nf,
             ..Layer::default()
         });
         pcd = csld + 1;
@@ -1211,6 +1307,7 @@ fn soil_layers(h: &mut Hru, soil: &Soil, depths: Option<&[i32]>) -> Result<(), S
         alb: l.alb,
         cbn: l.cbn,
         usle_k: l.usle_k,
+        cal: l.cal,
         ..Layer::default()
     };
     let mut layers = vec![from(first, 10.0)];
@@ -1259,6 +1356,10 @@ fn soil_layers(h: &mut Hru, soil: &Soil, depths: Option<&[i32]>) -> Result<(), S
         }
         if l.rock > 98.0 {
             l.rock = 98.0;
+        }
+        // The average calcium carbonate of 20,000 SSURGO soils when none is given.
+        if l.cal <= 1.0e-6 {
+            l.cal = 2.8;
         }
     }
     for l in layers.iter_mut() {
@@ -1428,7 +1529,8 @@ impl Hru {
         let eaj = (-5.0e-5_f32 * (cover + 0.1)).exp();
         let albday = if self.sno_mm <= 0.5 { if self.lai_sum > 0.0 { 0.23 * (1.0 - eaj) + alb1 * eaj } else { alb1 } } else { 0.8 };
 
-        self.soil_temperature(w, albday, c.tmp_an);
+        self.sep_opt = self.septic.as_ref().map_or(0, |s| saved.septic_opt[s.isep]);
+        self.soil_temperature(w, albday, c.tmp_an, c.yrc);
 
         // sq_canopyint
         if !(self.lai_sum < 0.001 || self.laimx_sum < 0.001) {
@@ -1556,7 +1658,18 @@ impl Hru {
             nd.denit = self.cbn_zhang2(cb, bm);
         }
         self.nut_nitvol();
-        self.nut_pminrl(&b.nut, &mut nd);
+        if b.nut.sol_p_model == 1 {
+            self.nut_pminrl2(&mut nd);
+        } else {
+            self.nut_pminrl(&b.nut, &mut nd);
+        }
+        // sep_biozone
+        if let Some(sp) = self.septic.as_mut() {
+            let opt = &mut saved.septic_opt[sp.isep];
+            if *opt != 0 && c.yrc >= sp.yr && self.layers[sp.bz].tmp > 0.0 {
+                septic::sep_biozone(sp, &mut self.layers, self.area_ha, opt);
+            }
+        }
 
         // pl_community and pl_grow
         let mut pd = PlantDay { ep_max, pet_day, vpd, ..PlantDay::default() };
@@ -1614,11 +1727,27 @@ impl Hru {
                 nd.sedorgn = self.nut_orgnc2(surfq, nd.sedyld, nd.enratio, cb, saved);
             }
         }
+        // nut_nrain: nitrate and ammonium in rain and dry deposition, into the top layer.
+        // Past the deposition data nothing is added, and the table repeats the last day's
+        // (`hnb_d` isn't zeroed).
+        if let Some([no3_rf, no3_dry, nh4_rf, nh4_dry]) = w.atmo {
+            nd.no3atmo = 0.01 * no3_rf * w.precip + no3_dry;
+            if let Some(l) = self.layers.first_mut() {
+                l.no3 += nd.no3atmo;
+            }
+            nd.nh4atmo = 0.01 * nh4_rf * w.precip + nh4_dry;
+            if let Some(l) = self.layers.first_mut() {
+                l.nh4 += nd.nh4atmo;
+            }
+            self.atmo_prev = [nd.no3atmo, nd.nh4atmo];
+        } else {
+            [nd.no3atmo, nd.nh4atmo] = self.atmo_prev;
+        }
         self.nut_nlch(surfq, &b.nut, &mut nd);
         self.nut_solp(surfq, &b.nut, &mut nd);
 
         // hru_urban: loads washed off the impervious area.
-        let silyld = self.hru_urban(surfq, c.precip_half_hr, &mut nd);
+        let silyld = self.hru_urban(surfq, c.precip_half_hr, w.precip, &mut nd);
 
         // stor_surfstor: sediment and its nutrients lag like runoff.
         let brt = self.brt;
@@ -1664,13 +1793,49 @@ impl Hru {
         }
         self.bss -= latq;
         self.bss_no3 -= latno3;
+        // The tile flow and its nitrate are lagged the same way, by the tiles' lag.
+        let (mut qtile, mut tileno3) = (0.0_f32, 0.0_f32);
+        if let Some(t) = self.tile {
+            self.bss_tile += self.qtile;
+            self.bss_tno3 += nd.tileno3;
+            if self.bss_tile < 1.0e-6 {
+                self.bss_tile = 0.0;
+            }
+            if self.bss_tno3 < 1.0e-6 {
+                self.bss_tno3 = 0.0;
+            }
+            qtile = self.bss_tile * t.ttime;
+            tileno3 = self.bss_tno3 * t.ttime;
+            if qtile < 1.0e-6 {
+                qtile = 0.0;
+            }
+            if tileno3 < 1.0e-6 {
+                tileno3 = 0.0;
+            }
+            self.bss_tile -= qtile;
+            self.bss_tno3 -= tileno3;
+        }
+        nd.tileno3 = tileno3;
+
+        // smp_filter, smp_grass_wway, smp_bmpfixed
+        {
+            let mut sf = bmp::Surface { lagged: &mut lagged, cls: &mut cls };
+            if let Some(f) = self.bmps.filter {
+                bmp::filter(&f, self.area_ha, surfq, self.layers[0].k, &mut sf);
+            }
+            if let Some(g) = self.bmps.grassww {
+                bmp::grass_wway(&g, self.area_ha, self.km, surfq, &mut sf);
+            }
+            if let Some(u) = self.bmps.user {
+                bmp::user(&u, &mut sf, &mut latno3);
+            }
+        }
 
         // sq_surfst
         self.surf_bs = (self.surf_bs + surfq).max(1.0e-6);
         let qday = self.surf_bs * self.brt;
         self.surf_bs -= qday;
 
-        let qtile = 0.0_f32;
         let mut qdr = qday + latq + qtile;
         if qdr < 0.0 {
             qdr = 0.0;
@@ -1721,7 +1886,7 @@ impl Hru {
                 orgn: lagged[1] * cnv_kg,
                 sedp: (lagged[2] + lagged[5] + lagged[6]) * cnv_kg,
                 no3: lagged[3] * cnv_kg,
-                solp: (lagged[4] + 0.0) * cnv_kg,
+                solp: (lagged[4] + nd.tilelabp) * cnv_kg,
                 chla: chl_a * cnv_kg,
                 san: cls[0],
                 sil: cls[1],
@@ -1735,7 +1900,7 @@ impl Hru {
             sur.dox = doxq * cnv_ppm;
             let rhg = Hyd { flo: sepbtm * cnv_m3, no3: nd.percn * cnv_kg, ..Hyd::default() };
             let lat = Hyd { flo: latq * cnv_m3, no3: latno3 * cnv_kg, ..Hyd::default() };
-            let til = Hyd { flo: qtile * cnv_m3, no3: 0.0 * cnv_kg, ..Hyd::default() };
+            let til = Hyd { flo: qtile * cnv_m3, no3: nd.tileno3 * cnv_kg, ..Hyd::default() };
             let tot = Hyd::default().plus(sur).plus(lat).plus(til);
             [tot, rhg, sur, lat, til]
         };
@@ -1766,6 +1931,7 @@ impl Hru {
             wet_evap: self.water_evap,
             wet_oflo: wet_outflow,
             wet_stor: self.wet.as_ref().map_or(0.0, |wt| wt.water.flo / (10.0 * self.area_ha)),
+            qtile,
             ..HruWb::default()
         };
         let pw = HruPw {
@@ -1805,6 +1971,8 @@ impl Hru {
             org_lab_p: nd.org_lab_p,
             rsd_nitorg_n: 0.0,
             rsd_laborg_p: 0.0,
+            no3atmo: nd.no3atmo,
+            nh4atmo: nd.nh4atmo,
             nuptake: pd.nuptake,
             puptake: pd.puptake,
         };
@@ -1818,6 +1986,8 @@ impl Hru {
             usle: nd.usle,
             sedminp: lagged[5] + lagged[6],
             lchlabp: nd.lchlabp,
+            tileno3: nd.tileno3,
+            tilelabp: nd.tilelabp,
             percn: nd.percn,
             ..HruLs::default()
         };
@@ -1968,7 +2138,7 @@ impl Hru {
     }
 
     /// SWAT+ `stmp_solt`: daily soil temperature by layer.
-    fn soil_temperature(&mut self, w: &HruWeather, albday: f32, tmp_an: f32) {
+    fn soil_temperature(&mut self, w: &HruWeather, albday: f32, tmp_an: f32, yrc: i32) {
         let tlag = 0.8_f32;
         let avbd = self.avbd;
         let mut f = avbd / (avbd + 686.0 * (-5.63_f32 * avbd).exp());
@@ -1992,12 +2162,17 @@ impl Hru {
         let tcov = bcv * tmp2 + (1.0 - bcv) * tbare;
         let tmp_srf = 0.5 * (tbare + tcov);
         let mut xx = 0.0_f32;
-        for l in self.layers.iter_mut() {
+        // Below the top of a septic biozone the soil is kept warmer.
+        let sep_from = self.septic.as_ref().filter(|s| self.sep_opt != 0 && yrc >= s.yr).map_or(usize::MAX, |s| s.bz);
+        for (k, l) in self.layers.iter_mut().enumerate() {
             let mut zd = (xx + l.d) / 2.0;
             zd /= dd;
             let df = zd / (zd + (-0.8669_f32 - 2.0775 * zd).exp());
             l.tmp = tlag * l.tmp + (1.0 - tlag) * (df * (tmp_an - tmp_srf) + tmp_srf);
             xx = l.d;
+            if k >= sep_from && l.tmp < 10.0 {
+                l.tmp = 10.0 - (10.0 - l.tmp) * 0.1;
+            }
         }
     }
 
@@ -2197,7 +2372,69 @@ impl Hru {
         }
         self.sat_excess(surfq);
         self.sum_sw();
+        self.qtile = self.tile_flow();
         (latq, sepbtm)
+    }
+
+    /// The end of `swr_percmain`: the shallow water table (`wtable` 0) and, above the tiles,
+    /// tile flow (`swr_origtile`) taken from the layers' water above field capacity.
+    fn tile_flow(&mut self) -> f32 {
+        let Some(t) = self.tile else { return 0.0 };
+        let mut qtile = 0.0_f32;
+        let mut wt_shall = self.zmx;
+        if self.layers.get(1).is_some_and(|l| l.tmp > 0.0) {
+            let por_air = 0.9_f32;
+            let d = self.zmx - t.depth;
+            if self.sw > self.sumfc {
+                let mut yy = self.sumul * por_air;
+                if yy < 1.1 * self.sumfc {
+                    yy = 1.1 * self.sumfc;
+                }
+                let mut xx = (self.sw - self.sumfc) / (yy - self.sumfc);
+                if xx > 1.0 {
+                    xx = 1.0;
+                }
+                wt_shall = xx * self.zmx;
+            }
+            if t.depth > 0.0 {
+                if wt_shall <= d {
+                    qtile = 0.0;
+                } else {
+                    // swr_origtile
+                    if self.sw > self.sumfc {
+                        let sw_excess = (wt_shall - d) / wt_shall * (self.sw - self.sumfc);
+                        qtile = if t.time < 1.0 { sw_excess } else { sw_excess * (1.0 - (-24.0 / t.time).exp()) };
+                        qtile = qtile.min(t.drain_co);
+                    } else {
+                        qtile = 0.0;
+                    }
+                    if qtile < 0.0 {
+                        qtile = 0.0;
+                    }
+                }
+            }
+        }
+        if qtile > 0.0 {
+            let mut sumqtile = qtile;
+            for l in self.layers.iter_mut() {
+                let xx = l.st - l.fc;
+                if xx > 0.0 {
+                    if xx > sumqtile {
+                        l.st -= sumqtile;
+                        sumqtile = 0.0;
+                    } else {
+                        sumqtile -= xx;
+                        l.st = l.fc;
+                    }
+                }
+            }
+            if sumqtile > 0.0 {
+                qtile -= sumqtile;
+                qtile = qtile.max(0.0);
+            }
+        }
+        self.sum_sw();
+        qtile
     }
 
     /// SWAT+ `swr_percmicro` for layer `ly1` (0-based): returns (percolation, lateral flow).
@@ -2217,9 +2454,29 @@ impl Hru {
             latlyr = sw_excess;
         }
         l.hk = (l.ul - l.fc) / l.k;
+        // A septic biozone: active, its conductivity falls with its water; failing, it barely
+        // drains.
+        let bz = self.septic.as_ref().map(|s| s.bz);
+        let mut sol_k_sep = 0.0_f32;
+        if bz == Some(ly1) {
+            if self.sep_opt == 1 {
+                sol_k_sep = l.k * (l.st - l.fc) / (l.ul - l.fc);
+                sol_k_sep = sol_k_sep.max(1.0e-6);
+                sol_k_sep = sol_k_sep.min(l.k);
+                l.hk = (l.hk - l.fc) / sol_k_sep;
+            } else if self.sep_opt == 2 {
+                l.hk = 1.0e10;
+            }
+        }
         l.hk = l.hk.max(2.0);
         let mut sepday = (l.st - l.fc) * (1.0 - (-24.0_f32 / l.hk).exp());
         sepday = sepday.max(0.0);
+        if bz == Some(ly1) && self.sep_opt == 1 {
+            sepday = sepday.min(sol_k_sep * 24.0);
+            if let Some(s) = self.septic.as_mut() {
+                s.bz_perc = sepday;
+            }
+        }
         if ly1 == nly - 1 {
             sepday *= perco_lim;
         }
@@ -2375,6 +2632,9 @@ pub struct Urban {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum UrbanRunoff {
     BuildupWashoff,
+    /// The USGS regression equations (Driver and Tasker), with the annual precipitation
+    /// category of the weather generator (0: under 508 mm, 1: under 1,016 mm, 2: more).
+    UsgsReg(usize),
     /// Anything else: no loads from the impervious area.
     None,
 }
@@ -2382,8 +2642,38 @@ pub enum UrbanRunoff {
 impl Hru {
     /// `hru_urban`, daily: build-up and wash-off of solids on the impervious area, which replace
     /// that share of the sediment and its nutrients. Returns the silt it adds (`silyld`).
-    fn hru_urban(&mut self, surfq: f32, phh: f32, nd: &mut NutDay) -> f32 {
+    fn hru_urban(&mut self, surfq: f32, phh: f32, precip: f32, nd: &mut NutDay) -> f32 {
         let Some(u) = self.urban else { return 0.0 };
+        if let UrbanRunoff::UsgsReg(ii) = u.ro {
+            if !(precip > 0.1 && surfq > 0.1) {
+                return 0.0;
+            }
+            // regres: chemical oxygen demand (unused), suspended solids, total N and total P
+            // (lb, then kg) of a storm on the impervious area.
+            const B: [[[f32; 5]; 3]; 4] = [
+                [[407.0, 0.626, 0.710, 0.379, 1.518], [151.0, 0.823, 0.726, 0.564, 1.451], [102.0, 0.851, 0.601, 0.528, 1.978]],
+                [[1778.0, 0.867, 0.728, 0.157, 2.367], [812.0, 1.236, 0.436, 0.202, 1.938], [97.7, 1.002, 1.009, 0.837, 2.818]],
+                [[20.2, 0.825, 1.070, 0.479, 1.258], [4.04, 0.936, 0.937, 0.692, 1.373], [1.66, 0.703, 0.465, 0.521, 1.845]],
+                [[1.725, 0.884, 0.826, 0.467, 2.130], [0.697, 1.008, 0.628, 0.469, 1.790], [1.618, 0.954, 0.789, 0.289, 2.247]],
+            ];
+            let (km, fimp) = (self.km, u.fimp);
+            let regres = |k: usize| {
+                let b = &B[k][ii];
+                let r = b[0] * (precip / 25.4).powf(b[1]) * (km * fimp / 2.589).powf(b[2]) * (fimp * 100.0 + 1.0).powf(b[3]) * b[4];
+                r / 2.205
+            };
+            let sus_sol = regres(1);
+            let tn = regres(2);
+            let tp = regres(3);
+            let rest = 1.0 - fimp;
+            nd.sedyld = (0.001 * sus_sol) * fimp + nd.sedyld * rest;
+            let silyld = (0.001 * sus_sol) * fimp;
+            nd.sedorgn = (0.7 * tn / (km * 100.0)) * fimp + nd.sedorgn * rest;
+            nd.surqno3 = (0.3 * tn / (km * 100.0)) * fimp + nd.surqno3 * rest;
+            nd.sedorgp = (0.75 * tp / (km * 100.0)) * fimp + nd.sedorgp * rest;
+            nd.surqsolp = 0.25 * tp / (km * 100.0) * fimp + nd.surqsolp * rest;
+            return silyld;
+        }
         if u.ro != UrbanRunoff::BuildupWashoff {
             return 0.0;
         }
