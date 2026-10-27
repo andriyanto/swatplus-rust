@@ -316,14 +316,9 @@ pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -
     if let Some(a) = atmo {
         let (yrc0, mo0) = (project.time.yrc_start, clock.mo);
         if a.timestep == "yr" {
-            let mut iyrc = a.yr_init;
-            for iyr in 1..=a.num as i32 {
-                if iyrc == yrc0 {
-                    atmo_ts = iyr;
-                    atmo_first = false;
-                    break;
-                }
-                iyrc += 1;
+            if let Some(iyr) = (1..=a.num as i32).find(|&iyr| a.yr_init + iyr - 1 == yrc0) {
+                atmo_ts = iyr;
+                atmo_first = false;
             }
         }
         if a.timestep == "mo" {
