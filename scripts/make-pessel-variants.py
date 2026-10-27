@@ -802,6 +802,61 @@ def ps_cal(base, dst):
     print(f"{os.path.basename(dst)}: {len(PS_CAL)} more calibration changes")
 
 
+def ps_harv(base, dst):
+    """A copy of project `base` with every kind of harvest: oil palm's fruit bunches picked each
+    month (a biomass harvest only, `harv`), the generic farmland's grain harvested, its stover
+    baled and the crop killed by separate operations, and the row crops lifted as tubers and
+    killed by a decision table's `harvest` and `kill` actions."""
+    if os.path.exists(dst):
+        shutil.rmtree(dst)
+    shutil.copytree(base, dst)
+    p = lambda f: os.path.join(dst, f)
+    # Fresh fruit bunches: 3 % of the palm's biomass above ground a month (about the 20-25 t a
+    # hectare a year of a mature plantation, for 60-80 t of standing biomass).
+    lines = read(p("harv.ops"))
+    while lines and not lines[-1].strip():
+        lines.pop()
+    lines.append(f"{'ffb':<18}{'biomass':>14}{0.03:14.5f}{1.0:14.5f}{0.0:14.5f}  ")
+    write(p("harv.ops"), lines + [""])
+    ops = lambda rows: [f"{'':<40}{o:<10}{mo:>6}{d:>6}{0.0:>10.5f}  {a1:<16}  {a2:<16}{a3:>10.5f}" for o, mo, d, a1, a2, a3 in rows]
+    lines = read(p("management.sch"))
+    while lines and not lines[-1].strip():
+        lines.pop()
+    lines += [f"{'oilp_sched':<34}{12:>3}{0:>11}  "] + ops([("harv", m, 15, "oilp", "ffb", 0.0) for m in range(1, 13)])
+    lines += [f"{'agrl_seq':<34}{4:>3}{0:>11}  "] + ops([("plnt", 3, 1, "agrl", "null", 0.0), ("harv", 7, 1, "agrl", "grain", 0.0),
+                                                      ("harv", 7, 5, "agrl", "stover_med", 0.5), ("kill", 7, 10, "agrl", "null", 0.0)])
+    lines += [f"{'agrr_dt':<34}{0:>3}{1:>11}  ", f"{'':<51}agrr_tuber  "]
+    write(p("management.sch"), lines + [""])
+    lines = read(p("lum.dtl"))
+    lines[1] = str(int(lines[1].split()[0]) + 1)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    lines += [
+        "",
+        "name                     conds      alts      acts  ",
+        "agrr_tuber                   3         3         3  ",
+        "var                        obj   obj_num           lim_var            lim_op     lim_const      alt1      alt2      alt3  ",
+        "jday                       hru         0              null                 -      60.00000         =         -         -  ",
+        "jday                       hru         0              null                 -     300.00000         -         =         -  ",
+        "jday                       hru         0              null                 -     305.00000         -         -         =  ",
+        "act_typ                    obj   obj_num              name            option         const        const2                fp  outcome           ",
+        "plant                      hru         0             plant              agrr       0.00000       1.00000              null  y   n   n   ",
+        "harvest                    hru         0        tuber_harv              agrr       0.00000       1.00000             tuber  n   y   n   ",
+        "kill                       hru         0              kill              agrr       0.00000       1.00000              null  n   n   y   ",
+        "",
+    ]
+    write(p("lum.dtl"), lines)
+    lines = read(p("landuse.lum"))
+    k = lines[1].split().index("mgt")
+    for i in range(2, len(lines)):
+        t = lines[i].split()
+        for lum, sch in (("oilp_lum", "oilp_sched"), ("agrl_lum", "agrl_seq"), ("agrr_lum", "agrr_dt")):
+            if t and t[0] == lum:
+                lines[i] = set_field(lines[i], k, sch)
+    write(p("landuse.lum"), lines)
+    print(f"{os.path.basename(dst)}: biomass, grain, residue and tuber harvests, kills")
+
+
 def ps_urbhr(base, dst):
     """A copy of the hourly project `base` whose generic farmland is a medium-density town, its
     loads washed off the impervious area by the hour (`hru_urbanhr`)."""
@@ -874,5 +929,6 @@ if __name__ == "__main__":
     ps_urbhr(os.path.join(out, "Ps_hourly"), os.path.join(out, "Ps_urbhr"))
     ps_pet(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_pet"))
     ps_cal(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_cal"))
+    ps_harv(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_harv"))
     ps_uh(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_uh"))
     ps_gap(os.path.join(out, "Ps_hourly"), os.path.join(out, "Ps_gap"))
