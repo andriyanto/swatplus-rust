@@ -22,9 +22,15 @@ time step (`time%step` a day, `time%dtm` = 1440 / step minutes). The port follow
   channel table. The values are volumes per step (m3), though the table heads them `m^3/s`:
   divide by `dtm · 60` (3,600 for hourly steps) for a rate.
 
+- **Urban HRUs by step** (`sq_greenampt`, `hru_urbanhr`): the directly connected impervious
+  share's runoff by step is the station's rain less what is left of the initial abstraction
+  (`parameters.bsn` `urb_init_abst`, taken by rain above 0.017 mm/h and refilled by the PET
+  between storms); each step whose impervious runoff is above 0.025 mm/h washes the built-up
+  solids off, and their nutrients replace that share of the HRU's.
+
 Not ported (`run` says so): sub-daily steps with the curve number (`gampt` 0, unit
-hydrographs), generated sub-daily rain (`cli_pgenhr`, for stations without a file or gaps in
-it), and urban HRUs (`hru_urbanhr`).
+hydrographs) and generated sub-daily rain (`cli_pgenhr`, for stations without a file or gaps in
+it).
 
 ## Quirks
 
@@ -54,8 +60,11 @@ it), and urban HRUs (`hru_urbanhr`).
   channel has no inflow.
 - **The QUAL2E rates are divided by the steps a day** (`ch_read_nut`), but the channel water
   quality still runs once a day, so algae, nitrogen and oxygen change `step` times more slowly.
-- **The impervious area's runoff by step (`ubnrunoff`) is shared by all HRUs** and zeroed once
-  a day: an HRU after an urban one adds the urban HRU's (no urban HRUs are run yet).
+- **By step, solids are washed off whatever the land use's `urb_ro`** (`usgs_reg` too), and
+  each step's wash-off replaces the impervious share of the day's nutrients again, on top of
+  the earlier steps'. The sediment is not replaced, and the nitrate (`tno3`) is an integer:
+  only whole kilograms per hectare count, so in practice the impervious share has none and its
+  organic N is the whole of its total N.
 
 ## Validation: Ps_hourly
 
@@ -68,6 +77,11 @@ Sumatra's land convective rain peaks between 15:00 and 20:00 (Mori et al. 2004).
 matches SWAT+, the 1.9 million hourly channel flows of `channel_sd_subday` among them. At the
 largest outlet (cha0315) the wettest hour of 23 November 2017 carries 10,430 m3, 1.45 times
 the day's mean hour; upstream channels peak up to 12 times their day's mean.
+
+**Ps_urbhr** is Ps_hourly with its generic farmland (two HRUs) a medium-density town
+(`urmd`, 38 % impervious, 30 % directly connected) by build-up and wash-off. Every table matches
+SWAT+; those HRUs' surface runoff rises from 15 to 939 mm a year, their organic N from 5 to
+31 kg/ha.
 
 ## Sources
 

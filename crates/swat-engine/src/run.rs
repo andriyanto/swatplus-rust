@@ -22,6 +22,8 @@ pub struct HruWeather {
     pub windsp: f32,
     pub rhum: f32,
     pub phubase0: f32,
+    /// The station's PET (`weat%pet`): Hargreaves at least 0.01 mm, for `pet` 3.
+    pub station_pet: f32,
     /// Atmospheric deposition today (`nut_nrain`): nitrate in rain (mg/L) and dry (kg/ha a day),
     /// ammonium in rain and dry; none without `atmo.cli`.
     pub atmo: Option<[f32; 4]>,
@@ -40,6 +42,7 @@ impl Default for HruWeather {
             windsp: 0.0,
             rhum: 0.0,
             phubase0: 0.0,
+            station_pet: 0.0,
             atmo: None,
         }
     }
@@ -487,10 +490,6 @@ pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -
                     _ => None,
                 }
             };
-            // sim_initday
-            for v in saved.ubnrunoff.iter_mut() {
-                *v = 0.0;
-            }
             // The HRUs run in SWAT+'s command order (an HRU that receives another's water after
             // it), and print in their own order.
             let hru_order: Vec<usize> = match network.as_ref() {
@@ -513,6 +512,7 @@ pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -
                     windsp: s.windsp,
                     rhum: s.rhum,
                     phubase0: s.phubase0,
+                    station_pet: s.pet,
                     atmo: atmo_day(*ist),
                     ts: {
                         let mut ts = [0.0_f32; crate::hru::subdaily::MAX_STEP];

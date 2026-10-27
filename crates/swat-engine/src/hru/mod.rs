@@ -696,8 +696,8 @@ pub fn init_hrus(
     if step > 96 {
         return Err(format!("{step} time steps a day (the port keeps up to 96)"));
     }
-    if !(0..=2).contains(&codes.pet) {
-        return Err(format!("potential ET method {} (read from a file)", codes.pet));
+    if !(0..=3).contains(&codes.pet) {
+        return Err(format!("potential ET method {}", codes.pet));
     }
     if codes.crk != 0 {
         return Err("crack flow".into());
@@ -720,9 +720,6 @@ pub fn init_hrus(
         init_bmix(&mut h, &bmix);
         time_conc(&mut h, surlag);
         if step > 1 {
-            if h.urban.is_some() {
-                return Err(format!("{}: urban HRU with sub-daily steps (hru_urbanhr)", hd.name));
-            }
             let dtm = 1440.0 / step as f32;
             // time_conc_init: the share of runoff that leaves in a step.
             h.brt = 1.0 - (-surlag / (h.tconc / (dtm / 60.0))).exp();
@@ -1726,7 +1723,10 @@ impl Hru {
         let (pet_raw, ep_pm) = match b.pet {
             0 => (self.pet_priestley_taylor(w, ea, ed), 0.0),
             1 => self.pet_penman_monteith(w, albday, ea, ed, vpd, b),
-            _ => (pet_hargreaves(w), 0.0),
+            2 => (pet_hargreaves(w), 0.0),
+            // "Read in": the station's PET, which `climate_control` has replaced with Hargreaves'
+            // for the moisture index whatever `pet.cli` gave.
+            _ => (w.station_pet, 0.0),
         };
         let pet_day = self.pet_co * pet_raw;
 
@@ -1746,13 +1746,12 @@ impl Hru {
         // The steps' runoff before the lag (`hhqday`) and leaving the land (`hhsurfq`).
         let mut hhqday = vec![0.0_f32; nstep];
         let mut hhsurfq = vec![0.0_f32; nstep];
-        if nstep > 0 && saved.ubnrunoff.len() != nstep {
-            saved.ubnrunoff = vec![0.0; nstep];
-        }
+        // The impervious area's runoff by step (`varinit` zeroes it for each HRU).
+        let mut ubnrunoff = vec![0.0_f32; nstep];
         if precip_eff > 0.1 && !is_wet && nstep > 0 {
             // sq_greenampt
             let sta_ts: Vec<f32> = w.ts[..nstep].to_vec();
-            surfq = self.green_ampt(&ts, &sta_ts, &mut cnday, pet_day, &b.sub, &mut saved.ubnrunoff, &mut hhqday, &mut hhsurfq);
+            surfq = self.green_ampt(&ts, &sta_ts, &mut cnday, pet_day, &b.sub, &mut ubnrunoff, &mut hhqday, &mut hhsurfq);
         } else if precip_eff > 0.1 && !is_wet {
             let r2 = 25400.0 / cnday - 254.0;
             let bb = 0.2 * r2;
@@ -1908,7 +1907,12 @@ impl Hru {
         self.nut_solp(surfq, wet_runon.solp, &b.nut, &mut nd);
 
         // hru_urban: loads washed off the impervious area.
-        let silyld = self.hru_urban(surfq, c.precip_half_hr, w.precip, &mut nd);
+        let silyld = if nstep > 0 {
+            self.hru_urbanhr(surfq, &ubnrunoff, &mut nd);
+            0.0
+        } else {
+            self.hru_urban(surfq, c.precip_half_hr, w.precip, &mut nd)
+        };
 
         // stor_surfstor: sediment and its nutrients lag like runoff.
         let brt = self.brt;
@@ -2888,6 +2892,45 @@ impl Hru {
         nd.sedorgp = 0.75 * tp * u.fimp + nd.sedorgp * rest;
         nd.surqsolp = 0.25 * tp * u.fimp + nd.surqsolp * rest;
         silyld
+    }
+}
+
+impl Hru {
+    /// `hru_urbanhr`, by step: solids washed off the impervious area by each step's runoff from
+    /// it (`ubnrunoff`, above 0.025 mm/h on a day with more than 0.1 mm of runoff), whatever the
+    /// land use's `urb_ro`. Each wash-off replaces that share of the day's nutrients again (the
+    /// last step's on top of the earlier ones'), but not of its sediment; the nitrate is an
+    /// integer (`tno3`), so it is the whole kilograms only. A step without wash-off adds its
+    /// length to the build-up time.
+    fn hru_urbanhr(&mut self, surfq: f32, ubnrunoff: &[f32], nd: &mut NutDay) {
+        let Some(u) = self.urban else { return };
+        let Some(sd) = self.sub.as_ref() else { return };
+        let (nstep, dtm) = (sd.step, sd.dtm);
+        for k in 0..nstep {
+            let qdt = ubnrunoff.get(k).copied().unwrap_or(0.0) * 60.0 / dtm;
+            if qdt > 0.025 && surfq > 0.1 {
+                let dirto = u.dirtmx * self.twash / (u.thalf + self.twash);
+                let urbk = u.urbcoef * qdt;
+                // `dirt` is double precision: the build-up time and the solids are computed in
+                // it.
+                let mut dirt = f64::from(dirto * (-urbk * dtm / 60.0).exp());
+                if dirt < 1.0e-6 {
+                    dirt = 0.0;
+                }
+                self.twash = (f64::from(u.thalf) * dirt / (f64::from(u.dirtmx) - dirt)) as f32;
+                let sus_sol = ((f64::from(dirto) - dirt) * f64::from(u.curbden)).max(0.0) as f32;
+                let tn = u.tnconc * sus_sol / 1.0e6;
+                let tp = u.tpconc * sus_sol / 1.0e6;
+                let tno3 = (u.tno3conc * sus_sol / 1.0e6) as i32 as f32;
+                let rest = 1.0 - u.fimp;
+                nd.surqno3 = tno3 * u.fimp + nd.surqno3 * rest;
+                nd.sedorgn = (tn - tno3) * u.fimp + nd.sedorgn * rest;
+                nd.sedorgp = 0.75 * tp * u.fimp + nd.sedorgp * rest;
+                nd.surqsolp = 0.25 * tp * u.fimp + nd.surqsolp * rest;
+            } else {
+                self.twash += dtm / 1440.0;
+            }
+        }
     }
 }
 
