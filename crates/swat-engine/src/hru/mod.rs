@@ -155,6 +155,14 @@ pub struct Hru {
     pub smx: f32,
     pub wrt: [f32; 2],
     pub hydgrp: String,
+    /// What `calibration.cal`'s conditions test: the soil's texture, the land use's name and
+    /// calibration group.
+    pub texture: String,
+    pub lum_name: String,
+    pub cal_group: String,
+    /// USLE P and LS (`lumv%usle_p`, `usle_ls`), kept for a calibration of the rock or USLE K.
+    pub usle_p: f32,
+    pub usle_ls: f32,
     pub layers: Vec<Layer>,
     pub sumul: f32,
     pub sumfc: f32,
@@ -687,9 +695,6 @@ pub fn init_hrus(
     if codes.cswat != 0 && codes.cswat != 2 {
         return Err(format!("carbon model {}", codes.cswat));
     }
-    if step > 1 && codes.gampt != 1 {
-        return Err("sub-daily time steps with the curve number (unit hydrographs)".into());
-    }
     if step <= 1 && codes.gampt != 0 {
         return Err("Green and Ampt infiltration with daily time steps".into());
     }
@@ -715,7 +720,7 @@ pub fn init_hrus(
     for (i, hd) in project.hru_data.iter().enumerate() {
         let ob = hru_objs.get(i).ok_or_else(|| format!("HRU {} has no object in hru.con", i + 1))?;
         let g = wgn.get(i).and_then(|&k| wgns.get(k)).ok_or_else(|| format!("HRU {}: no weather generator", i + 1))?;
-        let mut h = init_hru(project, hd, ob, g, ffcb, ndays, &mut psp_saved)?;
+        let mut h = init_hru(project, hd, ob, g, ffcb, ndays)?;
         h.wgn = wgn.get(i).copied().unwrap_or(0);
         init_bmix(&mut h, &bmix);
         time_conc(&mut h, surlag);
@@ -738,6 +743,7 @@ pub fn init_hrus(
             h.sub = Some(subdaily::SubDaily {
                 step: step as usize,
                 dtm,
+                ga: codes.gampt == 1,
                 wfsh,
                 cvm_com,
                 bs_q: vec![0.0; step as usize],
@@ -757,6 +763,9 @@ pub fn init_hrus(
         }
     }
     cal_conditions(project, &mut out)?;
+    for (hd, h) in project.hru_data.iter().zip(out.iter_mut()) {
+        nutcarb_stage(project, hd, h, &mut psp_saved);
+    }
     Ok(out)
 }
 
@@ -777,15 +786,75 @@ pub(crate) fn cal_parm(project: &Project, u: &swat_model::cal::CalUpdate) -> swa
     project.cal_parms.iter().find(|p| swat_model::table::fortran_eq(&p.name, &u.name)).cloned().unwrap_or_default()
 }
 
+/// Whether HRU `e` (1-based) meets the conditions of calibration update `u`
+/// (`cal_conditions`). Conditions are tested on HRU `e` whatever the parameter's object: soil
+/// hydrologic group (`hsg`) and texture, land use (`landuse`) and its calibration group
+/// (`cal_group`), and the plant (`plant`: only the community's first plant is looked at).
+/// Other variables are no condition.
+pub(crate) fn cal_cond_met(u: &swat_model::cal::CalUpdate, hrus: &[Hru], e: usize) -> Result<bool, String> {
+    if u.conds.is_empty() {
+        return Ok(true);
+    }
+    let h = hrus.get(e.wrapping_sub(1)).ok_or_else(|| format!("calibration of {}: a condition on HRU {e}", u.name))?;
+    // Fortran's comparison of fixed-length strings ignores trailing blanks; `targc` keeps 25
+    // characters.
+    let eq = |a: &str, targc: &str| {
+        let t: String = targc.chars().take(25).collect();
+        a.trim_end() == t.trim_end()
+    };
+    let mut met = true;
+    for c in &u.conds {
+        match c.var.as_str() {
+            "hsg" => {
+                if !eq(&h.hydgrp, &c.targc) {
+                    met = false;
+                }
+            }
+            "texture" => {
+                if !eq(&h.texture, &c.targc) {
+                    met = false;
+                }
+            }
+            "plant" => {
+                if let Some(pl) = h.plants.first()
+                    && !eq(&pl.db.name, &c.targc)
+                {
+                    met = false;
+                }
+            }
+            "landuse" => {
+                if !eq(&h.lum_name, &c.targc) {
+                    met = false;
+                    break;
+                }
+            }
+            "cal_group" => {
+                if !eq(&h.cal_group, &c.targc) {
+                    met = false;
+                }
+            }
+            "res_pvol" | "res_typ" | "pl_class" => {
+                return Err(format!("calibration of {} with a condition on {}", u.name, c.var));
+            }
+            _ => {}
+        }
+    }
+    Ok(met)
+}
+
+/// The objects a calibration update changes (1-based): its list, or all `n` of its kind.
+pub(crate) fn cal_elems(u: &swat_model::cal::CalUpdate, n: usize) -> Vec<usize> {
+    if u.elems.is_empty() { (1..=n).collect() } else { u.elems.clone() }
+}
+
 /// SWAT+ `cal_conditions` (from `proc_cal`, after the HRUs are set up): the changes of
-/// `calibration.cal` without conditions, of HRU, soil and basin parameters (the aquifers' are
-/// made where the aquifers are set up).
+/// `calibration.cal` to HRU, soil and basin parameters, for the HRUs that meet their
+/// conditions (the aquifers' are made where the aquifers are set up). As in SWAT+, a change
+/// made after the set-up only reaches what is computed from the parameter later: a slope's
+/// time of concentration and USLE LS keep the old slope.
 fn cal_conditions(project: &Project, hrus: &mut [Hru]) -> Result<(), String> {
     for u in &project.cal_upd {
         let p = cal_parm(project, u);
-        if !u.conds.is_empty() {
-            return Err(format!("calibration of {} with conditions ({})", u.name, u.conds.join(", ")));
-        }
         if !matches!(p.ob_typ.as_str(), "hru" | "sol" | "bsn" | "aqu") {
             return Err(format!("calibration of {} ({} parameter)", u.name, p.ob_typ));
         }
@@ -794,12 +863,12 @@ fn cal_conditions(project: &Project, hrus: &mut [Hru]) -> Result<(), String> {
         }
         let chg = |cur: f32| chg_par(u, &p, cur);
         if p.ob_typ == "aqu" {
-            if !matches!(u.name.as_str(), "alpha" | "revap_co") {
-                return Err(format!("calibration of {}", u.name));
-            }
             continue;
         }
         if p.ob_typ == "bsn" {
+            if !cal_cond_met(u, hrus, 1)? {
+                continue;
+            }
             match u.name.as_str() {
                 "surlag" => {
                     // Once (one element), for all HRUs.
@@ -812,55 +881,126 @@ fn cal_conditions(project: &Project, hrus: &mut [Hru]) -> Result<(), String> {
             }
             continue;
         }
-        let elems: Vec<usize> = if u.elems.is_empty() { (1..=hrus.len()).collect() } else { u.elems.clone() };
-        for e in elems {
-            let h = hrus.get_mut(e.wrapping_sub(1)).ok_or_else(|| format!("calibration of {}: HRU {e}", u.name))?;
-            match u.name.as_str() {
-                // Not for tile-drained HRUs.
-                "perco" | "cn3_swf" if h.tile.is_some() => {}
-                "perco" => {
-                    h.perco = chg(h.perco);
-                    h.perco_lim = if h.perco > 1.0e-6 {
-                        let perc_ln_func = 1.0052_f32 * (-(h.perco - 1.0e-6).ln()).ln() + 5.6862;
-                        (-perc_ln_func).exp().min(1.0)
-                    } else {
-                        0.0
-                    };
+        let n = hrus.len();
+        for e in cal_elems(u, n) {
+            if e == 0 || e > n {
+                return Err(format!("calibration of {}: HRU {e}", u.name));
+            }
+            if !cal_cond_met(u, hrus, e)? {
+                continue;
+            }
+            let h = &mut hrus[e - 1];
+            if p.ob_typ == "sol" {
+                let nly = h.layers.len() as i32;
+                let lyr1 = u.lyr1.max(1);
+                let lyr2 = if u.lyr2 <= 0 { nly } else { u.lyr2.min(nly) };
+                for ly in lyr1..=lyr2 {
+                    cal_soil(h, (ly - 1) as usize, &u.name, &chg)?;
                 }
-                "cn2" => {
-                    h.cn2 = chg(h.cn2);
-                    curno(h);
-                }
-                "cn3_swf" => {
-                    h.cn3_swf = chg(h.cn3_swf);
-                    curno(h);
-                }
-                "petco" => h.pet_co = chg(h.pet_co),
-                "latq_co" => h.latq_co = chg(h.latq_co),
-                "canmx" => h.canmx = chg(h.canmx),
-                "esco" => h.esco = chg(h.esco),
-                "lat_len" => h.lat_len = chg(h.lat_len),
-                "epco" => {
-                    h.epco = chg(h.epco);
-                    let epco = h.epco;
-                    for pl in h.plants.iter_mut() {
-                        pl.epco = epco;
-                    }
-                }
-                "awc" => {
-                    let nly = h.layers.len() as i32;
-                    let lyr1 = u.lyr1.max(1);
-                    let lyr2 = if u.lyr2 <= 0 { nly } else { u.lyr2.min(nly) };
-                    for ly in lyr1..=lyr2 {
-                        let l = &mut h.layers[(ly - 1) as usize];
-                        l.awc = chg(l.awc);
-                        soil_awc_init(h);
-                        curno(h);
-                    }
-                }
-                other => return Err(format!("calibration of {other}")),
+                continue;
+            }
+            cal_hru(h, &u.name, &chg)?;
+        }
+    }
+    Ok(())
+}
+
+/// `cal_parm_select` for an HRU parameter.
+fn cal_hru(h: &mut Hru, name: &str, chg: &dyn Fn(f32) -> f32) -> Result<(), String> {
+    match name {
+        // Not for tile-drained HRUs.
+        "perco" | "cn3_swf" if h.tile.is_some() => {}
+        "perco" => {
+            h.perco = chg(h.perco);
+            h.perco_lim = if h.perco > 1.0e-6 {
+                let perc_ln_func = 1.0052_f32 * (-(h.perco - 1.0e-6).ln()).ln() + 5.6862;
+                (-perc_ln_func).exp().min(1.0)
+            } else {
+                0.0
+            };
+        }
+        "cn2" => {
+            h.cn2 = chg(h.cn2);
+            curno(h);
+        }
+        "cn3_swf" => {
+            h.cn3_swf = chg(h.cn3_swf);
+            curno(h);
+        }
+        "petco" => h.pet_co = chg(h.pet_co),
+        "latq_co" => h.latq_co = chg(h.latq_co),
+        "canmx" => h.canmx = chg(h.canmx),
+        "esco" => h.esco = chg(h.esco),
+        "lat_len" => h.lat_len = chg(h.lat_len),
+        // The travel time is already `1 - exp(-1 / t)`: the change applies to that.
+        "lat_ttime" => h.lat_ttime = 1.0 - (-1.0 / chg(h.lat_ttime)).exp(),
+        "epco" => {
+            h.epco = chg(h.epco);
+            let epco = h.epco;
+            for pl in h.plants.iter_mut() {
+                pl.epco = epco;
             }
         }
+        "erorgn" => h.erorgn = chg(h.erorgn),
+        "erorgp" => h.erorgp = chg(h.erorgp),
+        "biomix" => h.hyd_biomix = chg(h.hyd_biomix),
+        "usle_p" => h.usle_p = chg(h.usle_p),
+        "elev" => h.elev = chg(h.elev),
+        "slope" => h.slope = chg(h.slope),
+        "field_wid" => h.field_wid = chg(h.field_wid),
+        "snofall_tmp" => h.sno.falltmp = chg(h.sno.falltmp),
+        "snomelt_tmp" => h.sno.melttmp = chg(h.sno.melttmp),
+        "snomelt_max" => h.sno.meltmx = chg(h.sno.meltmx),
+        "snomelt_min" => h.sno.meltmn = chg(h.sno.meltmn),
+        "snomelt_lag" => h.sno.timp = chg(h.sno.timp),
+        // Parameters SWAT+ only uses while setting up (or not at all): changed, to no effect.
+        "ovn" | "slope_len" | "field_len" | "field_ang" | "dis_stream" => {}
+        other => return Err(format!("calibration of {other}")),
+    }
+    Ok(())
+}
+
+/// `cal_parm_select` for a soil parameter of layer `ly` (0-based).
+fn cal_soil(h: &mut Hru, ly: usize, name: &str, chg: &dyn Fn(f32) -> f32) -> Result<(), String> {
+    let usle_mult = |h: &Hru| {
+        let rock = (-0.053_f32 * h.layers[0].rock).exp();
+        rock * h.layers[0].usle_k * h.usle_p * h.usle_ls * 11.8
+    };
+    match name {
+        "z" | "bd" | "awc" => {
+            let l = &mut h.layers[ly];
+            match name {
+                "z" => l.d = chg(l.d),
+                "bd" => l.bd = chg(l.bd),
+                _ => l.awc = chg(l.awc),
+            }
+            soil_awc_init(h);
+            curno(h);
+        }
+        "k" => {
+            let l = &mut h.layers[ly];
+            l.k = chg(l.k);
+            l.hk = (l.ul - l.fc) / l.k;
+            if l.hk < 1.0 {
+                l.hk = 1.0;
+            }
+        }
+        "rock" => {
+            h.layers[ly].rock = chg(h.layers[ly].rock);
+            if ly == 0 {
+                h.usle_mult = usle_mult(h);
+            }
+        }
+        "usle_k" => {
+            h.layers[ly].usle_k = chg(h.layers[ly].usle_k);
+            h.usle_mult = usle_mult(h);
+        }
+        "alb" => h.layers[ly].alb = chg(h.layers[ly].alb),
+        "cal" => h.layers[ly].cal = chg(h.layers[ly].cal),
+        "anion_excl" => h.anion_excl = chg(h.anion_excl),
+        // Only used while setting up the soil.
+        "ec" | "ph" => {}
+        other => return Err(format!("calibration of {other}")),
     }
     Ok(())
 }
@@ -925,7 +1065,6 @@ fn init_hru(
     g: &crate::climate::WgnState,
     ffcb: f32,
     ndays: &[i32; 13],
-    psp_saved: &mut f32,
 ) -> Result<Hru, String> {
     let n = &hd.name;
     let (lu, lu_found) = Row::find_or_first(project.landuse.as_ref(), schema::LANDUSE, &hd.land_use_mgt);
@@ -1150,6 +1289,10 @@ fn init_hru(
     let sin_sl = h.slope / (h.slope * h.slope + 1.0).sqrt();
     let usle_ls = (h.slope_len / 22.128).powf(xm) * (65.41 * sin_sl * sin_sl + 4.56 * sin_sl + 0.065);
     let usle_p = cp.real("pfac");
+    h.usle_p = usle_p;
+    h.usle_ls = usle_ls;
+    h.lum_name = hd.land_use_mgt.clone();
+    h.cal_group = lu.text("cal_group").to_string();
 
     // plant_init: overland n from the land use's name in ovn_table.lum (0.05 when not found).
     h.ovn = 0.05;
@@ -1225,6 +1368,12 @@ fn init_hru(
         1.0 - (-1.0_f32 / h.lat_ttime).exp()
     };
 
+    Ok(h)
+}
+
+/// `soil_nutcarb_init` (from main, after `proc_cal`, HRU by HRU): the soil-plant entry's
+/// nutrients, from the soil as calibrated.
+fn nutcarb_stage(project: &Project, hd: &swat_model::HruData, h: &mut Hru, psp_saved: &mut f32) {
     // soil_nutcarb_init (after proc_hru, from main): the soil-plant entry's nutrients.
     let spi = project
         .soil_plant_init
@@ -1249,7 +1398,6 @@ fn init_hru(
     if project.codes.cswat == 2 {
         h.carbon_init(&carbon::CarbonBasin::new(project));
     }
-    Ok(h)
 }
 
 /// `soils_init` with custom layer depths (`soil_lyr_depths.sol`): the profile is cut into 1 mm
@@ -1383,6 +1531,7 @@ fn soil_layers(h: &mut Hru, soil: &Soil, depths: Option<&[i32]>) -> Result<(), S
         }
     }
     h.hydgrp = soil.hydgrp.clone();
+    h.texture = soil.texture.clone();
     h.anion_excl = soil.anion_excl;
     if h.anion_excl <= 1.0e-6 {
         h.anion_excl = 0.5;
@@ -1593,6 +1742,7 @@ impl Hru {
 
         // The steps' rain (`w%ts`), which the canopy and snow change; the day's isn't, then.
         let nstep = self.sub.as_ref().map_or(0, |s| s.step);
+        let ga = self.sub.as_ref().is_some_and(|s| s.ga);
         let mut ts: Vec<f32> = w.ts[..nstep].to_vec();
 
         // sq_canopyint
@@ -1748,7 +1898,7 @@ impl Hru {
         let mut hhsurfq = vec![0.0_f32; nstep];
         // The impervious area's runoff by step (`varinit` zeroes it for each HRU).
         let mut ubnrunoff = vec![0.0_f32; nstep];
-        if precip_eff > 0.1 && !is_wet && nstep > 0 {
+        if precip_eff > 0.1 && !is_wet && ga {
             // sq_greenampt
             let sta_ts: Vec<f32> = w.ts[..nstep].to_vec();
             surfq = self.green_ampt(&ts, &sta_ts, &mut cnday, pet_day, &b.sub, &mut ubnrunoff, &mut hhqday, &mut hhsurfq);
@@ -1793,7 +1943,7 @@ impl Hru {
         }
         // ero_ovrsed: the sediment by step, which replaces the day's after the lag.
         let mut hhsedy = vec![0.0_f32; nstep];
-        if nstep > 0 && !is_wet && surfq.max(0.0) > 1.0e-6 && nd.qp_cms > 1.0e-6 {
+        if ga && !is_wet && surfq.max(0.0) > 1.0e-6 && nd.qp_cms > 1.0e-6 {
             hhsedy = self.ero_ovrsed(&w.ts[..nstep], &hhqday, &b.sub);
         }
 
@@ -2007,7 +2157,7 @@ impl Hru {
         }
 
         // sq_surfst
-        let qday = if nstep > 0 {
+        let qday = if ga {
             self.lag_runoff(&mut hhsurfq)
         } else {
             self.surf_bs = (self.surf_bs + surfq).max(1.0e-6);

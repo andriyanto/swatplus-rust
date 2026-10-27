@@ -408,6 +408,72 @@ impl Weather {
     }
 
     /// SWAT+ `cli_pgen`: generated precipitation for the next day at station `ist`.
+    /// SWAT+ `cli_pgenhr`: today's rain spread into tomorrow's steps (`ts_next`) as a storm of
+    /// a double exponential shape, its peak rate from yesterday's half-hour fraction. Today's steps
+    /// are zeroed first. The storm's shape comes from a generator seeded anew with 8 each time,
+    /// so every storm peaks at the same point.
+    fn pgenhr(&mut self, ist: usize, step: usize) {
+        let Some(st) = self.stations.get_mut(ist) else { return };
+        let w = &mut st.weat;
+        for t in w.ts.iter_mut() {
+            *t = 0.0;
+        }
+        if w.ts_next.len() < step {
+            w.ts_next.resize(step, 0.0);
+        }
+        if w.precip < 1.0e-6 {
+            return;
+        }
+        let precip = w.precip;
+        let mut pkrr = 2.0 * precip * w.precip_half_hr;
+        let mut k = 8_i32;
+        let vv = crate::fortran::atri(0.05, 0.25, 0.95, &mut k);
+        let xk1 = vv / 4.605;
+        let xk2 = (1.0 - vv) / 4.605;
+        let mut dur = precip / (pkrr * (xk1 + xk2));
+        if dur > 24.0 {
+            dur = 24.0;
+            pkrr = precip / (dur * (xk1 + xk2));
+        }
+        let pkrain = vv * precip;
+        let rtp = vv * dur * 60.0;
+        let xkp1 = dur * xk1;
+        let xkp2 = dur * xk2;
+        let dtm = 1440.0 / step as f32;
+        let mut pt = dtm as i32;
+        let mut itime = 1_usize;
+        let mut sumrain = 0.0_f32;
+        loop {
+            if pt >= rtp as i32 {
+                break;
+            }
+            let rx = pkrain - pkrr * xkp1 * (1.0 - ((pt as f32 - rtp) / (60.0 * xkp1)).exp());
+            w.ts_next[itime - 1] = rx - sumrain;
+            pt = (pt as f32 + dtm) as i32;
+            itime += 1;
+            if itime > step {
+                break;
+            }
+            sumrain = rx;
+        }
+        loop {
+            if pt >= (dur * 60.0) as i32 {
+                break;
+            }
+            let rx = pkrain + pkrr * xkp2 * (1.0 - ((rtp - pt as f32) / (60.0 * xkp2)).exp());
+            w.ts_next[itime - 1] = rx - sumrain;
+            pt = (pt as f32 + dtm) as i32;
+            itime += 1;
+            if itime > step {
+                break;
+            }
+            sumrain = rx;
+        }
+        if precip > sumrain && itime <= step && itime >= 2 {
+            w.ts_next[itime - 2] += precip - sumrain;
+        }
+    }
+
     fn pgen(&mut self, ist: usize, mo: usize) {
         let Some(iwgn) = self.stations.get(ist).map(|s| s.wgn) else { return };
         let prior_wet = self.stations.get(ist).is_some_and(|s| s.weat.prior_wet);
@@ -451,10 +517,15 @@ impl Weather {
             }
             match st.pcp {
                 Source::Sim => {
+                    self.pgen(ist, mo);
                     if clock.step > 1 {
-                        return Err("generated sub-daily precipitation (cli_pgenhr)".into());
+                        // The generated day is spread into tomorrow's steps, but today's steps
+                        // are zeroed first and give tomorrow's rain: none.
+                        self.pgenhr(ist, clock.step as usize);
+                        if let Some(st) = self.stations.get_mut(ist) {
+                            st.weat.precip_next = st.weat.ts.iter().sum();
+                        }
                     }
-                    self.pgen(ist, mo)
                 }
                 Source::Gage(ipg) => {
                     let default = Gage::default();
@@ -470,16 +541,27 @@ impl Weather {
                         // last day of a year, the next year's first day is this year's), and
                         // the day's total is their sum; a gap (-99) isn't generated.
                         let ts = g.steps(cur_day, clock.yrs);
-                        if ts.iter().any(|&v| v <= -97.0) {
-                            return Err("missing sub-daily precipitation (generated hourly rain)".into());
-                        }
                         let mut sum = 0.0_f32;
                         for &v in &ts {
                             sum += v;
                         }
+                        // The steps up to a gap (-99) are read; at the gap the day is generated
+                        // and today's rain spread into the steps from the first (`cli_pgenhr`);
+                        // the day's total is still the file's, gaps and all.
+                        let gap = ts.iter().position(|&v| v <= -97.0);
                         if let Some(st) = self.stations.get_mut(ist) {
-                            st.weat.ts_next = ts;
+                            let n = gap.map_or(ts.len(), |k| k + 1);
+                            for (t, v) in st.weat.ts_next.iter_mut().zip(&ts).take(n) {
+                                *t = *v;
+                            }
                             st.weat.precip_next = sum;
+                        }
+                        if gap.is_some() {
+                            self.pgen(ist, mo);
+                            self.pgenhr(ist, clock.step as usize);
+                            if let Some(st) = self.stations.get_mut(ist) {
+                                st.weat.precip_next = sum;
+                            }
                         }
                         continue;
                     }
@@ -802,6 +884,13 @@ impl Weather {
             w.precip *= 1.0 + 0.0 / 100.0;
             if w.precip < 0.0 {
                 w.precip = 0.0;
+            }
+            // The steps too: a gap left in them (-99) becomes no rain.
+            for t in w.ts.iter_mut() {
+                *t *= 1.0 + 0.0 / 100.0;
+                if *t < 0.0 {
+                    *t = 0.0;
+                }
             }
             w.tmax += 0.0;
             w.tmin += 0.0;

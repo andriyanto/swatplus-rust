@@ -446,6 +446,7 @@ From `sd_hydsed_init`, `sd_rating_curve`, `sd_channel_control3`, `sd_channel_sed
 - **The object list** is the count of its entries, then the entries, where a negative number
   closes a range (`2  1 -1858` is HRUs 1 to 1858; `define_unit_elements`). A count of 0 means
   every object of the parameter's kind. Changes are held to `cal_parms.cal`'s range.
+- **Conditions, and the parameters the port changes**: see [`engine1.md`](engine1.md).
 
 ## Rice paddies (phase 4, Osu_1hru)
 

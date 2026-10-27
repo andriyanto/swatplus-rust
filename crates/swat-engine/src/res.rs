@@ -38,11 +38,50 @@ enum Base {
 enum Release {
     Rate(f32),
     RatePct(f32),
-    InfloRate { min: f32, plus: f32 },
+    InfloRate {
+        min: f32,
+        plus: f32,
+    },
     InfloFrac(f32),
     AbEmer,
-    Days { days: f32, base: Base, frac: f32 },
-    Dyrt { days: f32, base: Base, pct: f32 },
+    Days {
+        days: f32,
+        base: Base,
+        frac: f32,
+    },
+    Dyrt {
+        days: f32,
+        base: Base,
+        pct: f32,
+    },
+    /// `dyrt1`: as `dyrt`, its base volume from the condition its pointer names (`con1` is the
+    /// fifth, `con2` the fourth, `con3` the third).
+    Dyrt1 {
+        days: f32,
+        pct: f32,
+        op: char,
+        lim: f32,
+    },
+    /// `inflo_targ`: the inflow and what is above a share of the principal volume, the share the
+    /// limit of the condition numbered by the action's constant.
+    InfloTarg {
+        lim: f32,
+    },
+    /// `natlake`: a natural lake (Döll et al. 2003): `kr (S / (Smax − So))^1.5 S`, `S` the volume
+    /// above the inactive `So` (a share of the principal volume), `Smax` the principal volume.
+    NatLake {
+        so_frac: f32,
+        kr: f32,
+    },
+    /// `nonirr-h06` (Hanasaki et al. 2006) and `hydrop` (HYPE): releases a share of the mean
+    /// inflow, which SWAT+ never computes (zero).
+    NonIrrH06 {
+        alpha: f32,
+    },
+    Hydrop {
+        a: f32,
+        b: f32,
+    },
 }
 
 /// A reservoir's data and state.
@@ -78,6 +117,8 @@ pub struct Reservoir {
     pub out_d: Hyd,
     /// Time steps a day (`res_hydro`'s `nstep`).
     nstep: usize,
+    /// Storage at the start of the operational year (`S_ini`, Hanasaki).
+    s_ini: f32,
 }
 
 fn row<'a>(t: Option<&'a Table>, name: &str) -> Option<(&'a Table, usize)> {
@@ -176,6 +217,34 @@ impl Reservoir {
                 "ab_emer" => Release::AbEmer,
                 "days" => Release::Days { days: a.const_, base: base()?, frac: a.const2 },
                 "dyrt" => Release::Dyrt { days: a.const_, base: base()?, pct: a.const2 },
+                "dyrt1" => {
+                    let ic = match a.file_pointer.as_str() {
+                        "con1" => 5,
+                        "con2" => 4,
+                        "con3" => 3,
+                        fp => return Err(format!("reservoir release dyrt1 on {fp}")),
+                    };
+                    let c = dt.conds.get(ic - 1).ok_or_else(|| format!("reservoir release dyrt1: no condition {ic}"))?;
+                    let op = c.lim_op.chars().next().unwrap_or(' ');
+                    if !"=*+-/".contains(op) {
+                        return Err(format!("reservoir release dyrt1: operator {}", c.lim_op));
+                    }
+                    Release::Dyrt1 { days: a.const_, pct: a.const2, op, lim: c.lim_const }
+                }
+                "inflo_targ" => {
+                    let ic = a.const_ as i32;
+                    let c = dt
+                        .conds
+                        .get((ic - 1).max(0) as usize)
+                        .filter(|_| ic >= 1)
+                        .ok_or_else(|| format!("reservoir release inflo_targ: no condition {ic}"))?;
+                    Release::InfloTarg { lim: c.lim_const }
+                }
+                "natlake" => Release::NatLake { so_frac: a.const_, kr: a.const2 },
+                "nonirr-h06" => Release::NonIrrH06 { alpha: a.const_ },
+                "hydrop" => Release::Hydrop { a: a.const_, b: a.const2 },
+                // Its target divides the mean demand by itself, both never computed: NaN.
+                "irr-h06" => return Err("reservoir release irr-h06 (SWAT+ releases NaN)".into()),
                 o => return Err(format!("reservoir release option {o}")),
             };
             acts.push((release, out.clone()));
@@ -184,6 +253,7 @@ impl Reservoir {
         let prm = WbPrm::new(project, &s(own, "sed"), &s(own, "nut"));
         let mut r = Reservoir {
             nstep: project.time.step.max(1) as usize,
+            s_ini: evol.max(pvol),
             ob,
             iyres: xi("iyres"),
             mores: xi("mores"),
@@ -249,7 +319,7 @@ impl Reservoir {
 
     /// `conditions` and `res_hydro`: the release (m3), the actions taken once for each of the
     /// day's time steps.
-    fn release(&self, mo: i32, hin: &Hyd) -> f32 {
+    fn release(&mut self, mo: i32, day: i32, day_mo: i32, hin: &Hyd) -> f32 {
         let nstep = self.nstep;
         let ns = nstep as f32;
         let mut hit = vec![true; self.alts];
@@ -305,6 +375,49 @@ impl Reservoir {
                     flo += (cur - b_lo) / days + pct * self.pvol / 100.0 / ns;
                     flo = flo.max(0.0);
                 }
+                Release::Dyrt1 { days, pct, op, lim } => {
+                    let (pv, ev) = (self.pvol, self.evol);
+                    let b_lo = match op {
+                        '=' => pv + (ev - pv) * lim,
+                        '*' => (ev - pv) * lim,
+                        '+' => (ev - pv) + lim,
+                        '-' => (ev - pv) - lim,
+                        _ => (ev - pv) / lim,
+                    }
+                    .max(0.0);
+                    flo += (cur - b_lo) / days + pct * pv / 100.0 / ns;
+                    flo = flo.max(0.0);
+                }
+                Release::InfloTarg { lim } => {
+                    let b_lo = self.pvol * lim;
+                    flo += hin.flo + (cur - b_lo);
+                    flo = flo.max(0.0);
+                }
+                Release::NatLake { so_frac, kr } => {
+                    let so = so_frac * self.pvol;
+                    let smax = self.pvol;
+                    let sto = cur - so;
+                    flo += crate::fortran::rpow(sto / (smax - so), 1.5) * sto * kr;
+                }
+                Release::NonIrrH06 { alpha } => {
+                    let smax = self.pvol.max(self.evol);
+                    // The mean inflow of the last five years (never computed: zero).
+                    let i_mean = 0.0_f32;
+                    if day_mo == 1 && cur > self.pvol {
+                        self.s_ini = cur;
+                    }
+                    let er = self.s_ini / (alpha * smax);
+                    flo += er * i_mean;
+                }
+                Release::Hydrop { a, b } => {
+                    let s_min = 0.20 * self.pvol;
+                    let s_lim = 0.50 * self.pvol;
+                    let i_mean = 0.0_f32;
+                    let f_lin = ((cur - s_min) / (s_lim - s_min)).max(0.0).min(1.0);
+                    // Not a sine: the day's angle itself.
+                    let f_sin = (1.0 + a * ((2.0 * std::f32::consts::PI * day as f32 + b) / 365.0)).max(0.0);
+                    flo += f_lin * f_sin * i_mean;
+                }
             }
         }
         flo
@@ -314,13 +427,13 @@ impl Reservoir {
     /// and mean temperature. Returns the outflow. `print` keeps the day's inflow and outflow for
     /// the tables (`time%yrs > nyskip`).
     #[allow(clippy::too_many_arguments)]
-    pub fn control(&mut self, hin: Hyd, yrc: i32, mo: i32, precip: f32, pet: f32, tave: f32, print: bool) -> Hyd {
+    pub fn control(&mut self, hin: Hyd, yrc: i32, mo: i32, day: i32, day_mo: i32, precip: f32, pet: f32, tave: f32, print: bool) -> Hyd {
         if !self.operational(yrc, mo) {
             return hin;
         }
         let mut ht2 = Hyd::default();
         self.water = self.water.plus(hin);
-        ht2.flo = self.release(mo, &hin);
+        ht2.flo = self.release(mo, day, day_mo, &hin);
         let alpha_up = (-self.lag_up).exp();
         let alpha_down = (-self.lag_down).exp();
         if self.prev_flo < ht2.flo {
