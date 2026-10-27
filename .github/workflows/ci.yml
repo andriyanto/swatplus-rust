@@ -67,13 +67,19 @@ jobs:
           cat /tmp/wasm-out/run.json
           grep -q '"ok":true' /tmp/wasm-out/run.json
           target/release/swatplus-rust run testdata/Osu_1hru --out /tmp/native-out
-          n=0
+          # Tables byte for byte; a table that differs (the browser's math library can round a
+          # function's last bit differently from glibc's) must still match within K12's tolerance.
+          n=0; t=0
           for f in /tmp/native-out/*.txt; do
-            cmp "$f" "/tmp/wasm-out/$(basename "$f")" || n=$((n+1))
-            n=$n
+            b=$(basename "$f")
+            if ! cmp -s "$f" "/tmp/wasm-out/$b"; then
+              n=$((n+1))
+              echo "::warning::$b differs from the native run: $(diff "$f" "/tmp/wasm-out/$b" | grep '^[<>]' | head -2 | cut -c1-300 | tr '\n' ' ')"
+              target/release/swatplus-rust compare "$f" "/tmp/wasm-out/$b" > cmp.txt || { t=$((t+1)); grep -A1 MISMATCH cmp.txt | head -4; }
+            fi
           done
-          echo "$(ls /tmp/native-out/*.txt | wc -l) tables, $n differ"
-          test "$n" = 0
+          echo "$(ls /tmp/native-out/*.txt | wc -l) tables, $n not byte for byte, $t outside the tolerance"
+          test "$t" = 0
 
   parquet:
     name: Parquet tables read by DuckDB and Arrow
