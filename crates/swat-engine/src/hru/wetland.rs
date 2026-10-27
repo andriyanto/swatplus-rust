@@ -414,7 +414,8 @@ impl Hru {
 
         // A pond that was empty and spills is flushed: its sediment comes from erosion.
         let mut sedyld = 0.0_f32;
-        if dep_init < 0.0001 && wt.out.flo > 0.0 {
+        let flushed = dep_init < 0.0001 && wt.out.flo > 0.0;
+        if flushed {
             let qp_cms = prf / 6578.6 * area * surfq / tconc / 35.3;
             let cklsp = c_factor * usle_mult;
             wt.water.sed = (10.0 * surfq * qp_cms * area).powf(0.56) * cklsp;
@@ -423,6 +424,9 @@ impl Hru {
             wt.out.sed = sedyld;
         }
         let o = wt.out;
+        if flushed {
+            self.usle_cfac = c_factor;
+        }
         nd.sedyld = o.sed + sedyld;
         nd.sedorgn = o.orgn / area;
         nd.sedorgp = o.sedp / area;

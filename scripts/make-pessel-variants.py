@@ -679,6 +679,45 @@ def ps_hourly(base, dst, years=(2015, 2017)):
     print(f"{os.path.basename(dst)}: hourly, Green-Ampt ({len(names)} precipitation files)")
 
 
+def ps_land(base, dst):
+    """A copy of project `base` where three upland oil palm HRUs drain across the land into the
+    HRU below them in their routing unit (landscape routing), instead of to the channel."""
+    if os.path.exists(dst):
+        shutil.rmtree(dst)
+    shutil.copytree(base, dst)
+    p = lambda f: os.path.join(dst, f)
+    # (routing unit, upslope HRU, downslope HRU, how): into a peat swamp forest (wetland), into
+    # dry fields as a whole, and into dry fields by surface and lateral flow separately.
+    pairs = [(51, 4, 5, "tot"), (37, 8, 9, "tot"), (36, 10, 11, "sur_lat")]
+    lines = read(p("rout_unit.con"))
+    aqu = {}
+    for l in lines[2:]:
+        t = l.split()
+        if t:
+            k = t.index("rhg")
+            aqu[int(t[0])] = int(t[k - 1])
+    lines = read(p("rout_unit.def"))
+    for i in range(2, len(lines)):
+        t = lines[i].split()
+        for ru, up, down, _ in pairs:
+            if t and int(t[0]) == ru:
+                lines[i] = f"{ru:8d}{t[1]:>18}{1:10d}{down:10d}"
+    write(p("rout_unit.def"), lines)
+    lines = read(p("hru.con"))
+    for i in range(2, len(lines)):
+        t = lines[i].split()
+        for ru, up, down, how in pairs:
+            if t and int(t[0]) == up:
+                outs = [("hru", down, "tot")] if how == "tot" else [("hru", down, "sur"), ("hru", down, "lat")]
+                outs.append(("aqu", aqu[ru], "rhg"))
+                line = set_field(lines[i].rstrip(), 12, str(len(outs)))
+                for typ, num, hyd in outs:
+                    line += f"{typ:>14}{num:10d}{hyd:>14}{1.0:14.5f}"
+                lines[i] = line + "  "
+    write(p("hru.con"), lines)
+    print(f"{os.path.basename(dst)}: {len(pairs)} upland HRUs routed across the land")
+
+
 if __name__ == "__main__":
     src, out = sys.argv[1], sys.argv[2]
     os.makedirs(out, exist_ok=True)
@@ -692,3 +731,4 @@ if __name__ == "__main__":
     ps_solp(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_solp"))
     ps_urban(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_urban"))
     ps_hourly(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_hourly"))
+    ps_land(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_land"))

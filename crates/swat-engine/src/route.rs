@@ -151,8 +151,10 @@ struct Aqu {
 #[derive(Clone, Debug)]
 pub struct Network {
     obs: Vec<Ob>,
-    /// Objects in command order, without the HRUs (they run first).
+    /// Objects in command order, without the HRUs (they run first, in their own command order:
+    /// an HRU that receives another's water after it).
     order: Vec<usize>,
+    hru_order: Vec<usize>,
     rus: Vec<Ru>,
     /// Routing unit and aquifer by object index.
     ru_of: Vec<Option<usize>>,
@@ -282,8 +284,10 @@ impl Network {
                         "til" => 5,
                         other => return Err(format!("{}: outflow of {other}", o.name)),
                     };
+                    // Landscape routing: an HRU may send its water to another HRU. Water sent into a
+                    // routing unit, or from other objects into an HRU, isn't ported.
                     if let Some(t) = to
-                        && matches!(obs[t].kind, ObjectKind::Hru | ObjectKind::RoutingUnit)
+                        && (obs[t].kind == ObjectKind::RoutingUnit || (obs[t].kind == ObjectKind::Hru && kind != ObjectKind::Hru))
                     {
                         return Err(format!("{}: water routed into {}", o.name, obs[t].name));
                     }
@@ -416,6 +420,7 @@ impl Network {
         let mut dfn_sum = vec![0usize; n];
         let mut fired = vec![false; n];
         let mut order = Vec::with_capacity(n);
+        let mut hru_order = Vec::new();
         let mut done = 0usize;
         let mut iord = 1;
         while done < n {
@@ -438,6 +443,8 @@ impl Network {
                 }
                 if obs[i].kind != ObjectKind::Hru {
                     order.push(i);
+                } else {
+                    hru_order.push(i);
                 }
             }
             iord += 1;
@@ -501,6 +508,7 @@ impl Network {
         Ok(Some(Network {
             obs,
             order,
+            hru_order,
             rus,
             ru_of,
             aqu_of,
@@ -552,6 +560,44 @@ impl Network {
             let bak = step - istep + 1;
             hyd[c + bak - 1] = if bak <= tinc { 0.0 } else { hyd[c + bak - tinc - 1] };
         }
+    }
+
+    /// The HRUs (0-based) in the order SWAT+ runs them.
+    pub fn hru_order(&self) -> &[usize] {
+        &self.hru_order
+    }
+
+    /// `command` for a receiving HRU `j`: the surface, lateral and tile flow it gets from other
+    /// HRUs, per hectare (flow in mm). A total hydrograph brings the three; `None` when nothing
+    /// is routed into it.
+    pub fn hru_runon(&self, j: usize) -> Option<crate::hru::Runon> {
+        let o = self.obs.get(j)?;
+        if o.ins.is_empty() {
+            return None;
+        }
+        let (mut sur, mut lat, mut til) = (Hyd::default(), Hyd::default(), Hyd::default());
+        for i in &o.ins {
+            let src = &self.obs[i.from];
+            match i.ihtyp {
+                1 => {
+                    sur = sur.plus(Hyd::scale(i.frac, src.hd[2]));
+                    til = til.plus(Hyd::scale(i.frac, src.hd[4]));
+                    lat = lat.plus(Hyd::scale(i.frac, src.hd[3]));
+                }
+                3 => sur = sur.plus(Hyd::scale(i.frac, src.hd[2])),
+                4 => lat = lat.plus(Hyd::scale(i.frac, src.hd[3])),
+                5 => til = til.plus(Hyd::scale(i.frac, src.hd[4])),
+                // Recharge isn't one of the HRU's inflows.
+                _ => {}
+            }
+        }
+        let conv = o.area_ha;
+        let per_ha = |h: Hyd| {
+            let mut h = h.over(conv);
+            h.flo /= 10.0;
+            h
+        };
+        Some(crate::hru::Runon { sur: per_ha(sur), lat: per_ha(lat), til: per_ha(til) })
     }
 
     /// Sets HRU `j`'s hydrographs for today (0-based).

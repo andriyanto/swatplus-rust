@@ -520,7 +520,7 @@ impl Hru {
     /// Erosion in `surface` (`ero_pkq`, `ero_eiusle`, `ero_cfactor`, `ero_ysed`): peak runoff and
     /// sediment yield of the day's runoff `qday`. `precip` is the HRU's, `phh` the station's
     /// fraction of rain in the peak half hour.
-    pub(super) fn erosion(&self, qday: f32, surfq: f32, precip: f32, phh: f32, b: &NutBasin, nd: &mut NutDay) {
+    pub(super) fn erosion(&mut self, qday: f32, surfq: f32, precip: f32, phh: f32, b: &NutBasin, nd: &mut NutDay) {
         if qday > 1.0e-6 {
             nd.qp_cms = if b.sed_det == 1 {
                 let xx = 2.0 * self.tconc * (1.0 - phh).ln();
@@ -543,6 +543,7 @@ impl Hru {
         }
         if surfq > 1.0e-6 && nd.qp_cms > 1.0e-6 {
             let c = self.c_factor(b.rsd_covco);
+            self.usle_cfac = c;
             // ero_ysed
             let cklsp = c * self.usle_mult;
             let mut sedyld = (10.0 * surfq * nd.qp_cms * self.area_ha).powf(0.56) * cklsp;
@@ -726,11 +727,11 @@ impl Hru {
     }
 
     /// SWAT+ `nut_solp`: soluble P in runoff, and P leached down the profile.
-    pub(super) fn nut_solp(&mut self, surfq: f32, b: &NutBasin, nd: &mut NutDay) {
+    pub(super) fn nut_solp(&mut self, surfq: f32, runon_solp: f32, b: &NutBasin, nd: &mut NutDay) {
         let nly = self.layers.len();
         {
             let l = &mut self.layers[0];
-            l.lab += 0.0;
+            l.lab += runon_solp;
             let xx = l.bd * l.d * b.phoskd;
             nd.surqsolp = l.lab * surfq / (xx + 1.0);
             nd.surqsolp = nd.surqsolp.min(l.lab);

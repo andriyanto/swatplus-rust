@@ -240,6 +240,11 @@ pub struct Hru {
     pub sep_opt: i32,
     /// Sub-daily steps (Green and Ampt), when `time.sim` asks for them.
     pub sub: Option<subdaily::SubDaily>,
+    /// The last C factor computed (`usle_cfac`), the topography's deposition coefficient and the
+    /// field's width (m), for the sediment that runs on from other HRUs.
+    pub usle_cfac: f32,
+    pub dep_co: f32,
+    pub field_wid: f32,
     /// Tile flow and its nitrate held back (`bss(3)`, `bss(4)`).
     pub bss_tile: f32,
     pub bss_tno3: f32,
@@ -399,6 +404,15 @@ pub struct HruDay {
     pub hhsurfq: Vec<f32>,
 }
 
+/// Water and what it carries routed into an HRU from others (`ob%hin_sur`, `hin_lat`,
+/// `hin_til`), per hectare (flow in mm).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Runon {
+    pub sur: crate::hyd::Hyd,
+    pub lat: crate::hyd::Hyd,
+    pub til: crate::hyd::Hyd,
+}
+
 /// What an HRU's day needs besides its weather: the day of the year, its station's unadjusted
 /// mean temperature, day length and peak half-hour rain fraction, its generator's values, and
 /// whether the day ends the year.
@@ -419,6 +433,8 @@ pub struct DayCtx {
     pub day_end_yr: i32,
     pub yrc: i32,
     pub end_yr: bool,
+    /// What other HRUs route into this one today (landscape routing).
+    pub runon: Option<Runon>,
 }
 
 /// One day of `hru_wb_day`, the columns the port computes.
@@ -688,9 +704,6 @@ pub fn init_hrus(
     }
     if codes.gwflow != 0 {
         return Err("gwflow".into());
-    }
-    if project.objects.iter().any(|o| o.outflows.iter().any(|f| f.obj_type == "hru")) {
-        return Err("water routed into HRUs".into());
     }
 
     let ffcb = project.params.get("ffcb").unwrap_or(0.0);
@@ -979,6 +992,8 @@ fn init_hru(
     let (hyd, _) = Row::find_or_first(project.hydrology.as_ref(), schema::HYDROLOGY, &hd.hyd);
     let (sno, _) = Row::find_or_first(project.snow.as_ref(), schema::SNOW, &hd.snow);
     h.slope = topo.real("slope");
+    h.dep_co = topo.real("dep_co");
+    h.field_wid = Row::find(project.field.as_ref(), schema::FIELD, &hd.field).0.real("wid");
     h.slope_len = topo.real("slope_len");
     h.lat_len = topo.real("lat_len");
     if h.lat_len < 1.0e-6 {
@@ -1666,6 +1681,44 @@ impl Hru {
             snomlt = 0.0;
         }
 
+        // Landscape routing (`rls_routesurf`, `rls_routesoil`): water from other HRUs. A wetland
+        // takes the surface and tile flow into its pond as they come (per hectare, into m3); any
+        // other HRU gets them as rain, but the tile flow is divided by ten times the area once
+        // more, and keeps the sediment it can carry. Lateral flow goes into the layers by their
+        // thickness.
+        let mut runon_sed = 0.0_f32;
+        // A wetland's runon (`ht1`) is still in `swr_percmain`'s infiltration (per hectare
+        // again) and its soluble P goes into the top layer's labile P (`nut_solp`).
+        let mut wet_runon = crate::hyd::Hyd::default();
+        if let Some(r) = c.runon {
+            if r.sur.flo > 1.0e-6 {
+                if let Some(wt) = self.wet.as_mut() {
+                    let ht1 = r.sur.plus(crate::hyd::Hyd::scale(1.0, r.til));
+                    wt.water = wt.water.plus(ht1);
+                    wet_runon = ht1;
+                } else {
+                    let ls_overq = r.sur.flo + (r.til.flo * 1.0) / (10.0 * self.area_ha);
+                    precip_eff += ls_overq;
+                    for t in ts.iter_mut() {
+                        *t += ls_overq / nstep as f32;
+                    }
+                    let sed = r.sur.sed / self.area_ha;
+                    let trancap = self.dep_co * self.usle_cfac * ls_overq * self.slope.powf(1.4) * self.field_wid.powf(1.4);
+                    runon_sed = if sed > trancap { trancap * self.area_ha } else { sed * self.area_ha };
+                }
+            }
+            if r.lat.flo > 0.0 {
+                let latqrunon = r.lat.flo;
+                if latqrunon > 1.0e-9 {
+                    let dn = self.layers.last().map_or(0.0, |l| l.d);
+                    for l in self.layers.iter_mut() {
+                        let latqlyr = (l.thick / dn) * latqrunon;
+                        l.st += latqlyr;
+                    }
+                }
+            }
+        }
+
         // et_pot, and the vapour pressure deficit
         let ea = crate::climate::ee(w.tave);
         let ed = ea * w.rhum;
@@ -1735,6 +1788,8 @@ impl Hru {
         } else {
             surfq += self.irr_runoff;
             self.erosion(surfq.max(0.0), surfq, w.precip, c.precip_half_hr, &b.nut, &mut nd);
+            // The sediment the runon carries through (`ht2%sed`).
+            nd.sedyld += runon_sed;
             inflpcp = (precip_eff - surfq).max(0.0);
         }
         // ero_ovrsed: the sediment by step, which replaces the day's after the lag.
@@ -1745,7 +1800,7 @@ impl Hru {
 
         // swr_percmain (a wetland's irrigation went into the pond)
         let irr_in = if is_wet { 0.0 } else { self.irr_applied };
-        let (latq_gen, sepbtm) = self.percolate(inflpcp + irr_in, &mut surfq);
+        let (latq_gen, sepbtm) = self.percolate(inflpcp + irr_in + wet_runon.flo / (self.area_ha * 10.0), &mut surfq);
         // The wetland's release (and saturation excess below a low weir), as runoff.
         let wet_outflow = self.wet.as_ref().map_or(0.0, |wt| if wt.out.flo > 0.0 { wt.out.flo / self.area_ha / 10.0 } else { 0.0 });
 
@@ -1850,7 +1905,7 @@ impl Hru {
             [nd.no3atmo, nd.nh4atmo] = self.atmo_prev;
         }
         self.nut_nlch(surfq, &b.nut, &mut nd);
-        self.nut_solp(surfq, &b.nut, &mut nd);
+        self.nut_solp(surfq, wet_runon.solp, &b.nut, &mut nd);
 
         // hru_urban: loads washed off the impervious area.
         let silyld = self.hru_urban(surfq, c.precip_half_hr, w.precip, &mut nd);
