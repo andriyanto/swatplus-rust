@@ -85,6 +85,15 @@ The module imports `env.swat_progress(done, days)`, called at each whole percent
 Web Worker; `scripts/wasm-run.mjs` shows the calls (Node or a browser). CI runs Osu_1hru through
 it and compares every table with the native run's.
 
+**The module's results can differ from the native program's in the last bits**: in WebAssembly
+the math functions (`exp`, `ln`, `powf`, the trigonometric ones) are Rust's own (a port of
+musl's), not glibc's, and a few of them round the last bit of some single-precision results
+differently. On Osu_1hru over 14 years, 17 of its 18 tables are identical; the routing unit's
+average annual table, printed with 9 significant digits, differs in two of its values by 1 and 2
+units in the last place of a 32-bit float. Every table matches within the tolerance the port is
+held to (decision K12). The native program on Linux uses glibc, as the Fortran reference does;
+on macOS and Windows the system's math library can differ the same way.
+
 ## Speed
 
 The engine runs on one thread. The whole of Pessel (3,966 HRUs, 1,454 channels) takes 6.4 s a
