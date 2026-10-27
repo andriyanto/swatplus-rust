@@ -392,21 +392,49 @@ impl Network {
             aqu_of[ob] = Some(iaq);
             aqus.push(Aqu { ob, db, alpha_e, nloss, d });
         }
-        // cal_conditions: the aquifers' calibration (after aqu_initial).
+        // cal_conditions: the aquifers' calibration (after aqu_initial). A condition would be
+        // tested on the HRU numbered as the aquifer.
         for u in &project.cal_upd {
             let p = crate::hru::cal_parm(project, u);
             if p.ob_typ != "aqu" {
                 continue;
             }
-            let elems: Vec<usize> = if u.elems.is_empty() { (1..=aqus.len()).collect() } else { u.elems.clone() };
-            for e in elems {
+            if !u.conds.is_empty() {
+                return Err(format!("calibration of {} with conditions (aquifer)", u.name));
+            }
+            for e in crate::hru::cal_elems(u, aqus.len()) {
                 let a = aqus.get_mut(e.wrapping_sub(1)).ok_or_else(|| format!("calibration of {}: aquifer {e}", u.name))?;
+                let chg = |v: f32| crate::hru::chg_par(u, &p, v);
+                let area = obs[a.ob].area_ha;
                 match u.name.as_str() {
                     "alpha" => {
-                        a.db.alpha = crate::hru::chg_par(u, &p, a.db.alpha);
+                        a.db.alpha = chg(a.db.alpha);
                         a.alpha_e = (-a.db.alpha).exp();
                     }
-                    "revap_co" => a.db.revap_co = crate::hru::chg_par(u, &p, a.db.revap_co),
+                    "revap_co" => a.db.revap_co = chg(a.db.revap_co),
+                    "deep_seep" => a.db.seep = chg(a.db.seep),
+                    "flo_min" => a.db.flo_min = chg(a.db.flo_min),
+                    "revap_min" => a.db.revap_min = chg(a.db.revap_min),
+                    "dep_bot" => a.db.dep_bot = chg(a.db.dep_bot),
+                    "minp_init" => a.db.minp = chg(a.db.minp),
+                    "sp_yld" => {
+                        a.db.spyld = chg(a.db.spyld);
+                        a.d.stor = 1000.0 * (a.db.dep_bot - a.d.dep_wt) * a.db.spyld;
+                    }
+                    "hlife_n" => {
+                        a.db.hlife_n = chg(a.db.hlife_n);
+                        a.nloss = (-0.693 / (a.db.hlife_n + 0.1)).exp();
+                    }
+                    "no3_init" => {
+                        a.db.no3 = chg(a.db.no3);
+                        a.d.no3_st = (10.0 * a.d.flo * area) * a.db.no3 / 1000.0;
+                    }
+                    // Used only while setting up, or by 2-D aquifers.
+                    "flo_init_mm" => a.db.flo = chg(a.db.flo),
+                    "dep_wt_init" => a.db.dep_wt = chg(a.db.dep_wt),
+                    "cbn_init" => a.db.cbn = chg(a.db.cbn),
+                    "flo_dist" => a.db.flo_dist = chg(a.db.flo_dist),
+                    "bf_max" => a.db.bf_max = chg(a.db.bf_max),
                     other => return Err(format!("calibration of {other}")),
                 }
             }

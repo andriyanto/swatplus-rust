@@ -712,6 +712,53 @@ def ps_pet(base, dst, years=(2015, 2017)):
     print(f"{os.path.basename(dst)}: PET read in")
 
 
+# Ps_cal's changes: (parameter, change, value, conditions, first and last soil layer, objects).
+# Each kind of change and condition of calibration.cal, at values within cal_parms.cal's ranges.
+PS_CAL = [
+    ("cn2", "pctchg", -8.0, ["hsg = 0 D"], 0, 0, []),
+    ("cn2", "pctchg", -5.0, ["hsg = 0 C"], 0, 0, []),
+    ("esco", "absval", 0.85, [], 0, 0, []),
+    ("epco", "absval", 0.9, ["landuse = 0 oilp_lum"], 0, 0, []),
+    ("canmx", "absval", 4.0, ["plant = 0 oilp"], 0, 0, []),
+    ("awc", "relchg", 0.1, ["texture = 0 CLAY_LOAM"], 1, 2, []),
+    ("k", "pctchg", 25.0, [], 0, 0, []),
+    ("bd", "pctchg", 5.0, [], 1, 1, []),
+    ("anion_excl", "pctchg", 10.0, [], 0, 0, []),
+    ("usle_k", "relchg", -0.1, [], 1, 1, []),
+    ("alb", "absval", 0.15, [], 1, 1, []),
+    ("lat_ttime", "absval", 4.0, [], 0, 0, []),
+    ("latq_co", "absval", 0.4, [], 0, 0, [1, -40]),
+    ("slope", "pctchg", 10.0, [], 0, 0, []),
+    ("elev", "abschg", 50.0, ["landuse = 0 rice_lum"], 0, 0, []),
+    ("erorgn", "absval", 1.5, [], 0, 0, []),
+    ("petco", "absval", 1.05, ["hsg = 0 B", "landuse = 0 oilp_lum"], 0, 0, []),
+    ("surlag", "absval", 2.0, [], 0, 0, []),
+    ("alpha", "absval", 0.05, [], 0, 0, []),
+    ("deep_seep", "absval", 0.05, [], 0, 0, []),
+    ("flo_min", "absval", 3.0, [], 0, 0, []),
+    ("revap_co", "absval", 0.1, [], 0, 0, []),
+    ("revap_min", "absval", 5.0, [], 0, 0, []),
+    ("sp_yld", "absval", 0.1, [], 0, 0, [2, -10]),
+]
+
+
+def ps_cal(base, dst):
+    """A copy of project `base` with more hard calibration: changes of HRU, soil, basin and
+    aquifer parameters, some only where conditions are met (`PS_CAL`)."""
+    if os.path.exists(dst):
+        shutil.rmtree(dst)
+    shutil.copytree(base, dst)
+    p = lambda f: os.path.join(dst, f)
+    lines = read(p("calibration.cal"))
+    rows = [l for l in lines[3:] if l.split()]
+    for name, typ, val, conds, l1, l2, objs in PS_CAL:
+        tail = f"{len(objs):>10}" + "".join(f"{o:>10}" for o in objs)
+        rows.append(f"{name:<16}{typ:>10}{val:>14.5f}{len(conds):>10}{l1:>10}{l2:>10}{0:>10}{0:>10}{0:>10}{0:>10}" + tail)
+        rows.extend(conds)
+    write(p("calibration.cal"), [lines[0], str(len(rows) - sum(len(c[3]) for c in PS_CAL)), lines[2]] + rows + [""])
+    print(f"{os.path.basename(dst)}: {len(PS_CAL)} more calibration changes")
+
+
 def ps_urbhr(base, dst):
     """A copy of the hourly project `base` whose generic farmland is a medium-density town, its
     loads washed off the impervious area by the hour (`hru_urbanhr`)."""
@@ -783,3 +830,4 @@ if __name__ == "__main__":
     ps_land(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_land"))
     ps_urbhr(os.path.join(out, "Ps_hourly"), os.path.join(out, "Ps_urbhr"))
     ps_pet(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_pet"))
+    ps_cal(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_cal"))

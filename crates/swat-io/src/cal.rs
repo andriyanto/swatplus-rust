@@ -1,7 +1,7 @@
 //! Readers for the hard-calibration files: `cal_parms.cal` (`cal_parm_read`) and
 //! `calibration.cal` (`cal_parmchg_read`).
 
-use swat_model::cal::{CalParm, CalUpdate, define_unit_elements};
+use swat_model::cal::{CalCond, CalParm, CalUpdate, define_unit_elements};
 
 use crate::Result;
 use crate::list::Records;
@@ -68,11 +68,19 @@ pub fn read_calibration(file: &str, text: &str) -> Result<Vec<CalUpdate>> {
             }
         }
         for _ in 0..nconds {
-            // `range var val1 val2`, or `var alt targ targc`: the condition's variable either way
-            // (the port doesn't apply conditions yet).
-            let c = rec.read(2)?;
-            let first = c.text_or(0, "");
-            u.conds.push(if first == "range" { c.text_or(1, "") } else { first });
+            // `range var val1 val2`, or `var alt targ targc`.
+            let mark = rec.mark();
+            let first = rec.read(1)?.text_or(0, "");
+            rec.reset(mark);
+            if first == "range" {
+                let c = rec.read(4)?;
+                u.conds.push(CalCond { var: c.text_or(1, ""), ..CalCond::default() });
+                u.val1 = c.real_or(2, 0.0)?;
+                u.val2 = c.real_or(3, 0.0)?;
+            } else {
+                let c = rec.read(4)?;
+                u.conds.push(CalCond { var: c.text_or(0, ""), alt: c.text_or(1, ""), targ: c.real_or(2, 0.0)?, targc: c.text_or(3, "") });
+            }
         }
         out.push(u);
     }

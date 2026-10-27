@@ -27,7 +27,10 @@ pub struct CalUpdate {
     pub name: String,
     pub chg_typ: String,
     pub val: f32,
-    pub conds: Vec<String>,
+    pub conds: Vec<CalCond>,
+    /// The bounds of a `range` condition (the last one read).
+    pub val1: f32,
+    pub val2: f32,
     pub lyr1: i32,
     pub lyr2: i32,
     pub year1: i32,
@@ -35,6 +38,17 @@ pub struct CalUpdate {
     pub day1: i32,
     pub day2: i32,
     pub elems: Vec<usize>,
+}
+
+/// A condition of a change (`calibration_conditions`): the variable it tests, an operator and
+/// a number (unused by the conditions SWAT+ applies), and the text the variable must equal. A
+/// `range` condition has only its variable (its bounds are the update's `val1` and `val2`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CalCond {
+    pub var: String,
+    pub alt: String,
+    pub targ: f32,
+    pub targc: String,
 }
 
 /// SWAT+ `define_unit_elements`: a list of object numbers where a negative number closes a range
