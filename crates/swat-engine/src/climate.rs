@@ -26,6 +26,10 @@ pub struct Gage {
     ts: Vec<[f32; 366]>,
     /// Minimum temperature (`ts2`).
     ts2: Vec<[f32; 366]>,
+    /// Sub-daily precipitation (`tss(step, day, year)`), `step` values a day, flat by year, day
+    /// and step.
+    tss: Vec<f32>,
+    step: usize,
 }
 
 impl Gage {
@@ -34,7 +38,7 @@ impl Gage {
     /// the next column when a day 365 or 366 is followed by a different year. `ndays` is the global
     /// month table the temperature reader changes (`Some` only for temperature). `None` when the
     /// file has no data records: the reader stops the variable there.
-    pub fn place(series: &StationSeries, yrc: i32, day_start: i32, mut ndays: Option<&mut Clock>) -> Option<Gage> {
+    pub fn place(series: &StationSeries, yrc: i32, day_start: i32, step: usize, mut ndays: Option<&mut Clock>) -> Option<Gage> {
         let first = series.records.first()?;
         let last = series.records.last()?;
         let mut g = Gage {
@@ -47,8 +51,42 @@ impl Gage {
             elev: series.elev,
             ts: Vec::new(),
             ts2: Vec::new(),
+            tss: Vec::new(),
+            step,
         };
         let records = &series.records;
+        if series.tstep > 0 {
+            // cli_pmeas, sub-daily: each record fills the next step of its day (the steps go
+            // round whatever the hour says), the year moving on as for daily files.
+            let Some(start) = records.iter().position(|r| r.year >= yrc && r.jday >= day_start) else {
+                return Some(g);
+            };
+            let mut iyr_prev = records[start].year;
+            let (mut iyrs, mut iss) = (1usize, 1usize);
+            let mut k = start;
+            while let Some(r) = records.get(k) {
+                if (1..=366).contains(&r.jday) {
+                    let need = iyrs * 366 * step;
+                    if g.tss.len() < need {
+                        g.tss.resize(need, 0.0);
+                    }
+                    g.tss[((iyrs - 1) * 366 + (r.jday - 1) as usize) * step + iss - 1] = r.values[0];
+                }
+                iss += 1;
+                if iss > step {
+                    iss = 1;
+                }
+                if r.jday == 365 || r.jday == 366 {
+                    let Some(next) = records.get(k + 1) else { break };
+                    if next.year != iyr_prev {
+                        iyr_prev = next.year;
+                        iyrs += 1;
+                    }
+                }
+                k += 1;
+            }
+            return Some(g);
+        }
         let start = records.iter().position(|r| r.year >= yrc && r.jday >= day_start);
         // The skip loop leaves `iyr` at the record it stopped on (the last, if none qualified).
         let iyr_found = start.and_then(|k| records.get(k)).unwrap_or(last).year;
@@ -91,6 +129,16 @@ impl Gage {
     /// `ts(day, year)`; 0 outside what was placed (SWAT+'s arrays start zeroed).
     pub fn value(&self, day: i32, year: i32) -> f32 {
         Self::at(&self.ts, day, year)
+    }
+
+    /// `tss(:, day, year)`: the day's sub-daily precipitation (0 outside what was placed).
+    pub fn steps(&self, day: i32, year: i32) -> Vec<f32> {
+        let n = self.step;
+        if day < 1 || year < 1 || day > 366 {
+            return vec![0.0; n];
+        }
+        let i = (((year - 1) as usize) * 366 + (day - 1) as usize) * n;
+        self.tss.get(i..i + n).map(|s| s.to_vec()).unwrap_or_else(|| vec![0.0; n])
     }
 
     /// `ts2(day, year)`: minimum temperature.
@@ -146,6 +194,9 @@ pub struct Weat {
     pub precip_half_hr: f32,
     /// `precip_prior_day == "wet"`.
     pub prior_wet: bool,
+    /// Sub-daily precipitation (`ts`, `ts_next`), one value a time step; empty for a daily run.
+    pub ts: Vec<f32>,
+    pub ts_next: Vec<f32>,
 }
 
 /// A weather station: its generator, its sources and its weather.
@@ -235,7 +286,8 @@ impl Weather {
     pub fn new(project: &Project, clock: &mut Clock) -> Self {
         let yrc = clock.yrc;
         let day_start = clock.day_start;
-        let gages = |var: ClimateVar, clock: Option<&mut Clock>| build_gages(project, var, yrc, day_start, clock);
+        let step = clock.step.max(1) as usize;
+        let gages = |var: ClimateVar, clock: Option<&mut Clock>| build_gages(project, var, yrc, day_start, step, clock);
         let pcp = gages(ClimateVar::Pcp, None);
         let tmp = gages(ClimateVar::Tmp, Some(clock));
         let slr = gages(ClimateVar::Slr, None);
@@ -392,19 +444,44 @@ impl Weather {
             let Some(st) = self.stations.get_mut(ist) else { continue };
             st.weat.precip = st.weat.precip_next;
             st.weat.precip_next = 0.0;
+            st.weat.ts = st.weat.ts_next.clone();
+            // A daily file in a sub-daily run leaves the steps as allocated: no rain.
+            if clock.step > 1 && st.weat.ts_next.is_empty() {
+                st.weat.ts_next = vec![0.0; clock.step as usize];
+            }
             match st.pcp {
-                Source::Sim => self.pgen(ist, mo),
+                Source::Sim => {
+                    if clock.step > 1 {
+                        return Err("generated sub-daily precipitation (cli_pgenhr)".into());
+                    }
+                    self.pgen(ist, mo)
+                }
                 Source::Gage(ipg) => {
                     let default = Gage::default();
                     let g = Self::gage(&self.pcp, ipg).unwrap_or(&default);
-                    if g.tstep > 0 {
-                        return Err("sub-daily precipitation is not supported yet".into());
-                    }
                     let mut cur_day = clock.day + istart;
                     let mut yrs_to_start = clock.yrs - g.yrs_start;
                     if cur_day > clock.day_end_yr {
                         cur_day = 1;
                         yrs_to_start += 1;
+                    }
+                    if g.tstep > 0 {
+                        // The steps are taken from this year's column whatever the day (on the
+                        // last day of a year, the next year's first day is this year's), and
+                        // the day's total is their sum; a gap (-99) isn't generated.
+                        let ts = g.steps(cur_day, clock.yrs);
+                        if ts.iter().any(|&v| v <= -97.0) {
+                            return Err("missing sub-daily precipitation (generated hourly rain)".into());
+                        }
+                        let mut sum = 0.0_f32;
+                        for &v in &ts {
+                            sum += v;
+                        }
+                        if let Some(st) = self.stations.get_mut(ist) {
+                            st.weat.ts_next = ts;
+                            st.weat.precip_next = sum;
+                        }
+                        continue;
                     }
                     let mut out = g.out_of_bounds(clock);
                     if yrs_to_start > g.end_yr - g.start_yr + 1 {
@@ -752,7 +829,7 @@ pub fn ee(tk: f32) -> f32 {
 
 /// Builds the gages of one variable in list order, index 0 being the empty gage. As the readers,
 /// the first file without data stops the variable: it and the files after it stay empty.
-fn build_gages(project: &Project, var: ClimateVar, yrc: i32, day_start: i32, mut clock: Option<&mut Clock>) -> Vec<Gage> {
+fn build_gages(project: &Project, var: ClimateVar, yrc: i32, day_start: i32, step: usize, mut clock: Option<&mut Clock>) -> Vec<Gage> {
     let files = project.station_lists.iter().find(|l| l.var == var).map(|l| l.files.as_slice()).unwrap_or(&[]);
     let mut series = project.series.iter().filter(|s| s.var == var);
     let mut out = vec![Gage::default(); files.len() + 1];
@@ -761,7 +838,7 @@ fn build_gages(project: &Project, var: ClimateVar, yrc: i32, day_start: i32, mut
         if &s.file != file {
             break;
         }
-        match Gage::place(s, yrc, day_start, clock.as_deref_mut()) {
+        match Gage::place(s, yrc, day_start, step, clock.as_deref_mut()) {
             Some(g) => {
                 if let Some(slot) = out.get_mut(i + 1) {
                     *slot = g;

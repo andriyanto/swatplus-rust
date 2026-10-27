@@ -53,7 +53,7 @@ jobs:
           # And the whole of Pessel, 2015 only, printed from the first day.
           sed -i '3s/2025/2015/' testdata/Pessel/time.sim
           sed -i '3s/^2 /0 /' testdata/Pessel/print.prt
-          for scenario in Osu_1hru Ames_sub1 Ames_bare Ames_past0 Ames_past Ames_corn Ames_cornf Ames_cosy Ames_cosy2 Ames_dtbl Ames_tile Bh_land Batanghari Bh_res Ps_coast Ps_paddy Ps_musk Ps_atmo Ps_tile Ps_bmp Ps_septic Ps_solp Ps_urban Pessel; do
+          for scenario in Osu_1hru Ames_sub1 Ames_bare Ames_past0 Ames_past Ames_corn Ames_cornf Ames_cosy Ames_cosy2 Ames_dtbl Ames_tile Bh_land Batanghari Bh_res Ps_coast Ps_paddy Ps_musk Ps_atmo Ps_tile Ps_bmp Ps_septic Ps_solp Ps_urban Ps_hourly Pessel; do
             src=testdata/$scenario
             test -d "$src" || src=variants/$scenario
             mkdir -p runs/$scenario
@@ -63,7 +63,7 @@ jobs:
             test -f runs/$scenario/fortran/success.fin
             # The port reads the same print.prt (the folder's SWAT+ output is no input).
             "$RUST" run runs/$scenario/fortran --out runs/$scenario/rust
-            for stem in hru_wb hru_pw hru_nb hru_ls ru aquifer channel_sd basin_wb basin_nb basin_ls basin_pw lsunit_wb lsunit_nb lsunit_ls lsunit_pw basin_sd_cha reservoir basin_res recall basin_psc; do for period in day mon yr aa; do
+            for stem in hru_wb hru_pw hru_nb hru_ls ru aquifer channel_sd basin_wb basin_nb basin_ls basin_pw lsunit_wb lsunit_nb lsunit_ls lsunit_pw basin_sd_cha reservoir basin_res recall basin_psc; do for period in day mon yr aa subday; do
               table=${stem}_$period
               # The port writes the nutrient tables, and the period tables, only for the HRUs it
               # simulates in full.
@@ -82,6 +82,6 @@ jobs:
             fi
             cat runs/$scenario/yields.cmp
             # Batanghari's daily tables run to gigabytes.
-            rm -f runs/$scenario/fortran/*_day.txt runs/$scenario/rust/*_day.txt
+            rm -f runs/$scenario/fortran/*_day.txt runs/$scenario/rust/*_day.txt runs/$scenario/fortran/*_subday.txt runs/$scenario/rust/*_subday.txt
           done
           exit $status

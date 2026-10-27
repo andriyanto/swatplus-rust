@@ -11,7 +11,8 @@
 
 use std::io::BufRead;
 
-type Key = (i64, i64, i64);
+/// Year, day, unit and, in sub-daily tables, the time step (0 otherwise).
+type Key = (i64, i64, i64, i64);
 
 /// A SWAT+ output table being read: a title line, the column names, a units line, then rows.
 struct Rows<R> {
@@ -20,6 +21,8 @@ struct Rows<R> {
     /// Year, day and unit columns; without a unit column (`ru_day.txt`) rows are numbered
     /// within their day.
     cols: (usize, usize, Option<usize>),
+    /// The time step column of a sub-daily table (`tstep`).
+    tstep: Option<usize>,
     last: Option<Key>,
 }
 
@@ -39,7 +42,8 @@ impl<R: BufRead> Rows<R> {
             return Err("the header has no yr and jday columns".into());
         };
         let iu = col("unit");
-        Ok(Rows { names, lines, cols: (iy, id, iu), last: None })
+        let it = col("tstep");
+        Ok(Rows { names, lines, cols: (iy, id, iu), tstep: it, last: None })
     }
 
     /// The next row with a key, or `None` at the end.
@@ -55,13 +59,20 @@ impl<R: BufRead> Rows<R> {
                     None => continue,
                 },
                 None => match self.last {
-                    Some((ly, ld, lu)) if (ly, ld) == (y, d) => lu + 1,
+                    Some((ly, ld, lu, _)) if (ly, ld) == (y, d) => lu + 1,
                     _ => 1,
                 },
             };
-            let k = (y, d, u);
+            let ts = match self.tstep {
+                Some(it) => match key(it) {
+                    Some(v) => v,
+                    None => continue,
+                },
+                None => 0,
+            };
+            let k = (y, d, u, ts);
             if self.last.is_some_and(|l| k <= l) {
-                return Err(format!("rows out of order at year {y} day {d} unit {u}"));
+                return Err(format!("rows out of order at year {y} day {d} unit {u} step {ts}"));
             }
             self.last = Some(k);
             return Ok(Some((k, t)));
@@ -83,7 +94,7 @@ struct ColumnStats {
 pub fn compare(expected: impl BufRead, actual: impl BufRead, abs: f64, rel: f64, label: &str) -> Result<bool, String> {
     let mut ex = Rows::new(expected)?;
     let mut ac = Rows::new(actual)?;
-    let skip = ["jday", "mon", "day", "yr", "unit", "gis_id", "name", "type"];
+    let skip = ["jday", "mon", "day", "yr", "unit", "gis_id", "name", "type", "tstep"];
     let columns: Vec<(usize, usize, String)> = ac
         .names
         .iter()
@@ -131,7 +142,8 @@ pub fn compare(expected: impl BufRead, actual: impl BufRead, abs: f64, rel: f64,
                     if d > abs * (1.0 + 1.0e-6) && r > rel {
                         s.mismatches += 1;
                         if s.first.is_none() {
-                            s.first = Some(format!("{} day {} unit {}: SWAT+ {x} vs {y} ({name})", key.0, key.1, key.2));
+                            let step = if key.3 > 0 { format!(" step {}", key.3) } else { String::new() };
+                            s.first = Some(format!("{} day {} unit {}{step}: SWAT+ {x} vs {y} ({name})", key.0, key.1, key.2));
                         }
                     }
                 }

@@ -60,6 +60,12 @@ struct Ob {
     /// routing unit (`dfn_tot`).
     subs: Vec<usize>,
     dfn_tot: usize,
+    /// Sub-daily: the flow hydrograph by step of the days kept (`hyd_flo(day_max, step)`, flat),
+    /// the current day (1-based, `day_cur`; 0 before the first) and the inflow by step (`tsin`).
+    hyd_flo: Vec<f32>,
+    day_cur: usize,
+    day_max: usize,
+    tsin: Vec<f32>,
 }
 
 /// A routing unit's element: its object, share and delivery ratio.
@@ -168,6 +174,12 @@ pub struct Network {
     res_of: Vec<Option<usize>>,
     pub recalls: Vec<crate::res::Recall>,
     rec_of: Vec<Option<usize>>,
+    /// Time steps a day and their length (minutes); the HRUs' times of concentration and their
+    /// runoff by step leaving today (Green and Ampt).
+    step: usize,
+    dtm: f32,
+    tconc: Vec<f32>,
+    hhsurfq: Vec<Vec<f32>>,
 }
 
 /// A channel's printed day: number (1-based), GIS id, name, water body, storage, inflow,
@@ -220,6 +232,10 @@ impl Network {
                     hin: Hyd::default(),
                     subs: Vec::new(),
                     dfn_tot: 0,
+                    hyd_flo: Vec::new(),
+                    day_cur: 0,
+                    day_max: 1,
+                    tsin: Vec::new(),
                 });
             }
         }
@@ -466,6 +482,22 @@ impl Network {
             recalls.push(crate::res::Recall::new(project, c0 + k, obs[c0 + k].props, yrc, yrc_end, nbyr)?);
         }
         let n_ru = rus.len();
+        // hyd_read_connect: two days of hydrographs for HRUs, routing units, channels and
+        // outlets (`day_lag_mx`), one for the others.
+        let step = project.time.step.max(1) as usize;
+        for o in obs.iter_mut() {
+            o.day_max = match o.kind {
+                ObjectKind::Hru
+                | ObjectKind::HruLte
+                | ObjectKind::RoutingUnit
+                | ObjectKind::Channel
+                | ObjectKind::Outlet
+                | ObjectKind::ChannelDeg => 2,
+                _ => 1,
+            };
+            o.hyd_flo = vec![0.0; o.day_max * step];
+            o.tsin = vec![0.0; step];
+        }
         Ok(Some(Network {
             obs,
             order,
@@ -483,13 +515,73 @@ impl Network {
             res_of,
             recalls,
             rec_of,
+            step,
+            dtm: 1440.0 / step as f32,
+            tconc: tconc.to_vec(),
+            hhsurfq: vec![Vec::new(); n_hru],
         }))
     }
 
+    /// The flow of today's hydrograph of channel object `ob` by step (`hyd_flo(1, :)`).
+    pub fn hyd_flo_day1(&self, ob: usize) -> &[f32] {
+        &self.obs[ob].hyd_flo[..self.step]
+    }
+
+    /// Advances an object's current hydrograph day (`command`).
+    fn next_day(o: &mut Ob) {
+        if matches!(o.kind, ObjectKind::Hru | ObjectKind::RoutingUnit) {
+            o.day_cur += 1;
+        } else {
+            o.day_cur = 2;
+        }
+        if o.day_cur > o.day_max {
+            o.day_cur = 1;
+        }
+    }
+
+    /// Moves the hydrograph of day `cur` on by `tinc` steps, the last into day `next`
+    /// (`hru_hyds`, `ru_control`).
+    fn shift(hyd: &mut [f32], step: usize, cur: usize, next: usize, tinc: usize) {
+        let c = (cur - 1) * step;
+        let n = (next - 1) * step;
+        for istep in 1..=tinc {
+            let inext = step - tinc + istep;
+            hyd[n + istep - 1] = hyd[c + inext - 1];
+        }
+        for istep in 1..=step {
+            let bak = step - istep + 1;
+            hyd[c + bak - 1] = if bak <= tinc { 0.0 } else { hyd[c + bak - tinc - 1] };
+        }
+    }
+
     /// Sets HRU `j`'s hydrographs for today (0-based).
-    pub fn set_hru(&mut self, j: usize, hd: &[Hyd; 5]) {
+    pub fn set_hru(&mut self, j: usize, hd: &[Hyd; 5], hhsurfq: &[f32]) {
+        let (step, dtm) = (self.step, self.dtm);
+        let tconc = self.tconc.get(j).copied().unwrap_or(0.0);
         if let Some(o) = self.obs.get_mut(j) {
             o.hd.copy_from_slice(hd);
+            Self::next_day(o);
+            if step > 1 {
+                // hru_hyds (Green and Ampt): the surface runoff by step, moved on by the time of
+                // concentration.
+                let cur = o.day_cur;
+                let next = if cur + 1 > o.day_max { 1 } else { cur + 1 };
+                let cnv_m3 = o.area_ha * 10.0;
+                for ii in 0..step {
+                    o.hyd_flo[(cur - 1) * step + ii] += hhsurfq.get(ii).copied().unwrap_or(0.0) * cnv_m3 / dtm * 60.0;
+                }
+                for ii in 0..step {
+                    o.hyd_flo[(next - 1) * step + ii] = 0.0;
+                }
+                if tconc * 60.0 > dtm {
+                    let tinc = ((tconc * 60.0 / dtm) as i32).min(step as i32).max(0) as usize;
+                    Self::shift(&mut o.hyd_flo, step, cur, next, tinc);
+                }
+            }
+        }
+        if let Some(h) = self.hhsurfq.get_mut(j) {
+            h.clear();
+            h.extend_from_slice(hhsurfq);
         }
     }
 
@@ -507,6 +599,10 @@ impl Network {
                 hin_d.push(ht1);
             }
             self.obs[icmd].hin = hin;
+            Self::next_day(&mut self.obs[icmd]);
+            if self.step > 1 {
+                self.sum_tsin(icmd);
+            }
             let wst = self.obs[icmd].wst.wrapping_sub(1);
             match self.obs[icmd].kind {
                 ObjectKind::RoutingUnit => {
@@ -534,7 +630,19 @@ impl Network {
                     let (from_ch, rus) = &self.chan_in[ich];
                     let ins = crate::channel::ChanInflows { from_chandeg: from_ch, hin_d: &hin_d, rus };
                     let area = self.obs[icmd].area_ha;
-                    self.obs[icmd].hd[0] = chs.control(ich, hin, area, &ins, &cx);
+                    let tsin = std::mem::take(&mut self.obs[icmd].tsin);
+                    let mut hyd = std::mem::take(&mut self.obs[icmd].hyd_flo);
+                    let mut flo = Vec::new();
+                    self.obs[icmd].hd[0] = chs.control(ich, hin, area, &ins, &cx, &tsin, &mut flo);
+                    // ch_rtmusk zeroes the whole hydrograph and fills the first day.
+                    for v in hyd.iter_mut() {
+                        *v = 0.0;
+                    }
+                    for (v, f) in hyd.iter_mut().zip(&flo) {
+                        *v = *f;
+                    }
+                    self.obs[icmd].hyd_flo = hyd;
+                    self.obs[icmd].tsin = tsin;
                 }
                 ObjectKind::Reservoir => {
                     // A reservoir with no inflow isn't run.
@@ -559,13 +667,53 @@ impl Network {
         }
     }
 
+    /// `command`: the inflow by step of object `icmd` (`tsin`), the sum of its inputs'. An input
+    /// of a kind not listed passes on the hydrograph of the input before it (`hyd_flo` isn't
+    /// reset between inputs).
+    fn sum_tsin(&mut self, icmd: usize) {
+        let step = self.step;
+        let mut tsin = vec![0.0_f32; step];
+        let mut hyd = vec![0.0_f32; step];
+        for k in 0..self.obs[icmd].ins.len() {
+            let In { from, ihtyp, frac } = self.obs[icmd].ins[k];
+            let src = &self.obs[from];
+            let even = |flo: f32| vec![flo / step as f32; step];
+            match src.kind {
+                ObjectKind::Hru | ObjectKind::RoutingUnit => {
+                    let day = &src.hyd_flo[(src.day_cur.max(1) - 1) * step..src.day_cur.max(1) * step];
+                    match ihtyp {
+                        1 => {
+                            let add = (src.hd[3].flo + src.hd[4].flo) / step as f32;
+                            for ii in 0..step {
+                                hyd[ii] = day[ii] + add;
+                            }
+                        }
+                        3 => hyd.copy_from_slice(day),
+                        2 | 4 | 5 => hyd = even(src.hd[ihtyp - 1].flo),
+                        _ => {}
+                    }
+                }
+                ObjectKind::Aquifer | ObjectKind::Reservoir | ObjectKind::Outlet => hyd = even(src.hd[ihtyp - 1].flo),
+                ObjectKind::ChannelDeg => hyd.copy_from_slice(&src.hyd_flo[..step]),
+                ObjectKind::Recall => hyd = even(src.hd[0].flo),
+                _ => {}
+            }
+            for ii in 0..step {
+                hyd[ii] *= frac;
+                tsin[ii] += hyd[ii];
+            }
+        }
+        self.obs[icmd].tsin = tsin;
+    }
+
     /// SWAT+ `ru_control`: the elements' hydrographs, with their delivery ratios (but not on the
     /// recharge), scaled to the share of each in the unit and summed; `ru_d` sums all five.
     fn ru_control(&mut self, iru: usize) {
         let ob = self.rus[iru].ob;
         let mut hd = [Hyd::default(); 5];
         let mut ru_d = Hyd::default();
-        for e in &self.rus[iru].elems {
+        for ie in 0..self.rus[iru].elems.len() {
+            let e = self.rus[iru].elems[ie].clone();
             let src = &self.obs[e.ob];
             let mut ef = e.frac;
             if e.hru && ef < 0.99999 {
@@ -579,6 +727,29 @@ impl Network {
                 // total and the recharge.
                 if !self.fixes || k <= 1 {
                     ru_d = ru_d.plus(ht1);
+                }
+            }
+            // Green and Ampt: the unit's hydrograph is the element HRU's plus its runoff by step
+            // (as m3/s), replaced by each element in turn, then moved on by a time of
+            // concentration of 2 h.
+            if self.step > 1 && e.hru {
+                let (step, dtm) = (self.step, self.dtm);
+                let cur = self.obs[ob].day_cur;
+                let next = if cur + 1 > self.obs[ob].day_max { 1 } else { cur + 1 };
+                let ru_area = self.obs[ob].area_ha;
+                for ii in 0..step {
+                    let cnv = e.frac * ru_area * e.dr.flo * 10.0 / (dtm * 60.0);
+                    let ts_flo = cnv * self.hhsurfq.get(e.ob).and_then(|h| h.get(ii)).copied().unwrap_or(0.0);
+                    let v = self.obs[e.ob].hyd_flo[(cur - 1) * step + ii] + ts_flo;
+                    self.obs[ob].hyd_flo[(cur - 1) * step + ii] = v;
+                }
+                for ii in 0..step {
+                    self.obs[ob].hyd_flo[(next - 1) * step + ii] = 0.0;
+                }
+                let ru_tc = 2.0_f32;
+                if ru_tc * 60.0 > dtm {
+                    let tinc = (ru_tc * 60.0 / dtm) as usize;
+                    Self::shift(&mut self.obs[ob].hyd_flo, step, cur, next, tinc);
                 }
             }
         }
@@ -687,6 +858,21 @@ impl Network {
     /// The recall objects: number (1-based), name and today's load.
     pub fn recall_days(&self) -> impl Iterator<Item = (usize, &str, &Hyd)> {
         self.recalls.iter().enumerate().map(|(i, r)| (i + 1, self.obs[r.ob].name.as_str(), &r.d))
+    }
+
+    /// Sub-daily runs: today's outflow of each channel by time step (`hyd_flo(1, :)`, m3 a step),
+    /// with its number (1-based), GIS id and name.
+    pub fn channel_steps(&self) -> Vec<(usize, i32, &str, &[f32])> {
+        if self.step <= 1 || self.channels.is_none() {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for (ob, k) in self.chan_of.iter().enumerate() {
+            if let Some(k) = *k {
+                out.push((k + 1, self.obs[ob].gis_id, self.obs[ob].name.as_str(), &self.obs[ob].hyd_flo[..self.step]));
+            }
+        }
+        out
     }
 
     /// Today's routing units: name and `ru_d`.

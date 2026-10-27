@@ -456,6 +456,9 @@ pub struct Saved {
     pub enratio: f32,
     /// Each septic system type's operation (`sep(isep)%opt`), shared by its HRUs.
     pub septic_opt: Vec<i32>,
+    /// `ubnrunoff`: the impervious runoff by step, zeroed each day, set by urban HRUs and
+    /// added by every HRU after them (Green and Ampt).
+    pub ubnrunoff: Vec<f32>,
 }
 
 impl Default for Saved {
@@ -473,6 +476,7 @@ impl Default for Saved {
             c_microb_sed: 0.0,
             enratio: 0.0,
             septic_opt: Vec::new(),
+            ubnrunoff: Vec::new(),
         }
     }
 }

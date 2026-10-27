@@ -126,7 +126,8 @@ struct ChNut {
 }
 
 impl ChNut {
-    fn new(t: Option<&Table>, row: Option<usize>) -> ChNut {
+    /// `ch_read_nut`; the rates are per time step (`step` a day), though QUAL2E runs once a day.
+    fn new(t: Option<&Table>, row: Option<usize>, step: f32) -> ChNut {
         let x = |f: &str, d: f32| row.and_then(|r| t.and_then(|t| t.real(r, f))).unwrap_or(d);
         let pos = |v: f32, d: f32| if v <= 0.0 { d } else { v };
         let igropt = row.and_then(|r| t.and_then(|t| t.int(r, "igropt"))).unwrap_or(2);
@@ -138,8 +139,8 @@ impl ChNut {
             ai4: pos(x("ai4", 2.0), 2.0),
             ai5: pos(x("ai5", 3.5), 3.5),
             ai6: pos(x("ai6", 1.07), 1.07),
-            mumax: pos(x("mumax", 2.0), 2.0),
-            rhoq: pos(x("rhoq", 2.5), 2.5),
+            mumax: pos(x("mumax", 2.0), 2.0) / step,
+            rhoq: pos(x("rhoq", 2.5), 2.5) / step,
             tfact: pos(x("tfact", 0.3), 0.3),
             k_l: pos(x("k_l", 0.75), 0.75) * 1.0e-3 * 60.0,
             k_n: pos(x("k_n", 0.02), 0.02),
@@ -148,18 +149,18 @@ impl ChNut {
             lambda1: pos(x("lambda1", 0.03), 0.03),
             lambda2: pos(x("lambda2", 0.054), 0.054),
             p_n: pos(x("p_n", 0.5), 0.5),
-            rs1: pos(x("rs1", 1.0), 1.0),
-            rs2: pos(x("rs2", 0.05), 0.05),
-            rs3: pos(x("rs3", 0.5), 0.5),
-            rs4: pos(x("rs4", 0.05), 0.05),
-            rs5: pos(x("rs5", 0.05), 0.05),
-            rk1: pos(x("rk1", 1.71), 1.71),
-            rk2: pos(x("rk2", 1.0), 1.0),
-            rk3: x("rk3", 2.0),
-            rk4: pos(x("rk4", 0.0), 2.0),
-            bc2: pos(x("bc2", 1.1), 1.1),
-            bc3: pos(x("bc3", 0.21), 0.21),
-            bc4: pos(x("bc4", 0.35), 0.35),
+            rs1: pos(x("rs1", 1.0), 1.0) / step,
+            rs2: pos(x("rs2", 0.05), 0.05) / step,
+            rs3: pos(x("rs3", 0.5), 0.5) / step,
+            rs4: pos(x("rs4", 0.05), 0.05) / step,
+            rs5: pos(x("rs5", 0.05), 0.05) / step,
+            rk1: pos(x("rk1", 1.71), 1.71) / step,
+            rk2: pos(x("rk2", 1.0), 1.0) / step,
+            rk3: x("rk3", 2.0) / step,
+            rk4: pos(x("rk4", 0.0), 2.0) / step,
+            bc2: pos(x("bc2", 1.1), 1.1) / step,
+            bc3: pos(x("bc3", 0.21), 0.21) / step,
+            bc4: pos(x("bc4", 0.35), 0.35) / step,
         }
     }
 }
@@ -208,6 +209,9 @@ struct SdCh {
     out1: Rc,
     out2: Rc,
     msk_c: [f32; 3],
+    /// Muskingum sub-steps a time step, and the steps a day (`msk%substeps`, `msk%nsteps`).
+    substeps: usize,
+    nsteps: usize,
     in1_vol: f32,
     out1_vol: f32,
     tot_stor: Hyd,
@@ -268,6 +272,12 @@ pub struct Channels {
     /// `ch_temp` reads them.
     ru_hrus: Vec<Vec<(usize, f32)>>,
     ru_elem_is_hru: Vec<bool>,
+    /// Time steps a day and their length (minutes).
+    step: usize,
+    dtm: f32,
+    /// `ch_rtmusk`'s inflow of a step (`inflo` has the save attribute): kept from the last step
+    /// computed, of any channel, when a channel has no inflow.
+    inflo: f32,
 }
 
 impl Channels {
@@ -280,9 +290,6 @@ impl Channels {
         }
         if project.ch_temp_file {
             return Err("temperature.cha".into());
-        }
-        if project.time.step > 1 {
-            return Err("sub-daily channel routing".into());
         }
         let p = |n: &str, d: f32| project.params.get(n).unwrap_or(d);
         let b = Basin { rte: codes.rte, qual2e: codes.qual2e, evrch: p("evrch", 0.6), scoef: p("scoef", 1.0), fixes };
@@ -297,7 +304,7 @@ impl Channels {
             let r = |f: &str| hs.real(idb, f).unwrap_or(0.0);
             // Data lookups by the channel's own number (`sd_dat(ich)`, `sd_chd(ich)`).
             let own = project.sd_channel_data.get(ich).cloned().unwrap_or_default();
-            let nut = ChNut::new(nut_t, Some(find(nut_t, &own.nut).unwrap_or(0)));
+            let nut = ChNut::new(nut_t, Some(find(nut_t, &own.nut).unwrap_or(0)), project.time.step.max(1) as f32);
             let db_chw = hs.real(ich - 1, "chw").unwrap_or(0.0);
             let db_chd = hs.real(ich - 1, "chd").unwrap_or(0.0);
             // The initial water must be none (`no_init`) so far.
@@ -341,6 +348,8 @@ impl Channels {
                 out1: Rc::default(),
                 out2: Rc::default(),
                 msk_c: [0.0; 3],
+                substeps: 1,
+                nsteps: 1,
                 in1_vol: 0.0,
                 out1_vol: 0.0,
                 tot_stor: Hyd::default(),
@@ -452,14 +461,17 @@ impl Channels {
             // 2011): the day cut into `substeps`. A daily run then routes the day in one step
             // with them (ch_rtmusk sets one step).
             let detmax = 2.0 * xkm * (1.0 - x);
-            let mut det = 24.0_f32;
+            let step = project.time.step.max(1);
+            let mut det = 1440.0 / step as f32 / 60.0;
             let mut substeps = 1;
             if det > detmax {
                 substeps = (det / detmax) as i32 + 1;
             }
-            if codes.rte == 0 {
+            if codes.rte == 0 && step <= 1 {
                 substeps = 1;
             }
+            c.substeps = substeps.max(1) as usize;
+            c.nsteps = step as usize * c.substeps;
             det /= substeps as f32;
             let denom = 2.0 * xkm * (1.0 - x) + det;
             let mut c1 = (det - 2.0 * xkm * x) / denom;
@@ -484,7 +496,8 @@ impl Channels {
             })
             .collect();
         let ru_elem_is_hru = project.ru_elements.iter().map(|e| e.obtyp == "hru").collect();
-        Ok(Channels { chs, b, gra: 0.0, wtemp: 0.0, ru_hrus, ru_elem_is_hru })
+        let step = project.time.step.max(1) as usize;
+        Ok(Channels { chs, b, gra: 0.0, wtemp: 0.0, ru_hrus, ru_elem_is_hru, step, dtm: 1440.0 / step as f32, inflo: 0.0 })
     }
 
     /// `rcurv_interp_flo` on channel `ich`'s rating curve.
@@ -526,12 +539,25 @@ impl Channels {
 
     /// `sd_channel_control3` for channel `ich` (0-based) with inflow `hin`, its drainage area
     /// (ha) and inflows; returns the outflow hydrograph (`ob%hd(1)`).
-    pub fn control(&mut self, ich: usize, hin: Hyd, area_ha: f32, ins: &ChanInflows, cx: &ChanCtx) -> Hyd {
+    /// `tsin` is the inflow by time step (sub-daily runs); the outflow by step is left in
+    /// `hyd_flo`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn control(
+        &mut self,
+        ich: usize,
+        hin: Hyd,
+        area_ha: f32,
+        ins: &ChanInflows,
+        cx: &ChanCtx,
+        tsin_in: &[f32],
+        hyd_flo: &mut Vec<f32>,
+    ) -> Hyd {
         let w = cx.weat;
         let mut ht1 = hin;
         ht1.temp = 5.0 + 0.75 * w.tave;
         self.wtemp = 5.0 + 0.75 * w.tave;
-        let mut tsin = ht1.flo;
+        let step = self.step;
+        let mut tsin: Vec<f32> = if step == 1 { vec![ht1.flo] } else { tsin_in.to_vec() };
         self.chs[ich].ch_in = Hyd { flo: ht1.flo / 86400.0, ..ht1 };
 
         // sd_channel_sediment3
@@ -554,7 +580,9 @@ impl Channels {
             let precip = 10.0 * w.precip * c.wat.area_ha;
             c.wat.precip = precip;
             let rto = precip / ht1.flo;
-            tsin *= 1.0 + rto;
+            for t in tsin.iter_mut() {
+                *t *= 1.0 + rto;
+            }
             ht1.flo += precip;
             let bf_flow = bankfull_flo * c.elev[1].flo_rate;
             if peakrate > bf_flow {
@@ -595,7 +623,9 @@ impl Channels {
             bank_ero.sedp = (1.0 - c.p_bio) * bank_ero.sed * c.p_conc / 1000.0;
             bank_ero.solp = c.p_bio * bank_ero.sed * c.p_conc / 1000.0;
             let rto = bank_ero.flo / ht1.flo;
-            tsin *= 1.0 - rto;
+            for t in tsin.iter_mut() {
+                *t *= 1.0 - rto;
+            }
             ht1 = ht1.plus(bank_ero);
             ch_dep.sed = c.wash_bed_fr * bank_ero.sed;
             ch_dep.orgn = c.n_dep_enr * c.wash_bed_fr * bank_ero.orgn;
@@ -604,65 +634,78 @@ impl Channels {
             let _ = (d50, bed_exp);
         }
 
-        // ch_rtmusk (one step a day)
+        // ch_rtmusk: by step (one a day for a daily run), each cut into its sub-steps.
         let mut ht2 = Hyd::default();
         let (mut trans_loss, mut evap) = (0.0_f32, 0.0_f32);
+        hyd_flo.clear();
+        hyd_flo.resize(step, 0.0);
         {
             self.chs[ich].wat.evap = 0.0;
             self.chs[ich].wat.seep = 0.0;
-            let mut inflo = 0.0_f32;
-            if ht1.flo > 1.0e-6 {
-                inflo = tsin;
-                let mut rto = inflo / ht1.flo;
-                rto = rto.max(0.0);
-                rto = rto.min(1.0);
-                let c = &mut self.chs[ich];
-                c.tot_stor = c.tot_stor.plus(Hyd::scale(rto, ht1));
-            }
-            let in2 = self.interp_flo(ich, inflo / 86400.0);
-            self.chs[ich].in2 = in2;
-            if self.chs[ich].tot_stor.flo < 1.0e-6 {
-                let c = &mut self.chs[ich];
-                c.in1 = Rc::default();
-                c.out1 = Rc::default();
-                c.in1_vol = 0.0;
-                c.out1_vol = 0.0;
-            } else {
-                let dthr = 24.0_f32;
-                let dts = 86400.0_f32;
-                let c = &mut self.chs[ich];
-                let mut outflo = if self.b.rte == 1 {
-                    let o = c.msk_c[0] * inflo + c.msk_c[1] * c.in1_vol + c.msk_c[2] * c.out1_vol;
-                    let o = o.min(c.tot_stor.flo).max(0.0);
-                    c.in1_vol = inflo;
-                    c.out1_vol = o;
-                    o
-                } else {
-                    let mut scoef = self.b.scoef * 2.0 * dthr / (2.0 * c.out1.ttime + dthr);
-                    scoef = scoef.min(1.0);
-                    scoef * c.tot_stor.flo
-                };
-                if !outflo.is_finite() {
-                    outflo = 0.0;
+            let (substeps, nsteps) = if step == 1 { (1, 1) } else { (self.chs[ich].substeps, self.chs[ich].nsteps) };
+            let dts = self.dtm / substeps as f32 * 60.0;
+            let dthr = dts / 3600.0;
+            let mut irtstep = 1usize;
+            let mut isubstep = 0usize;
+            for _ in 0..nsteps {
+                isubstep += 1;
+                if isubstep > substeps {
+                    irtstep += 1;
+                    isubstep = 1;
                 }
-                let out2 = self.interp_flo(ich, outflo / dts);
-                let c = &mut self.chs[ich];
-                c.out2 = out2;
-                let mut rto = outflo / c.tot_stor.flo;
-                rto = rto.min(1.0);
-                ht2 = ht2.plus(Hyd::scale(rto, c.tot_stor));
-                c.tot_stor = Hyd::scale(1.0 - rto, c.tot_stor);
-                c.in1 = c.in2;
-                c.out1 = c.out2;
-                if c.tot_stor.flo > c.elev[1].vol_ch {
-                    let rto = (c.tot_stor.flo - c.elev[1].vol_ch) / c.tot_stor.flo;
-                    c.fp_stor = Hyd::scale(rto, c.tot_stor);
-                    c.ch_stor = Hyd::scale(1.0 - rto, c.tot_stor);
-                } else {
-                    c.ch_stor = c.tot_stor;
-                    c.fp_stor = Hyd::default();
+                if ht1.flo > 1.0e-6 {
+                    self.inflo = tsin.get(irtstep - 1).copied().unwrap_or(0.0) / substeps as f32;
+                    let mut rto = self.inflo / ht1.flo;
+                    rto = rto.max(0.0);
+                    rto = rto.min(1.0);
+                    let c = &mut self.chs[ich];
+                    c.tot_stor = c.tot_stor.plus(Hyd::scale(rto, ht1));
                 }
-                c.tot_stor = c.ch_stor.plus(c.fp_stor);
+                let inflo = self.inflo;
+                let in2 = self.interp_flo(ich, inflo / 86400.0);
+                self.chs[ich].in2 = in2;
+                if self.chs[ich].tot_stor.flo < 1.0e-6 {
+                    let c = &mut self.chs[ich];
+                    c.in1 = Rc::default();
+                    c.out1 = Rc::default();
+                    c.in1_vol = 0.0;
+                    c.out1_vol = 0.0;
+                } else {
+                    let c = &mut self.chs[ich];
+                    let mut outflo = if self.b.rte == 1 {
+                        let o = c.msk_c[0] * inflo + c.msk_c[1] * c.in1_vol + c.msk_c[2] * c.out1_vol;
+                        let o = o.min(c.tot_stor.flo).max(0.0);
+                        c.in1_vol = inflo;
+                        c.out1_vol = o;
+                        o
+                    } else {
+                        let mut scoef = self.b.scoef * 2.0 * dthr / (2.0 * c.out1.ttime + dthr);
+                        scoef = scoef.min(1.0);
+                        scoef * c.tot_stor.flo
+                    };
+                    if !outflo.is_finite() {
+                        outflo = 0.0;
+                    }
+                    let out2 = self.interp_flo(ich, outflo / dts);
+                    let c = &mut self.chs[ich];
+                    c.out2 = out2;
+                    let mut rto = outflo / c.tot_stor.flo;
+                    rto = rto.min(1.0);
+                    ht2 = ht2.plus(Hyd::scale(rto, c.tot_stor));
+                    hyd_flo[irtstep - 1] += outflo;
+                    c.tot_stor = Hyd::scale(1.0 - rto, c.tot_stor);
+                    c.in1 = c.in2;
+                    c.out1 = c.out2;
+                    if c.tot_stor.flo > c.elev[1].vol_ch {
+                        let rto = (c.tot_stor.flo - c.elev[1].vol_ch) / c.tot_stor.flo;
+                        c.fp_stor = Hyd::scale(rto, c.tot_stor);
+                        c.ch_stor = Hyd::scale(1.0 - rto, c.tot_stor);
+                    } else {
+                        c.ch_stor = c.tot_stor;
+                        c.fp_stor = Hyd::default();
+                    }
+                    c.tot_stor = c.ch_stor.plus(c.fp_stor);
+                }
             }
             let c = &mut self.chs[ich];
             if c.ch_stor.flo > 1.0e-6 {

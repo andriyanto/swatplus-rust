@@ -256,8 +256,9 @@ impl Wetland {
         self.water.flo = vol;
     }
 
-    /// `conditions` and `res_hydro` (a day, one step): the release.
-    fn release(&self) -> f32 {
+    /// `conditions` and `res_hydro`: the release, the actions taken once for each of the day's
+    /// `nstep` time steps (so a rate is released `nstep` times, a drawdown in `nstep` parts).
+    fn release(&self, nstep: usize) -> f32 {
         let mut hit = vec![true; self.alts];
         let cur = self.water.flo;
         for c in &self.conds {
@@ -271,7 +272,8 @@ impl Wetland {
             super::mgt::cond_test(&mut hit, &c.alt, cur, tbl);
         }
         let mut flo = 0.0_f32;
-        for a in &self.acts {
+        let ns = nstep as f32;
+        for a in self.acts.iter().cycle().take(self.acts.len() * nstep) {
             let action = self.alts == 0 || (0..self.alts).any(|k| hit[k] && a.outcomes.get(k).is_some_and(|o| o == "y"));
             if !action {
                 continue;
@@ -291,12 +293,12 @@ impl Wetland {
                 }
                 Release::Days { days, base: b, frac } => {
                     let b_lo = if b == Base::Zero { 0.0 } else { base(b) * frac };
-                    flo += (cur - b_lo) / days;
+                    flo += (cur - b_lo) / days / ns;
                     flo = flo.max(0.0);
                 }
                 Release::Dyrt { days, base: b, pct } => {
                     let b_lo = base(b).max(0.0);
-                    flo += (cur - b_lo) / days + pct * self.pvol / 100.0;
+                    flo += (cur - b_lo) / days + pct * self.pvol / 100.0 / ns;
                     flo = flo.max(0.0);
                 }
             }
@@ -321,6 +323,7 @@ impl Hru {
         let prf = nut.prf;
         let area = self.area_ha;
         let wsa1 = area * 10.0;
+        let nstep = self.sub.as_ref().map_or(1, |s| s.step);
         let c_factor = self.c_factor(nut.rsd_covco);
         let usle_mult = self.usle_mult;
         let tconc = self.tconc;
@@ -400,7 +403,7 @@ impl Hru {
             let dep = if area > 1.0e-6 { wt.water.flo / wsa1 / 1000.0 } else { 0.0 };
             wt.weir_release(area, dep);
         } else {
-            wt.out.flo = wt.release();
+            wt.out.flo = wt.release(nstep);
             wt.water.flo = (wt.water.flo - wt.out.flo).max(0.0);
         }
         let surfq = wt.out.flo / wsa1;

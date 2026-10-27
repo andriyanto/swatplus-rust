@@ -76,6 +76,8 @@ pub struct Reservoir {
     pub wat: ChWat,
     pub in_d: Hyd,
     pub out_d: Hyd,
+    /// Time steps a day (`res_hydro`'s `nstep`).
+    nstep: usize,
 }
 
 fn row<'a>(t: Option<&'a Table>, name: &str) -> Option<(&'a Table, usize)> {
@@ -181,6 +183,7 @@ impl Reservoir {
 
         let prm = WbPrm::new(project, &s(own, "sed"), &s(own, "nut"));
         let mut r = Reservoir {
+            nstep: project.time.step.max(1) as usize,
             ob,
             iyres: xi("iyres"),
             mores: xi("mores"),
@@ -244,8 +247,11 @@ impl Reservoir {
         yrc > self.iyres || (mo >= self.mores && yrc == self.iyres)
     }
 
-    /// `conditions` and `res_hydro` (a day, one step): the release (m3).
+    /// `conditions` and `res_hydro`: the release (m3), the actions taken once for each of the
+    /// day's time steps.
     fn release(&self, mo: i32, hin: &Hyd) -> f32 {
+        let nstep = self.nstep;
+        let ns = nstep as f32;
         let mut hit = vec![true; self.alts];
         let cur = self.water.flo;
         for c in &self.conds {
@@ -269,7 +275,7 @@ impl Reservoir {
             }
         }
         let mut flo = 0.0_f32;
-        for (rel, out) in &self.acts {
+        for (rel, out) in self.acts.iter().cycle().take(self.acts.len() * nstep) {
             let action = self.alts == 0 || (0..self.alts).any(|k| hit[k] && out.get(k).is_some_and(|o| o == "y"));
             if !action {
                 continue;
@@ -291,12 +297,12 @@ impl Reservoir {
                 }
                 Release::Days { days, base: b, frac } => {
                     let b_lo = if b == Base::Zero { 0.0 } else { base(b) * frac };
-                    flo += (cur - b_lo) / days;
+                    flo += (cur - b_lo) / days / ns;
                     flo = flo.max(0.0);
                 }
                 Release::Dyrt { days, base: b, pct } => {
                     let b_lo = base(b).max(0.0);
-                    flo += (cur - b_lo) / days + pct * self.pvol / 100.0;
+                    flo += (cur - b_lo) / days + pct * self.pvol / 100.0 / ns;
                     flo = flo.max(0.0);
                 }
             }
