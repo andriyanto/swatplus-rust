@@ -252,7 +252,7 @@ impl Weather {
             stations: Vec::new(),
             idg: [1, 2, 3, 4, 5, 6, 7, 8, 9],
             ppet_mce: 0,
-            rndseed_cond: 0,
+            rndseed_cond: 748_932_582,
         };
         w.read_wgn(project, clock);
         w.read_stations(project);

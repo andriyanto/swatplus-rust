@@ -197,6 +197,18 @@ pub struct Hru {
     /// Today's harvests: the plant's number in the community and the yield (kg/ha) the basin
     /// crop table adds (`bsn_crop_yld`).
     pub harvests: Vec<(usize, f32)>,
+    /// Days since the last planting, harvest, kill and irrigation (`pcom%days_plant`…), which
+    /// decision tables test: -366 before the first.
+    pub days_plant: i32,
+    pub days_harv: i32,
+    pub days_kill: i32,
+    pub days_irr: i32,
+    /// The initial soil water as a share of field capacity (`soil%ffc`), and `hyd%epco`.
+    pub ffc: f32,
+    pub epco: f32,
+    /// A paddy's target and threshold ponding depths (mm, `hru%irr_hmax`, `irr_hmin`).
+    pub irr_hmax: f32,
+    pub irr_hmin: f32,
 }
 
 /// One day of `hru_pw_day` (plants and weather), the columns the port computes.
@@ -356,6 +368,9 @@ pub struct DayCtx {
     pub station_tave: f32,
     pub daylength: f32,
     pub precip_half_hr: f32,
+    /// The station's precipitation (mm), and the year's last day.
+    pub station_precip: f32,
+    pub day_end_yr: i32,
     pub end_yr: bool,
 }
 
@@ -650,36 +665,65 @@ pub fn init_hrus(
     Ok(out)
 }
 
+/// SWAT+ `chg_par`: parameter `cur` changed by calibration update `u`, within the limits of
+/// `cal_parms.cal`'s `p`.
+pub(crate) fn chg_par(u: &swat_model::cal::CalUpdate, p: &swat_model::cal::CalParm, cur: f32) -> f32 {
+    let v = match u.chg_typ.as_str() {
+        "absval" => u.val,
+        "abschg" => cur + u.val,
+        "pctchg" => (1.0 + u.val / 100.0) * cur,
+        _ => (1.0 + u.val) * cur,
+    };
+    v.max(p.absmin).min(p.absmax)
+}
+
+/// The `cal_parms.cal` row of a calibration update (defaults when it isn't there).
+pub(crate) fn cal_parm(project: &Project, u: &swat_model::cal::CalUpdate) -> swat_model::cal::CalParm {
+    project.cal_parms.iter().find(|p| swat_model::table::fortran_eq(&p.name, &u.name)).cloned().unwrap_or_default()
+}
+
 /// SWAT+ `cal_conditions` (from `proc_cal`, after the HRUs are set up): the changes of
-/// `calibration.cal`, so far those of HRU parameters without conditions.
+/// `calibration.cal` without conditions, of HRU, soil and basin parameters (the aquifers' are
+/// made where the aquifers are set up).
 fn cal_conditions(project: &Project, hrus: &mut [Hru]) -> Result<(), String> {
     for u in &project.cal_upd {
-        let p = project.cal_parms.iter().find(|p| swat_model::table::fortran_eq(&p.name, &u.name)).cloned().unwrap_or_default();
+        let p = cal_parm(project, u);
         if !u.conds.is_empty() {
             return Err(format!("calibration of {} with conditions ({})", u.name, u.conds.join(", ")));
         }
-        if p.ob_typ != "hru" {
+        if !matches!(p.ob_typ.as_str(), "hru" | "sol" | "bsn" | "aqu") {
             return Err(format!("calibration of {} ({} parameter)", u.name, p.ob_typ));
         }
         if !matches!(u.chg_typ.as_str(), "absval" | "abschg" | "pctchg" | "relchg") {
             return Err(format!("calibration of {}: change {}", u.name, u.chg_typ));
         }
-        let chg_par = |cur: f32| -> f32 {
-            let v = match u.chg_typ.as_str() {
-                "absval" => u.val,
-                "abschg" => cur + u.val,
-                "pctchg" => (1.0 + u.val / 100.0) * cur,
-                _ => (1.0 + u.val) * cur,
-            };
-            v.max(p.absmin).min(p.absmax)
-        };
+        let chg = |cur: f32| chg_par(u, &p, cur);
+        if p.ob_typ == "aqu" {
+            if !matches!(u.name.as_str(), "alpha" | "revap_co") {
+                return Err(format!("calibration of {}", u.name));
+            }
+            continue;
+        }
+        if p.ob_typ == "bsn" {
+            match u.name.as_str() {
+                "surlag" => {
+                    // Once (one element), for all HRUs.
+                    let surlag = chg(project.params.get("surlag").unwrap_or(4.0));
+                    for h in hrus.iter_mut() {
+                        h.brt = 1.0 - (-surlag / h.tconc).exp();
+                    }
+                }
+                other => return Err(format!("calibration of {other}")),
+            }
+            continue;
+        }
         let elems: Vec<usize> = if u.elems.is_empty() { (1..=hrus.len()).collect() } else { u.elems.clone() };
         for e in elems {
             let h = hrus.get_mut(e.wrapping_sub(1)).ok_or_else(|| format!("calibration of {}: HRU {e}", u.name))?;
             match u.name.as_str() {
                 "perco" => {
                     // Not for tile-drained HRUs (none are, so far).
-                    h.perco = chg_par(h.perco);
+                    h.perco = chg(h.perco);
                     h.perco_lim = if h.perco > 1.0e-6 {
                         let perc_ln_func = 1.0052_f32 * (-(h.perco - 1.0e-6).ln()).ln() + 5.6862;
                         (-perc_ln_func).exp().min(1.0)
@@ -687,11 +731,95 @@ fn cal_conditions(project: &Project, hrus: &mut [Hru]) -> Result<(), String> {
                         0.0
                     };
                 }
+                "cn2" => {
+                    h.cn2 = chg(h.cn2);
+                    curno(h);
+                }
+                "cn3_swf" => {
+                    h.cn3_swf = chg(h.cn3_swf);
+                    curno(h);
+                }
+                "petco" => h.pet_co = chg(h.pet_co),
+                "latq_co" => h.latq_co = chg(h.latq_co),
+                "canmx" => h.canmx = chg(h.canmx),
+                "esco" => h.esco = chg(h.esco),
+                "lat_len" => h.lat_len = chg(h.lat_len),
+                "epco" => {
+                    h.epco = chg(h.epco);
+                    let epco = h.epco;
+                    for pl in h.plants.iter_mut() {
+                        pl.epco = epco;
+                    }
+                }
+                "awc" => {
+                    let nly = h.layers.len() as i32;
+                    let lyr1 = u.lyr1.max(1);
+                    let lyr2 = if u.lyr2 <= 0 { nly } else { u.lyr2.min(nly) };
+                    for ly in lyr1..=lyr2 {
+                        let l = &mut h.layers[(ly - 1) as usize];
+                        l.awc = chg(l.awc);
+                        soil_awc_init(h);
+                        curno(h);
+                    }
+                }
                 other => return Err(format!("calibration of {other}")),
             }
         }
     }
     Ok(())
+}
+
+/// SWAT+ `soil_awc_init`, again after a calibration of the available water: the layers' water
+/// contents from it, their water back to the initial share of field capacity.
+fn soil_awc_init(h: &mut Hru) {
+    for l in h.layers.iter_mut() {
+        if l.awc <= 1.0e-6 {
+            l.awc = 0.005;
+        }
+        if l.awc >= 0.8 {
+            l.awc = 0.8;
+        }
+        l.wp = 0.4 * l.clay * l.bd / 100.0;
+        if l.wp <= 0.0 {
+            l.wp = 0.005;
+        }
+        l.up = l.wp + l.awc;
+        l.por = 1.0 - l.bd / 2.65;
+        if l.up >= l.por {
+            l.up = l.por - 0.05;
+            l.wp = l.up - l.awc;
+            if l.wp <= 0.0 {
+                l.up = l.por * 0.75;
+                l.wp = l.por * 0.25;
+            }
+        }
+    }
+    let mut depth_prev = 0.0_f32;
+    let mut sumpor = 0.0_f32;
+    h.sumfc = 0.0;
+    h.sumul = 0.0;
+    h.sw = 0.0;
+    let ffc = h.ffc;
+    for l in h.layers.iter_mut() {
+        l.thick = l.d - depth_prev;
+        let pormm = l.por * l.thick;
+        sumpor += pormm;
+        l.ul = (l.por - l.wp) * l.thick;
+        h.sumul += l.ul;
+        l.fc = l.thick * (l.up - l.wp);
+        h.sumfc += l.fc;
+        l.st = l.fc * ffc;
+        l.hk = (l.ul - l.fc) / l.k;
+        if l.hk < 1.0 {
+            l.hk = 1.0;
+        }
+        h.sw += l.st;
+        l.wpmm = l.wp * l.thick;
+        depth_prev = l.d;
+    }
+    let dmax = h.layers.last().map(|l| l.d).unwrap_or(0.0);
+    let avpor = sumpor / dmax;
+    h.avbd = 2.65 * (1.0 - avpor);
 }
 
 fn init_hru(
@@ -711,7 +839,17 @@ fn init_hru(
         }
     }
 
-    let mut h = Hru { area_ha: ob.area_ha, km: ob.area_ha / 100.0, elev: ob.elev, lat: ob.lat, ..Hru::default() };
+    let mut h = Hru {
+        area_ha: ob.area_ha,
+        km: ob.area_ha / 100.0,
+        elev: ob.elev,
+        lat: ob.lat,
+        days_plant: -366,
+        days_harv: -366,
+        days_kill: -366,
+        days_irr: -366,
+        ..Hru::default()
+    };
 
     // wet_initial
     if !is_null(&hd.surf_stor) && !hd.surf_stor.is_empty() {
@@ -764,6 +902,7 @@ fn init_hru(
     h.erorgp = hyd.real("erorgp");
     h.hyd_biomix = hyd.real("biomix");
     h.esco = hyd.real("esco");
+    h.epco = hyd.real("epco");
     h.cn3_swf = hyd.real("cn3_swf");
     let perco = hyd.real("perco");
     h.perco = perco;
@@ -893,6 +1032,7 @@ fn init_hru(
     let tsoil = (g.m[11].tmp_max_ave + g.m[11].tmp_max_ave) / 2.0;
     let sffc = if ffcb <= 0.0 { g.pcp_an / (g.pcp_an + (9.043_f32 - 0.002135 * g.pcp_an).exp()) } else { ffcb };
     h.sw = 0.0;
+    h.ffc = sffc;
     for l in h.layers.iter_mut() {
         l.tmp = tsoil;
         l.st = sffc * l.fc;
@@ -1251,8 +1391,13 @@ impl Hru {
                 self.till_days += 1;
             }
         }
-        // The schedule's decision tables, on yesterday's stresses.
-        self.dtbl_day(c, w.phubase0);
+        // The schedule's decision tables, on yesterday's stresses; then a day more since the
+        // last planting, harvest, kill and irrigation.
+        self.dtbl_day(c, w.phubase0, b, saved);
+        self.days_plant += 1;
+        self.days_harv += 1;
+        self.days_kill += 1;
+        self.days_irr += 1;
         let mut sw_volume_begin = 0.0_f32;
         for l in &self.layers {
             sw_volume_begin += l.st;

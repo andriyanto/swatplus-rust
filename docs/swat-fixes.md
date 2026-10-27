@@ -20,6 +20,8 @@ Each correction is guarded by the same flag, so a faithful run is unchanged.
 | `et_act` (wetlands) | The open-water evaporation coefficient is taken from the HRU numbered as the wetland's hydrology row. | The wetland's own. |
 | `et_pot` (Penman-Monteith) | The canopy resistance uses the last plant's stomatal conductance, not the leaf-area-weighted mean summed just before. | The weighted mean. |
 | Year end | The yearly irrigation total's reset is commented out, so the annual limit is reached once and for good. | Reset each year. |
+| `pl_fert_wet` (paddies) | Fertilizer spread on a flooded paddy goes into the water only with carbon model 2; with the original model it is lost (counted as applied, in no pool). | Into the water with either model. |
+| `mgt_newtillmix_wet` (puddling) | The pond's nutrients are added to the mixing sums, which are then zeroed: the pond's nutrients are lost and the water gets the soil's alone. | The pond's nutrients mix with the soil's. |
 
 ## Routing units and aquifers
 

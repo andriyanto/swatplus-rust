@@ -11,6 +11,7 @@ use swat_model::{MgtSchedule, Project};
 
 use super::HruBasin;
 use super::plant::{OrgMass, Plant};
+use crate::fortran::aunif;
 
 /// What an operation does, with the database row it points to (element 0, all defaults, when the
 /// name isn't found).
@@ -33,7 +34,23 @@ pub enum OpKind {
         surq: f32,
     },
     Fert(Fert),
+    /// `manu`: manure of `manure_om.frt` (the row numbered as the `manure_db.frt` one named).
+    Manure(Manure),
     Skip,
+}
+
+/// A manure application: the `manure_om.frt` fractions, the surface share and the amount
+/// (kg/ha, dry).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Manure {
+    pub frac_water: f32,
+    pub fminn: f32,
+    pub fminp: f32,
+    pub forgn: f32,
+    pub forgp: f32,
+    pub fnh3n: f32,
+    pub surf_frac: f32,
+    pub kg: f32,
 }
 
 /// A fertilizer application: the `fertilizer.frt` row, the share left at the surface
@@ -87,11 +104,32 @@ pub enum CondVar {
     PhuBase0,
     /// Soil water against a share of the wilting point (0), field capacity or porosity
     /// (`lim_var`), the share applied with `lim_op`.
-    SoilWater { targ: SwTarget, op: u8 },
+    SoilWater {
+        targ: SwTarget,
+        op: u8,
+    },
     /// The day of the year (an integer test).
     Jday,
     /// The rotation year (an integer test).
     YearRot,
+    /// The month (an integer test).
+    Month,
+    /// Days since the last planting, harvest, kill, irrigation (integer tests).
+    DaysPlant,
+    DaysHarv,
+    DaysKill,
+    DaysIrr,
+    /// The station's precipitation today.
+    PrecipCur,
+    /// A paddy's weir height and ponded water depth (m; the limit is in mm).
+    WeirH,
+    WetDepth,
+    /// `prob_unif`: one day drawn at random in a window of days (from `first`, to `last`), on
+    /// the window's first day, with the probability `frac_app` of the table. Only its `=`
+    /// alternatives are tested: they fail on any other day.
+    ProbUnif {
+        first: i32,
+    },
 }
 
 /// The soil water a `soil_water` condition is measured against.
@@ -106,8 +144,18 @@ pub enum SwTarget {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
     /// `irrigate` from an unlimited source: `amt` mm with the `irr.ops` efficiency and runoff
-    /// share, at most `max_yr` times a year.
-    Irrigate { amt: f32, eff: f32, surq: f32, max_yr: i32 },
+    /// share, at most `max_yr` times a year. Named `ponding`, a paddy's: up to `amt` mm of
+    /// ponded water (and `max_yr`, as mm, is the paddy's threshold depth).
+    Irrigate { amt: f32, eff: f32, surq: f32, max_yr: i32, ponding: bool, const2: f32 },
+    /// `till` with a `tillage.til` row.
+    Till { effmix: f32, deptil: f32, max_yr: i32 },
+    /// `fertilize` with a `fertilizer.frt` row and `chem_app.ops` surface share.
+    Fertilize { fert: Fert, max_yr: i32 },
+    /// `weir_height` of a paddy (`wet`): mm.
+    WeirHeight { h_mm: f32 },
+    /// `puddle`: a `puddle.ops` row (the top layer's conductivity, the water's sediment, ppm)
+    /// and the tillage named as the action.
+    Puddle { wet_hc: f32, sed: f32, effmix: f32, deptil: f32, max_yr: i32 },
     /// `plant` the community's plant named `crop` if it isn't growing (no `mgt_plantop`).
     Plant { crop: String },
     /// `harvest_kill` the plants named `crop` (or `all`), growing or not, at most `max_yr` times
@@ -129,6 +177,10 @@ pub struct Dtbl {
     pub conds: Vec<(CondVar, f32, Vec<String>)>,
     pub acts: Vec<(Action, Vec<bool>)>,
     pub num_actions: Vec<i32>,
+    /// `prob_unif`: the window's last day and the probability (`frac_app`), and the day drawn
+    /// (`pcom%dtbl%apply_day`).
+    pub frac_app: f32,
+    pub apply_day: i32,
 }
 
 impl Dtbl {
@@ -139,8 +191,28 @@ impl Dtbl {
             _ => 0,
         };
         let mut conds = Vec::new();
+        let mut frac_app = 0.0_f32;
         for (c, alt) in t.conds.iter().zip(&t.alt) {
             let v = match c.var.as_str() {
+                "month" => CondVar::Month,
+                "days_plant" => CondVar::DaysPlant,
+                "days_harv" => CondVar::DaysHarv,
+                "days_kill" => CondVar::DaysKill,
+                "days_irr" => CondVar::DaysIrr,
+                "precip_cur" => {
+                    if c.ob != "hru" {
+                        return Err(format!("decision table {}: precip_cur of {}", t.name, c.ob));
+                    }
+                    CondVar::PrecipCur
+                }
+                "weirh" => CondVar::WeirH,
+                "wet_depth" => CondVar::WetDepth,
+                "prob_unif" => {
+                    // dtbl_lum_read reads the object column again, as the probability.
+                    frac_app =
+                        c.ob.trim().parse::<f32>().map_err(|_| format!("decision table {}: prob_unif probability {}", t.name, c.ob))?;
+                    CondVar::ProbUnif { first: c.ob_num }
+                }
                 "w_stress" => CondVar::WStress,
                 "irr_year" => CondVar::IrrYear,
                 "phu_plant" => CondVar::PhuPlant,
@@ -168,7 +240,7 @@ impl Dtbl {
                 "year_rot" => CondVar::YearRot,
                 other => return Err(format!("decision table {}: condition {other}", t.name)),
             };
-            if c.ob_num != 0 {
+            if c.ob_num != 0 && !matches!(v, CondVar::ProbUnif { .. }) {
                 return Err(format!("decision table {}: condition on object {}", t.name, c.ob_num));
             }
             for a in alt {
@@ -182,7 +254,7 @@ impl Dtbl {
         for (a, out) in t.acts.iter().zip(&t.outcomes) {
             let act = match a.typ.as_str() {
                 "irrigate" => {
-                    if matches!(a.ob.as_str(), "aqu" | "cha" | "sdc" | "res") || a.name == "ponding" {
+                    if matches!(a.ob.as_str(), "aqu" | "cha" | "sdc" | "res") {
                         return Err(format!("decision table {}: irrigation from {} ({})", t.name, a.ob, a.name));
                     }
                     let ir = project.irr_ops.as_ref();
@@ -191,17 +263,70 @@ impl Dtbl {
                         eff: row_real(ir, &a.option, "eff", 0.0),
                         surq: row_real(ir, &a.option, "surq", 0.0),
                         max_yr: a.const2 as i32,
+                        ponding: a.name == "ponding",
+                        const2: a.const2,
                     }
                 }
-                "plant" | "harvest_kill" | "rot_reset" if a.ob_num != 0 => {
+                "plant" | "harvest_kill" | "rot_reset" | "till" | "fertilize" | "weir_height" | "puddle" if a.ob_num != 0 => {
                     return Err(format!("decision table {}: {} on object {}", t.name, a.typ, a.ob_num));
                 }
                 "plant" => {
-                    // A transplant (`transplant.plt`) isn't read yet.
-                    if !a.file_pointer.is_empty() && !fortran_eq(&a.file_pointer, "null") {
+                    // A transplant (a `transplant.ops` row) isn't ported yet.
+                    if project.transplant_ops.as_ref().is_some_and(|t| t.find(&a.file_pointer).is_some()) {
                         return Err(format!("decision table {}: transplant {}", t.name, a.file_pointer));
                     }
                     Action::Plant { crop: a.option.clone() }
+                }
+                "till" => {
+                    let tl = project.tillage.as_ref();
+                    Action::Till {
+                        effmix: row_real(tl, &a.option, "effmix", 0.0),
+                        deptil: row_real(tl, &a.option, "deptil", 0.0),
+                        max_yr: a.const2 as i32,
+                    }
+                }
+                "fertilize" => {
+                    let ft = project.fertilizer.as_ref();
+                    let x = |f: &str| row_real(ft, &a.option, f, 0.0);
+                    Action::Fertilize {
+                        fert: Fert {
+                            fminn: x("fminn"),
+                            fminp: x("fminp"),
+                            forgn: x("forgn"),
+                            forgp: x("forgp"),
+                            fnh3n: x("fnh3n"),
+                            surf_frac: row_real(project.chem_app.as_ref(), &a.file_pointer, "surf_frac", 0.0),
+                            kg: a.const_,
+                        },
+                        max_yr: a.const2 as i32,
+                    }
+                }
+                "weir_height" => {
+                    if a.option != "wet" {
+                        return Err(format!("decision table {}: weir height of a reservoir", t.name));
+                    }
+                    Action::WeirHeight { h_mm: a.const_ }
+                }
+                "puddle" => {
+                    // The last row of that name (no exit in the loop); none would leave the
+                    // previous puddling's.
+                    let pt = project.puddle_ops.as_ref();
+                    let row =
+                        pt.and_then(|pt| (0..pt.rows.len()).rev().find(|&r| pt.text(r, "name").is_some_and(|n| fortran_eq(n, &a.option))));
+                    let (Some(pt), Some(r)) = (pt, row) else {
+                        return Err(format!("decision table {}: puddling {} not in puddle.ops", t.name, a.option));
+                    };
+                    let tl = project.tillage.as_ref();
+                    if tl.and_then(|tl| tl.find(&a.name)).is_none() {
+                        return Err(format!("decision table {}: puddling tillage {} not in tillage.til", t.name, a.name));
+                    }
+                    Action::Puddle {
+                        wet_hc: pt.real(r, "wet_hc").unwrap_or(0.0),
+                        sed: pt.real(r, "sed").unwrap_or(0.0),
+                        effmix: row_real(tl, &a.name, "effmix", 0.0),
+                        deptil: row_real(tl, &a.name, "deptil", 0.0),
+                        max_yr: a.const2 as i32,
+                    }
                 }
                 "harvest_kill" => {
                     let h = project.harv_ops.as_ref();
@@ -223,7 +348,7 @@ impl Dtbl {
             acts.push((act, out.iter().map(|o| o == "y").collect()));
         }
         let n = acts.len();
-        Ok(Dtbl { generic, alts: t.alts, conds, acts, num_actions: vec![1; n] })
+        Ok(Dtbl { generic, alts: t.alts, conds, acts, num_actions: vec![1; n], frac_app, apply_day: 0 })
     }
 }
 
@@ -327,6 +452,29 @@ impl Mgt {
                         kg: o.op3,
                     })
                 }
+                "manu" => {
+                    if project.codes.cswat == 2 {
+                        return Err(format!("schedule {}: manure with carbon model 2", s.name));
+                    }
+                    // read_mgtops finds the manure_db.frt row, pl_manure takes the manure_om.frt
+                    // row of that number (row 0, all zeros, when it isn't found).
+                    let idb = project.manure_db.as_ref().and_then(|t| t.find(&o.op_char)).map_or(0, |r| r + 1);
+                    let om = project.manure_om.as_ref();
+                    let x = |f: &str| match om {
+                        Some(t) if idb >= 1 && idb <= t.rows.len() => t.real(idb - 1, f).unwrap_or(0.0),
+                        _ => 0.0,
+                    };
+                    OpKind::Manure(Manure {
+                        frac_water: x("frac_water"),
+                        fminn: x("fminn"),
+                        fminp: x("fminp"),
+                        forgn: x("forgn"),
+                        forgp: x("forgp"),
+                        fnh3n: x("fnh3n"),
+                        surf_frac: row_real(project.chem_app.as_ref(), &o.op_plant, "surf_frac", 0.0),
+                        kg: o.op3,
+                    })
+                }
                 "skip" => OpKind::Skip,
                 other => return Err(format!("schedule {}: operation {other}", s.name)),
             };
@@ -366,7 +514,7 @@ impl super::Hru {
     /// The decision tables of the HRU's schedule (`hru_control`: `conditions`, then `actions`),
     /// before the day's stresses are reset, with the station's base-zero heat units `phubase0`.
     /// At the end of the year the action counts restart and the rotation moves on a year.
-    pub(super) fn dtbl_day(&mut self, c: &super::DayCtx, phubase0: f32) {
+    pub(super) fn dtbl_day(&mut self, c: &super::DayCtx, phubase0: f32, b: &HruBasin, saved: &mut super::plant::Saved) {
         let Some(mut m) = self.mgt.take() else { return };
         for t in m.dtbls.iter_mut() {
             let mut hit = vec![true; t.alts];
@@ -405,13 +553,71 @@ impl super::Hru {
                         };
                         self.sw
                     }
+                    CondVar::PrecipCur => c.station_precip,
+                    CondVar::WeirH | CondVar::WetDepth => {
+                        targ = *lim / 1000.0;
+                        let wt = self.wet.as_ref();
+                        if *var == CondVar::WeirH { wt.map_or(0.0, |w| w.weir_hgt) } else { wt.map_or(0.0, |w| w.depth) }
+                    }
                     // cond_integer
-                    CondVar::Jday => {
-                        cond_test(&mut hit, alt, c.day, *lim as i32);
+                    CondVar::Jday
+                    | CondVar::YearRot
+                    | CondVar::Month
+                    | CondVar::DaysPlant
+                    | CondVar::DaysHarv
+                    | CondVar::DaysKill
+                    | CondVar::DaysIrr => {
+                        let v = match var {
+                            CondVar::Jday => c.day,
+                            CondVar::YearRot => m.rot_yr,
+                            CondVar::Month => c.mo,
+                            CondVar::DaysPlant => self.days_plant,
+                            CondVar::DaysHarv => self.days_harv,
+                            CondVar::DaysKill => self.days_kill,
+                            _ => self.days_irr,
+                        };
+                        cond_test(&mut hit, alt, v, *lim as i32);
                         continue;
                     }
-                    CondVar::YearRot => {
-                        cond_test(&mut hit, alt, m.rot_yr, *lim as i32);
+                    CondVar::ProbUnif { first } => {
+                        let first = *first;
+                        if c.day == first {
+                            let seed = &mut saved.rndseed_cond;
+                            if *lim > first as f32 {
+                                // The window is within the year.
+                                let ran_num = aunif(seed);
+                                if ran_num < t.frac_app {
+                                    let days_tot = (*lim - first as f32 + 1.0) as i32;
+                                    let ran_num = aunif(seed);
+                                    t.apply_day = (ran_num * days_tot as f32) as i32 + first + 1;
+                                } else {
+                                    t.apply_day = 0;
+                                }
+                            } else {
+                                // It runs over the year's end.
+                                let ran_num = aunif(seed);
+                                if ran_num < t.frac_app {
+                                    if c.day as f32 >= *lim {
+                                        let days_tot = c.day_end_yr - first + 1;
+                                        let ran_num = aunif(seed);
+                                        t.apply_day = (ran_num * days_tot as f32) as i32 + first + 1;
+                                    } else {
+                                        let days_tot = *lim as i32;
+                                        let ran_num = aunif(seed);
+                                        t.apply_day = (ran_num * days_tot as f32) as i32 + 1;
+                                    }
+                                } else {
+                                    t.apply_day = 0;
+                                }
+                            }
+                        }
+                        if c.day != t.apply_day {
+                            for (h, op) in hit.iter_mut().zip(alt) {
+                                if op == "=" {
+                                    *h = false;
+                                }
+                            }
+                        }
                         continue;
                     }
                 };
@@ -431,15 +637,72 @@ impl super::Hru {
                     }
                 };
                 match act {
-                    Action::Irrigate { amt, eff, surq, max_yr } => {
+                    Action::Irrigate { amt, eff, surq, max_yr, ponding, const2 } => {
                         if t.num_actions[iac] <= *max_yr {
-                            self.irr_applied = amt * eff * (1.0 - surq);
-                            self.irr_runoff = amt * surq;
+                            if *ponding {
+                                self.irr_hmax = *amt;
+                                self.irr_hmin = *const2;
+                                let depth = self.wet.as_ref().map_or(0.0, |w| w.depth);
+                                self.irr_applied = (amt - depth * 1000.0).max(0.0) * eff * (1.0 - surq);
+                                self.irr_runoff = (amt - depth * 1000.0).max(0.0) * surq;
+                            } else {
+                                self.irr_applied = amt * eff * (1.0 - surq);
+                                self.irr_runoff = amt * surq;
+                            }
                             self.irr_yr += self.irr_applied;
+                            t.num_actions[iac] += 1;
+                            self.days_irr = 1;
+                        }
+                    }
+                    Action::Fertilize { fert, max_yr } => {
+                        if t.num_actions[iac] <= *max_yr {
+                            if self.wet.as_ref().is_some_and(|w| w.water.flo > 0.0) && fert.surf_frac == 1.0 {
+                                self.pl_fert_wet(fert, b.cswat, b.fixes);
+                            } else {
+                                let rtof = b.carbon.as_ref().map(|c| c.rtof).unwrap_or(0.5);
+                                self.pl_fert(fert, b.cswat, rtof);
+                            }
+                            t.num_actions[iac] += 1;
+                        }
+                    }
+                    Action::Till { effmix, deptil, max_yr } => {
+                        if t.num_actions[iac] <= *max_yr {
+                            match b.carbon.as_ref() {
+                                Some(cb) if b.cswat == 2 => self.tillmix_cswat1(*effmix, *deptil, cb),
+                                _ => self.tillmix_cswat0(0.0, *effmix, *deptil),
+                            }
+                            t.num_actions[iac] += 1;
+                        }
+                    }
+                    Action::WeirHeight { h_mm } => {
+                        let area = self.area_ha;
+                        if let Some(w) = self.wet.as_mut() {
+                            w.set_weir(*h_mm, area);
+                        }
+                    }
+                    Action::Puddle { wet_hc, sed, effmix, deptil, max_yr } => {
+                        if t.num_actions[iac] <= *max_yr {
+                            let mut wet_depth = 0.0;
+                            if let Some(w) = self.wet.as_mut() {
+                                if *wet_hc > 0.0 {
+                                    w.wet_hc = *wet_hc;
+                                }
+                                w.water.sed = sed * w.water.flo / 1000000.0;
+                                wet_depth = w.depth;
+                            }
+                            if wet_depth > 0.001 {
+                                self.tillmix_wet(*effmix, *deptil, b.cswat, b.fixes);
+                            } else {
+                                match b.carbon.as_ref() {
+                                    Some(cb) if b.cswat == 2 => self.tillmix_cswat1(*effmix, *deptil, cb),
+                                    _ => self.tillmix_cswat0(0.0, *effmix, *deptil),
+                                }
+                            }
                             t.num_actions[iac] += 1;
                         }
                     }
                     Action::Plant { crop: own } => {
+                        self.days_plant = 1;
                         let crop = crop(own);
                         for pl in self.plants.iter_mut() {
                             if fortran_eq(&crop, &pl.cpnm) && !pl.gro {
@@ -451,6 +714,7 @@ impl super::Hru {
                     }
                     Action::HarvKill { crop: own, grain, eff, bm_min, max_yr } => {
                         if t.num_actions[iac] <= *max_yr {
+                            self.days_harv = 1;
                             let crop = crop(own);
                             for i in 0..self.plants.len() {
                                 let mut pl = std::mem::take(&mut self.plants[i]);
@@ -518,6 +782,7 @@ impl super::Hru {
         let op = m.ops[m.cur_op].clone();
         match op.kind {
             OpKind::Plant => {
+                self.days_plant = 1;
                 for i in 0..self.plants.len() {
                     let zmx = self.zmx;
                     let pl = &mut self.plants[i];
@@ -534,6 +799,8 @@ impl super::Hru {
                     if pl.gro {
                         let biomass = pl.tot.m;
                         if fortran_eq(&op.op_char, &pl.cpnm) || fortran_eq(&op.op_char, "all") {
+                            self.days_harv = 1;
+                            self.days_kill = 1;
                             if biomass > bm_min && grain {
                                 self.harvgrain(&mut pl, eff);
                             }
@@ -555,6 +822,7 @@ impl super::Hru {
                 }
             }
             OpKind::Irr { amt_mm, eff, surq } => {
+                self.days_irr = 1;
                 self.irr_applied = amt_mm * eff * (1.0 - surq);
                 self.irr_runoff = amt_mm * surq;
                 self.irr_yr += self.irr_applied;
@@ -562,6 +830,10 @@ impl super::Hru {
             OpKind::Fert(f) => {
                 let rtof = b.carbon.as_ref().map(|c| c.rtof).unwrap_or(0.5);
                 self.pl_fert(&f, b.cswat, rtof);
+            }
+            OpKind::Manure(mn) => {
+                let rtof = b.carbon.as_ref().map(|c| c.rtof).unwrap_or(0.5);
+                self.pl_manure(&mn, rtof);
             }
             OpKind::Skip => {
                 if let Some(m) = self.mgt.as_mut() {
@@ -704,6 +976,51 @@ impl super::Hru {
         }
         self.fertn += kg * (f.fminn + f.forgn);
         self.fertp += kg * (f.fminp + f.forgp);
+    }
+}
+
+impl super::Hru {
+    /// SWAT+ `pl_fert_wet`: fertilizer into a paddy's water. With the original carbon model it
+    /// goes nowhere (SWAT+ adds it to the water only with carbon model 2): only the totals
+    /// count it. Corrected (`fixes`), it goes into the water with either model.
+    fn pl_fert_wet(&mut self, f: &Fert, cswat: i32, fixes: bool) {
+        let kg = f.kg;
+        if (cswat == 2 || fixes)
+            && let Some(w) = self.wet.as_mut()
+        {
+            let b = &mut w.water;
+            b.no3 += kg * (1.0 - f.fnh3n) * f.fminn;
+            b.nh3 += kg * f.fnh3n * f.fminn;
+            b.solp += kg * f.fminp;
+            b.orgn += kg * f.forgn;
+            b.sedp += kg * f.forgp;
+        }
+        self.fertn += kg * (f.fminn + f.forgn);
+        self.fertp += kg * (f.fminp + f.forgp);
+    }
+
+    /// SWAT+ `pl_manure` with the original carbon model: the manure's water into the top two
+    /// layers' soil water, mineral N and P into them, organic N and P to their totals and humus.
+    fn pl_manure(&mut self, mn: &Manure, rtof: f32) {
+        let kg = mn.kg;
+        let frac_solids = 1.0 - mn.frac_water;
+        let liq_manure_kg = kg / frac_solids - kg;
+        let liq_manure_mm = liq_manure_kg * 0.0001;
+        for l in 0..2.min(self.layers.len()) {
+            let fr_ly = if l == 0 { mn.surf_frac } else { 1.0 - mn.surf_frac };
+            let fr_mass = fr_ly * kg;
+            let ly = &mut self.layers[l];
+            ly.st += fr_ly * liq_manure_mm;
+            ly.no3 += fr_mass * (1.0 - mn.fnh3n) * mn.fminn;
+            ly.cp.tot.n += rtof * fr_mass * mn.forgn;
+            ly.hact.n += (1.0 - rtof) * fr_mass * mn.forgn;
+            ly.cp.tot.p += rtof * fr_mass * mn.forgp;
+            ly.hsta.p += (1.0 - rtof) * fr_mass * mn.forgp;
+            ly.nh4 += fr_mass * mn.fnh3n * mn.fminn;
+            ly.lab += fr_mass * mn.fminp;
+        }
+        self.fertn += kg * (mn.fminn + mn.forgn);
+        self.fertp += kg * (mn.fminp + mn.forgp);
     }
 }
 

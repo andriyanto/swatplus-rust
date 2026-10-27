@@ -414,3 +414,47 @@ pub const OM_WATER: &[Field] = &[
     f("grv", R, "0."),
     f("temp", R, "0."),
 ];
+
+/// `weir.res` (`reservoir_weir_outflow`): the weir's discharge coefficients, width and height
+/// (m).
+pub const WEIR_RES: &[Field] = &[f("name", T, ""), f("c", R, "1.84"), f("k", R, "2.6"), f("w", R, "2.5"), f("h", R, "0.")];
+
+/// `puddle.ops` (`puddle_operation`): the top layer's conductivity (mm/h) and the water's
+/// concentrations (ppm) after puddling.
+pub const PUDDLE_OPS: &[Field] = &[
+    f("name", T, ""),
+    f("wet_hc", R, "0."),
+    f("sed", R, "0."),
+    f("orgn", R, "0."),
+    f("sedp", R, "0."),
+    f("no3", R, "0."),
+    f("solp", R, "0."),
+    f("nh3", R, "0."),
+    f("no2", R, "0."),
+];
+
+/// `manure_db.frt` (`manure_database`).
+pub const MANURE_DB: &[Field] = &[
+    f("name", T, ""),
+    f("org_min", T, ""),
+    f("pests", T, ""),
+    f("paths", T, ""),
+    f("hmets", T, ""),
+    f("salts", T, ""),
+    f("constit", T, ""),
+];
+
+/// `manure_om.frt` (`manure_attributes`).
+pub const MANURE_OM: &[Field] = &[
+    f("name", T, " "),
+    f("frac_water", R, "0."),
+    f("fcbn", R, "0."),
+    f("fminn", R, "0."),
+    f("fminp", R, "0."),
+    f("forgn", R, "0."),
+    f("forgp", R, "0."),
+    f("fnh3n", R, "0."),
+];
+
+/// `transplant.ops` (`transplant_operation`), only its names so far: a transplant isn't ported.
+pub const TRANSPLANT: &[Field] = &[f("name", T, "")];

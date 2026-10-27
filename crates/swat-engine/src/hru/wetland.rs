@@ -1,6 +1,8 @@
 //! Wetlands in HRUs (`surf_stor` of `hru-data.hru`): water ponded on the HRU, released by a
 //! decision table of `res_rel.dtl` (`wetland_control`, `res_hydro`, `res_sediment`,
-//! `res_nutrient`), seeping into the soil and evaporating (`et_act`, `swr_satexcess`).
+//! `res_nutrient`), seeping into the soil and evaporating (`et_act`, `swr_satexcess`). A rice
+//! paddy (hydrology named `paddy`) spills over its weir instead (`res_weir_release`), the weir
+//! set by decision tables.
 
 use super::{Hru, NutDay};
 use crate::fortran::rpow;
@@ -54,7 +56,13 @@ pub struct Wetland {
     acoef: f32,
     bcoef: f32,
     ccoef: f32,
-    wet_hc: f32,
+    pub wet_hc: f32,
+    /// A rice paddy: released over the weir of `weir.res` row 1 (`iweir`), its discharge
+    /// coefficient, exponent and width (none without `weir.res`).
+    pub paddy: bool,
+    weir: Option<(f32, f32, f32)>,
+    /// The depth of the ponded water (m, `wet_ob%depth`), as the decision tables see it.
+    pub depth: f32,
     /// The evaporation coefficient, and the one `et_act` uses: `wet_hyd(ihyd)`, of the HRU
     /// numbered as the wetland's `hydrology.wet` row (0.7 if that HRU has no wetland).
     pub evrsv: f32,
@@ -62,7 +70,7 @@ pub struct Wetland {
     /// Principal and emergency volumes (m3), weir height (m).
     pvol: f32,
     evol: f32,
-    weir_hgt: f32,
+    pub weir_hgt: f32,
     alts: usize,
     conds: Vec<Cond>,
     acts: Vec<Act>,
@@ -103,13 +111,7 @@ impl Wetland {
     pub fn new(project: &Project, name: &str, area_ha: f32) -> Result<(Wetland, usize), String> {
         let (wt, r) = find(project.wetland.as_ref(), "name", name).ok_or_else(|| format!("surface storage {name} not in wetland.wet"))?;
         let s = |f: &str| wt.text(r, f).unwrap_or("").to_string();
-        if project.weir_res {
-            return Err("wetlands with weir.res".into());
-        }
         let hyd_name = s("hyd");
-        if hyd_name == "paddy" {
-            return Err("paddy wetlands".into());
-        }
         let (hy, ih) = find(project.wet_hyd.as_ref(), "name", &hyd_name)
             .ok_or_else(|| format!("wetland {name}: hydrology {hyd_name} not in hydrology.wet"))?;
         let x = |f: &str| hy.real(ih, f).unwrap_or(0.0);
@@ -132,13 +134,16 @@ impl Wetland {
         }
 
         let rel = s("rel");
-        let dt = project
-            .res_dtl
-            .iter()
-            .find(|d| swat_model::table::fortran_eq(&d.name, &rel))
-            .ok_or_else(|| format!("wetland {name}: release table {rel} not in res_rel.dtl"))?;
+        let paddy = hyd_name == "paddy";
+        let empty = swat_model::DecisionTable::default();
+        let dt = match project.res_dtl.iter().find(|d| swat_model::table::fortran_eq(&d.name, &rel)) {
+            Some(d) => d,
+            // A paddy's release table isn't used.
+            None if paddy => &empty,
+            None => return Err(format!("wetland {name}: release table {rel} not in res_rel.dtl")),
+        };
         let mut conds = Vec::new();
-        for (c, alt) in dt.conds.iter().zip(&dt.alt) {
+        for (c, alt) in dt.conds.iter().zip(&dt.alt).filter(|_| !paddy) {
             if c.var != "vol_wet" || c.ob_num != 0 {
                 return Err(format!("wetland release condition {} on object {}", c.var, c.ob_num));
             }
@@ -157,7 +162,7 @@ impl Wetland {
             conds.push(Cond { evol, op, lim_const: c.lim_const, alt: alt.clone() });
         }
         let mut acts = Vec::new();
-        for (a, out) in dt.acts.iter().zip(&dt.outcomes) {
+        for (a, out) in dt.acts.iter().zip(&dt.outcomes).filter(|_| !paddy) {
             let base = || match a.file_pointer.as_str() {
                 "null" => Ok(Base::Zero),
                 "pvol" => Ok(Base::Pvol),
@@ -184,17 +189,38 @@ impl Wetland {
         let nt = find(project.res_nut.as_ref(), "name", &nut);
         let nr = |f: &str, d: f32| nt.map(|(t, r)| t.real(r, f).unwrap_or(d)).unwrap_or(d);
         let ni = |f: &str| nt.map(|(t, r)| t.int(r, f).unwrap_or(0)).unwrap_or(0);
+        // res_read_nut: the rates of the file's rows from per year to per day.
+        let rate = |f: &str, d: f32| nt.map(|(t, r)| t.real(r, f).unwrap_or(d) / 365.0).unwrap_or(d);
 
+        // The weir: weir.res's first row sets its height, and the principal volume to it.
+        let mut pvol = area_ha * pdep * 10.0;
+        let mut evol = area_ha * edep * 10.0;
+        let mut weir_hgt = pdep / 1000.0;
+        let mut weir = None;
+        if let Some(t) = project.weir_res.as_ref()
+            && !t.rows.is_empty()
+        {
+            let x = |f: &str| t.real(0, f).unwrap_or(0.0);
+            weir_hgt = x("h");
+            weir = Some((x("c"), x("k"), x("w")));
+            pvol = area_ha * x("h") * 10000.0;
+            if evol < pvol * 1.2 {
+                evol = pvol * 1.2;
+            }
+        }
         let w = Wetland {
             acoef: x("acoef"),
             bcoef: x("bcoef"),
             ccoef: x("ccoef"),
             wet_hc: k,
+            paddy,
+            weir,
+            depth: 0.0,
             evrsv,
             evrsv_et: evrsv,
-            evol: area_ha * edep * 10.0,
-            pvol: area_ha * pdep * 10.0,
-            weir_hgt: pdep / 1000.0,
+            evol,
+            pvol,
+            weir_hgt,
             alts: dt.alts,
             conds,
             acts,
@@ -202,12 +228,12 @@ impl Wetland {
             sed_stlr_co: (-0.184 * d50).exp(),
             ires1: ni("ires1"),
             ires2: ni("ires2"),
-            nsetlr1: nr("nsetlr1", 0.0),
-            nsetlr2: nr("nsetlr2", 0.0),
-            psetlr1: nr("psetlr1", 0.0),
-            psetlr2: nr("psetlr2", 0.0),
-            nsolr: nr("nsolr", 1.0),
-            psolr: nr("psolr", 1.0),
+            nsetlr1: rate("nsetlr1", 0.0),
+            nsetlr2: rate("nsetlr2", 0.0),
+            psetlr1: rate("psetlr1", 0.0),
+            psetlr2: rate("psetlr2", 0.0),
+            nsolr: rate("nsolr", 1.0),
+            psolr: rate("psolr", 1.0),
             theta_n: nr("theta_n", 1.0),
             theta_p: nr("theta_p", 1.0),
             conc_nmin: nr("conc_nmin", 0.1),
@@ -218,6 +244,55 @@ impl Wetland {
             water_seep: 0.0,
         };
         Ok((w, ih + 1))
+    }
+
+    /// The `weir_height` action: the weir, and the principal volume to it, of an HRU of
+    /// `area_ha`.
+    pub fn set_weir(&mut self, h_mm: f32, area_ha: f32) {
+        self.weir_hgt = h_mm / 1000.0;
+        self.pvol = area_ha * self.weir_hgt * 10000.0;
+        if self.evol < self.pvol * 1.2 {
+            self.evol = self.pvol * 1.2;
+        }
+    }
+
+    /// `res_weir_release` for a paddy of `area_ha` whose water is `dep` deep (m): what spills
+    /// over the emergency volume, then what flows over the weir in 24 hourly steps.
+    fn weir_release(&mut self, area_ha: f32, dep: f32) {
+        let mut vol = self.water.flo;
+        let wsa1 = area_ha * 10000.0;
+        let mut hgt_above = (dep - self.weir_hgt).max(0.0);
+        let Some((c, k, w)) = self.weir.filter(|_| hgt_above > 0.0) else {
+            self.out.flo = 0.0;
+            return;
+        };
+        if vol > self.evol {
+            self.out.flo += self.water.flo - self.evol;
+            self.out.flo = self.out.flo.max(0.0);
+            vol = self.evol;
+            let res_h = vol / wsa1;
+            hgt_above = (res_h - self.weir_hgt).max(0.0);
+        }
+        let mut vol_above = hgt_above * wsa1;
+        for _ in 0..24 {
+            let mut qout = (area_ha * 0.45) * c * w * rpow(hgt_above, k);
+            qout *= 3600.0;
+            if qout > vol_above {
+                self.out.flo += vol_above;
+                vol -= vol_above;
+                vol_above = 0.0;
+            } else {
+                self.out.flo += qout;
+                vol -= qout;
+                vol_above -= qout;
+            }
+            let res_h = if wsa1 > 1.0e-6 { vol / wsa1 } else { 0.0 };
+            hgt_above = (res_h - self.weir_hgt).max(0.0);
+            if vol_above <= 0.001 || hgt_above <= 0.0001 {
+                break;
+            }
+        }
+        self.water.flo = vol;
     }
 
     /// `conditions` and `res_hydro` (a day, one step): the release.
@@ -317,7 +392,8 @@ impl Hru {
             let mut wet_fr = 1.0 + wt.acoef * wet_h;
             wet_fr = wet_fr.min(1.0);
             wet_fr = wet_fr.max(0.01);
-            let wet_area = area * wet_fr;
+            // A paddy is flat: all of it is under water.
+            let wet_area = if wt.paddy { area } else { area * wet_fr };
             let mut seep = wt.water.flo.min(wt.wet_hc * 24.0 * wet_area * 10.0);
             let mut volseep = seep / wsa1;
             if volseep > 0.1 {
@@ -362,10 +438,16 @@ impl Hru {
             wt.water.sedp -= wt.seep_day[4];
         }
 
-        // The release, by the decision table.
-        wt.out.flo = wt.release();
-        wt.water.flo = (wt.water.flo - wt.out.flo).max(0.0);
+        // The release: over the paddy's weir, or by the decision table.
+        if wt.paddy {
+            let dep = if area > 1.0e-6 { wt.water.flo / wsa1 / 1000.0 } else { 0.0 };
+            wt.weir_release(area, dep);
+        } else {
+            wt.out.flo = wt.release();
+            wt.water.flo = (wt.water.flo - wt.out.flo).max(0.0);
+        }
         let surfq = wt.out.flo / wsa1;
+        wt.depth = wt.water.flo / wsa1 / 1000.0;
 
         // res_sediment
         let b = &mut wt.water;
@@ -473,6 +555,7 @@ impl Hru {
             wt.water.flo += ul_excess * 10.0 * area;
         }
         wt.water_seep = (wt.water_seep - ul_excess).max(0.0);
+        wt.depth = wt.water.flo / area / 10000.0;
         if wt.water_seep > 1.0e-6 {
             let rto = (ul_excess / wt.water_seep).min(1.0);
             let l = &mut self.layers[0];

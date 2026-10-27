@@ -69,14 +69,20 @@ pub struct Project {
     /// `urban.urb`.
     pub urban: Option<Table>,
     /// `wetland.wet`, `hydrology.wet`, `initial.res`, `sediment.res`, `nutrients.res`, the
-    /// release tables of `res_rel.dtl`, and whether `weir.res` is named and there.
+    /// release tables of `res_rel.dtl`, and `weir.res`.
     pub wetland: Option<Table>,
     pub wet_hyd: Option<Table>,
     pub res_init: Option<Table>,
     pub res_sed: Option<Table>,
     pub res_nut: Option<Table>,
     pub res_dtl: Vec<DecisionTable>,
-    pub weir_res: bool,
+    pub weir_res: Option<Table>,
+    /// Read by these names whatever `file.cio` says: `puddle.ops`, `manure_db.frt`,
+    /// `manure_om.frt`, and whether `transplant.ops` is there.
+    pub puddle_ops: Option<Table>,
+    pub manure_db: Option<Table>,
+    pub manure_om: Option<Table>,
+    pub transplant_ops: Option<Table>,
     /// `plant.ini`.
     pub plant_communities: Vec<PlantCommunity>,
     /// `nutrients.sol`.

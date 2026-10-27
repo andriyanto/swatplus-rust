@@ -447,6 +447,55 @@ From `sd_hydsed_init`, `sd_rating_curve`, `sd_channel_control3`, `sd_channel_sed
   closes a range (`2  1 -1858` is HRUs 1 to 1858; `define_unit_elements`). A count of 0 means
   every object of the parameter's kind. Changes are held to `cal_parms.cal`'s range.
 
+## Rice paddies (phase 4, Osu_1hru)
+
+A wetland whose hydrology (`hydrology.wet`) is named `paddy` is a rice paddy. Osu_1hru, SWAT+'s
+own paddy example (Korea, 2010–2023), matches bit for bit on every table it prints.
+
+- **The weir comes from `weir.res` row 1** (`wet_ob%iweir` starts at 1; the `WEIR` column of
+  `wetland.wet` isn't read). Its height sets the principal volume (`area · h · 10⁴` m³) and lifts
+  the emergency volume to 1.2 times that. A `weir_height` action changes both; its file pointer
+  is ignored too.
+- **The release over the weir** (`res_weir_release`): what is above the emergency volume spills,
+  then 24 hourly steps of `(area · 0.45) · c · w · h^k · 3600` m³, `area` in ha. Above no weir
+  (or with height 0 under water) nothing leaves. A paddy's release table isn't used.
+- **The paddy is flat**: its seepage area is the whole HRU, not the volume-area curve.
+- **`prob_unif`'s random numbers** come from `rndseed_cond`, which `gcycl` sets to the shuffled
+  generator seed when `igen` isn't 0 (748932582 otherwise). The table's probability is the
+  condition's *object* column (`1.0` in `prob_unif 1.0 120 null - 130`), its window the object
+  number and the limit, and the day drawn is one past `int(r · days)` from the first.
+- **Ponding irrigation** (`irrigate` named `ponding`): up to `const` mm of water over the pond,
+  at most `Int(const2)` times a year, where `const2` is also the paddy's threshold depth.
+- **Puddling** takes the `puddle.ops` row of the option's name (the last of that name; the
+  file's first line is taken as the title, so its first row is the header to SWAT+) and the
+  tillage named as the *action*. Under water (`mgt_newtillmix_wet`) the pond's own nutrients,
+  meant to be mixed in, are dropped (the sums are zeroed after adding them); the pond gets the
+  soil's mixed nitrate, ammonium, active mineral P (as soluble P), and total organic N and P in
+  proportion to its depth; and the texture is mixed with the last layer's mixed share, the loop
+  variable left over.
+- **Fertilizer into the water** (`pl_fert_wet`, when the pond holds water and the application is
+  all at the surface) goes nowhere with the original carbon model: only the totals count it.
+- **Manure** (`manu`): `pl_manure` reads `manure_om.frt` at the row numbered as the
+  `manure_db.frt` row named, not at its `org_min`. The manure's water goes into the soil.
+- **`puddle.ops`, `manure_db.frt`, `manure_om.frt` and `transplant.ops`** are opened by those
+  names whatever `file.cio` says (Osu ships `transplant.plt`, so it has no transplants).
+- **The nutrient settling rates of `nutrients.res`** are per year: `res_read_nut` divides the
+  six rates by 365.
+- **Days since planting, harvest, kill and irrigation** start at −366 and count up after the
+  decision tables each day.
+
+## Inputs read by count or position
+
+- **`object.cnt` decides how many objects of each kind are read**: a connection file named in
+  `file.cio` with a count of 0 (Osu's `recall.con`) isn't read, and only the first *n* rows are.
+- **`print.prt` without object labels** (`dbout` `n`, the usual) is read row by row in SWAT+'s
+  fixed order, whatever the rows are named. A file with an extra row (Osu's `hru_cb`) shifts the
+  flags of every row after it: Osu prints `channel_sd` with the `channel` row's flags.
+- **Calibration** also reaches the curve number (`curno` again), PET and lateral flow
+  coefficients, `epco` (each plant's too), `esco`, `canmx`, `lat_len`, available water
+  (`soil_awc_init` again, which puts the soil water back to its initial share of field
+  capacity), `surlag` (the HRUs' lag factor) and the aquifers' `alpha` and `revap_co`.
+
 ## Arithmetic
 
 - **gfortran folds `Sin(Atan(x))` into `x / Sqrt(x*x + 1)`.** The LS factor's `sin_sl`

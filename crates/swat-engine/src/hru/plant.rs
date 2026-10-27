@@ -430,8 +430,10 @@ pub struct PlantWeather {
 }
 
 /// Variables the Fortran keeps from one call to the next (implicit SAVE), shared by all HRUs.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Saved {
+    /// The random number seed of decision table conditions (`rndseed_cond`).
+    pub rndseed_cond: i32,
     /// `pl_nut_demand`'s `delg_p`: kept when the plant's heat units are under 0.1.
     pub delg_p: f32,
     /// `uno3d`, `uapd`, `un2`, `up2`: arrays of the HRU module shared by every HRU.
@@ -452,6 +454,24 @@ pub struct Saved {
     /// `pest_enrsb`'s enrichment ratio (`enratio` of the HRU module; `varinit` zeroes a local of
     /// the same name), so `swr_subwq` uses the last one computed for any HRU.
     pub enratio: f32,
+}
+
+impl Default for Saved {
+    fn default() -> Saved {
+        Saved {
+            rndseed_cond: 748932582,
+            delg_p: 0.0,
+            uno3d: [0.0; 21],
+            uapd: [0.0; 21],
+            un2: [0.0; 21],
+            up2: [0.0; 21],
+            fr_orgp: 0.0,
+            fr_actmin: 0.0,
+            fr_stamin: 0.0,
+            c_microb_sed: 0.0,
+            enratio: 0.0,
+        }
+    }
 }
 
 /// `plant_init` for the community's single plant. `wgn_months` gives each month's mean maximum

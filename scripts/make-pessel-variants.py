@@ -15,6 +15,11 @@ in Pessel) are cut down the same way, with the HRUs' basin fractions taken anew 
 variant's area; the aquifer catchments only feed aggregated outputs and are dropped (file.cio
 null). Hard calibration (calibration.cal) keeps its HRUs, renumbered.
 
+  Ps_paddy  Ps_coast with its rice HRUs as rice paddies (SWAT+'s paddy module, phase 4): a weir
+            raised for two seasons a year (IP 200), ponding irrigation, puddling, transplanted
+            120-day rice, split urea and SP-36. The parameters and their sources are in
+            docs/paddy.md.
+
 usage: scripts/make-pessel-variants.py <Pessel folder> <output folder>
 """
 import os
@@ -293,7 +298,173 @@ def ps_coast(src, out):
     print(f"Ps_coast: {len(keep_cha)} channels, {len(keep_ru)} routing units, {len(keep_hru)} HRUs, {len(keep_aq)} aquifers, {area:.0f} ha")
 
 
+# Ps_paddy's decision tables (lum.dtl), in SWAT+'s format. Depths in mm; days of the year.
+PADDY_DTL = """
+name                     conds      alts      acts       !raise the weir for the first season (mid Feb to mid Mar)
+weir_up_s1                   1         1         1
+var                        obj   obj_num           lim_var            lim_op     lim_const      alt1
+prob_unif                  1.0        45              null                 -      69.00000         =
+act_typ                    obj   obj_num              name            option         const        const2                fp  outcome
+weir_height                hru         0             paddy               wet      50.00000       1.00000          weir_ps   y
+
+name                     conds      alts      acts       !raise the weir for the second season (August)
+weir_up_s2                   1         1         1
+var                        obj   obj_num           lim_var            lim_op     lim_const      alt1
+prob_unif                  1.0       213              null                 -     235.00000         =
+act_typ                    obj   obj_num              name            option         const        const2                fp  outcome
+weir_height                hru         0             paddy               wet      50.00000       1.00000          weir_ps   y
+
+name                     conds      alts      acts       !drain the paddy before harvest
+weir_down                    2         1         1
+var                        obj   obj_num           lim_var            lim_op     lim_const      alt1
+weirh                      hru         0              null                 -      30.00000         >
+phu_plant                  hru         0              null                 -       0.85000         >
+act_typ                    obj   obj_num              name            option         const        const2                fp  outcome
+weir_height                hru         0             paddy               wet       0.00000       1.00000          weir_ps   y
+
+name                     conds      alts      acts       !keep 50 mm of water over the paddy when it falls under 30 mm
+pad_irr                      2         1         1
+var                        obj   obj_num           lim_var            lim_op     lim_const      alt1
+weirh                      hru         0              null                 -      30.00000         >
+wet_depth                  hru         0            hwater                 -      30.00000         <
+act_typ                    obj   obj_num              name            option         const        const2                fp  outcome
+irrigate                  null         0           ponding        ponding_ps      50.00000      30.00000              null   y
+
+name                     conds      alts      acts       !puddle once the first season's paddy is flooded
+puddle_s1                    3         1         1
+var                        obj   obj_num           lim_var            lim_op     lim_const      alt1
+month                     null         0              null                 -       7.00000         <
+weirh                      hru         0              null                 -      30.00000         >
+wet_depth                  hru         0            hwater                 -       0.00000         >
+act_typ                    obj   obj_num              name            option         const        const2                fp  outcome
+puddle                     hru         0            puddle           med_eff     100.00000       1.00000              null   y
+
+name                     conds      alts      acts       !puddle once the second season's paddy is flooded
+puddle_s2                    3         1         1
+var                        obj   obj_num           lim_var            lim_op     lim_const      alt1
+month                     null         0              null                 -       6.00000         >
+weirh                      hru         0              null                 -      30.00000         >
+wet_depth                  hru         0            hwater                 -       0.00000         >
+act_typ                    obj   obj_num              name            option         const        const2                fp  outcome
+puddle                     hru         0            puddle           med_eff     100.00000       1.00000              null   y
+
+name                     conds      alts      acts       !transplant rice into a flooded, puddled paddy
+plant_rice                   2         1         1
+var                        obj   obj_num           lim_var            lim_op     lim_const      alt1
+weirh                      hru         0              null                 -      30.00000         >
+wet_depth                  hru         0            hwater                 -      25.00000         >
+act_typ                    obj   obj_num              name            option         const        const2                fp  outcome
+plant                      hru         0           rice120           rice120       0.00000       1.00000              null   y
+
+name                     conds      alts      acts       !harvest at maturity, two seasons a year
+harv_rice                    1         1         1
+var                        obj   obj_num           lim_var            lim_op     lim_const      alt1
+phu_plant                  hru         0              null                 -       1.00000         >
+act_typ                    obj   obj_num              name            option         const        const2                fp  outcome
+harvest_kill               hru         0        grain_harv           rice120       0.00000       2.00000             grain   y
+
+name                     conds      alts      acts       !urea in three splits, SP-36 at planting: first season
+fert_s1                      4         3         4
+var                        obj   obj_num           lim_var            lim_op     lim_const      alt1      alt2      alt3
+month                     null         0              null                 -       8.00000         <         <         <
+phu_plant                  hru         0              null                 -       0.02000         >         -         -
+phu_plant                  hru         0              null                 -       0.25000         -         >         -
+phu_plant                  hru         0              null                 -       0.50000         -         -         >
+act_typ                    obj   obj_num              name            option         const        const2                fp  outcome
+fertilize                  hru         0           basal_n            elem_n      38.00000       1.00000            inject   y   n   n
+fertilize                  hru         0           basal_p            elem_p      15.70000       1.00000            inject   y   n   n
+fertilize                  hru         0            top1_n            elem_n      38.00000       1.00000        side_dress   n   y   n
+fertilize                  hru         0            top2_n            elem_n      38.00000       1.00000        side_dress   n   n   y
+
+name                     conds      alts      acts       !urea in three splits, SP-36 at planting: second season
+fert_s2                      4         3         4
+var                        obj   obj_num           lim_var            lim_op     lim_const      alt1      alt2      alt3
+month                     null         0              null                 -       7.00000         >         >         >
+phu_plant                  hru         0              null                 -       0.02000         >         -         -
+phu_plant                  hru         0              null                 -       0.25000         -         >         -
+phu_plant                  hru         0              null                 -       0.50000         -         -         >
+act_typ                    obj   obj_num              name            option         const        const2                fp  outcome
+fertilize                  hru         0           basal_n            elem_n      38.00000       1.00000            inject   y   n   n
+fertilize                  hru         0           basal_p            elem_p      15.70000       1.00000            inject   y   n   n
+fertilize                  hru         0            top1_n            elem_n      38.00000       1.00000        side_dress   n   y   n
+fertilize                  hru         0            top2_n            elem_n      38.00000       1.00000        side_dress   n   n   y
+"""
+
+PADDY_AUTOS = ["weir_up_s1", "weir_up_s2", "weir_down", "pad_irr", "puddle_s1", "puddle_s2", "plant_rice", "harv_rice", "fert_s1", "fert_s2"]
+
+
+def ps_paddy(base, dst):
+    """A copy of project `base` with its rice HRUs as paddies (see the module's docstring and
+    docs/paddy.md)."""
+    if os.path.exists(dst):
+        shutil.rmtree(dst)
+    shutil.copytree(base, dst)
+
+    def p(name):
+        return os.path.join(dst, name)
+
+    def append(name, rows):
+        lines = read(p(name))
+        while lines and not lines[-1].strip():
+            lines.pop()
+        write(p(name), lines + rows + [""])
+
+    # The rice HRUs: the paddy land use and the paddy wetland.
+    lines = read(p("hru-data.hru"))
+    n = 0
+    for i in range(2, len(lines)):
+        t = lines[i].split()
+        if len(t) > 7 and t[5] == "rice_lum":
+            lines[i] = set_field(set_field(lines[i], 5, "paddy_lum"), 7, "paddy_ps")
+            n += 1
+    write(p("hru-data.hru"), lines)
+
+    # Land use, plant community and schedule.
+    rice = next(l for l in read(p("landuse.lum")) if l.startswith("rice_lum"))
+    paddy = set_field(set_field(set_field(rice, 0, "paddy_lum".ljust(len("rice_lum"))), 2, "paddy_comm"), 3, "paddy_ip200")
+    append("landuse.lum", [paddy])
+    append("plant.ini", ["paddy_comm               1         1  ",
+                         "                                        rice120          n       0.00000       0.00000       0.00000       0.00000       0.00000   10000.00000  "])
+    append("management.sch", [f"paddy_ip200                                       0         {len(PADDY_AUTOS)}  "]
+           + [f"                                                   {a}" for a in PADDY_AUTOS])
+    lines = read(p("lum.dtl"))
+    lines[1] = str(int(lines[1].split()[0]) + PADDY_DTL.count("\nname "))
+    while lines and not lines[-1].strip():
+        lines.pop()
+    write(p("lum.dtl"), lines + PADDY_DTL.split("\n"))
+
+    # The paddy: a wetland of hydrology `paddy` (0.15 mm/h through the plough pan), its weir,
+    # puddling, ponding irrigation and tillage. weir.res's first row is every wetland's weir:
+    # 20 mm, Pessel's principal depth, leaves the other wetlands as they were; the paddies keep
+    # 2 cm behind their bunds between seasons, 5 cm in them.
+    lines = read(p("wetland.wet"))
+    while lines and not lines[-1].strip():
+        lines.pop()
+    nwet = len(lines) - 2
+    write(p("wetland.wet"), lines + [f"{nwet + 1:8d}  paddy_ps                      initwet1             paddy           wetland           sedwet1           nutwet1  ", ""])
+    append("hydrology.wet", ["paddy                  1.00000      50.00000       1.00000     150.00000       0.15000       0.75000       1.00000       1.00000       1.00000       1.00000  "])
+    write(p("weir.res"), ["weir.res: paddy weir (SWAT+ paddy example's coefficients)",
+                          "name          linear_c         exp_k      width_m      height_m",
+                          "weir_ps        1.83000       1.50000      5.00000       0.02000", ""])
+    write(p("puddle.ops"), ["puddle.ops: puddling operations",
+                            "name                  hydcon_mm/h   sed_ppm      orgn_ppm      sedp_ppm     no3_ppm       solp_ppm       nh3_ppm  no2_ppm",
+                            "high_eff              0.00000         10000       0.00000     800.00000     10.00000      20.00000       1.00000  1.00000",
+                            "med_eff               0.00000         10000       0.00000     500.00000     10.00000      20.00000       1.00000  1.00000",
+                            "low_eff               0.00000         10000       0.00000     100.00000     10.00000      20.00000       1.00000  1.00000", ""])
+    append("irr.ops", ["ponding_ps            50.00000       1.00000       0.00000       0.00000       0.00000       0.00000       0.00000  paddy_ponding"])
+    append("tillage.til", ["puddle                 0.98000     150.00000       0.00000       0.00000       0.00000  rice_paddy_puddling"])
+    lines = read(p("file.cio"))
+    for i, line in enumerate(lines):
+        if line.startswith("reservoir"):
+            t = line.split()
+            assert t[6] == "null", t
+            lines[i] = line.replace("null              wetland.wet", "weir.res          wetland.wet")
+    write(p("file.cio"), lines)
+    print(f"{os.path.basename(dst)}: {n} rice HRUs as paddies")
+
+
 if __name__ == "__main__":
     src, out = sys.argv[1], sys.argv[2]
     os.makedirs(out, exist_ok=True)
     ps_coast(src, out)
+    ps_paddy(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_paddy"))

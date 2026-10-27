@@ -560,12 +560,25 @@ impl Hru {
         if emix <= 1.0e-6 {
             return;
         }
-        let nly = self.layers.len();
-        let Some(last) = self.layers.last() else { return };
-        let mut dtil = last.d.min(50.0);
+        self.tillmix_cswat0(emix, 0.0, 0.0);
+    }
+
+    /// SWAT+ `mgt_newtillmix_cswat0`: biological mixing with efficiency `bmix` (above 50 mm), or
+    /// without, a tillage mixing `effmix` of the soil above `deptil` mm (texture and rock too).
+    pub(super) fn tillmix_cswat0(&mut self, bmix: f32, effmix: f32, deptil: f32) {
+        let bio = bmix > 1.0e-6;
+        let (emix, mut dtil) = if bio {
+            (bmix, self.layers.last().map_or(0.0, |l| l.d.min(50.0)))
+        } else {
+            self.till_days = 0;
+            self.till_depth = deptil;
+            self.till_switch = true;
+            (effmix, deptil)
+        };
         if dtil <= 0.0 {
             return;
         }
+        let nly = self.layers.len();
         let bd1 = self.layers[0].bd;
         let sol_mass: Vec<f32> = self.layers.iter().map(|l| (l.thick / 1000.0) * 10000.0 * bd1 * 1000.0 * (1.0 - l.rock / 100.0)).collect();
         if dtil < 10.0 {
@@ -576,8 +589,10 @@ impl Hru {
         let mut mix_sw = 0.0_f32;
         let (mut mix_no3, mut mix_nh4) = (0.0_f32, 0.0_f32);
         let (mut mix_wsol, mut mix_lab, mut mix_act, mut mix_sta) = (0.0_f32, 0.0_f32, 0.0_f32, 0.0_f32);
+        let (mut mix_clay, mut mix_silt, mut mix_sand, mut mix_rock) = (0.0_f32, 0.0_f32, 0.0_f32, 0.0_f32);
         let mut mix_hact = OrgMass::default();
         let mut mix_hsta = OrgMass::default();
+        let mut mix_cp = super::carbon::Pools::default();
         let mut mix_rsd = vec![OrgMass::default(); self.plants.len()];
         for l in 0..nly {
             let prev = if l == 0 { 0.0 } else { self.layers[l - 1].d };
@@ -598,21 +613,35 @@ impl Hru {
             }
             let fm = sol_msm / sol_mass[l];
             mix_sw += fm * ly.st;
+            if !bio {
+                mix_rock += fm * ly.rock * sol_mass[l] / 100.0;
+            }
+            mix_sand += fm * ly.sand * sol_mass[l] / 100.0;
+            mix_silt += fm * ly.silt * sol_mass[l] / 100.0;
+            mix_clay += fm * ly.clay * sol_mass[l] / 100.0;
             mix_no3 += fm * ly.no3;
             mix_nh4 += fm * ly.nh4;
             mix_wsol += fm * ly.wsol;
             mix_lab += fm * ly.lab;
             mix_act += fm * ly.act;
             mix_sta += fm * ly.sta;
+            mix_cp.tot = mix_cp.tot + OrgMass::scale(fm, ly.cp.tot);
             for (m, pl) in mix_rsd.iter_mut().zip(&self.plants) {
-                *m = m.add(OrgMass::scale(fm, pl.rsd));
+                *m = *m + OrgMass::scale(fm, pl.rsd);
             }
-            mix_hact = mix_hact.add(OrgMass::scale(fm, ly.hact));
-            mix_hsta = mix_hsta.add(OrgMass::scale(fm, ly.hsta));
+            mix_hact = mix_hact + OrgMass::scale(fm, ly.hact);
+            mix_hsta = mix_hsta + OrgMass::scale(fm, ly.hsta);
+            mix_cp.hs = mix_cp.hs + OrgMass::scale(fm, ly.cp.hs);
+            mix_cp.hp = mix_cp.hp + OrgMass::scale(fm, ly.cp.hp);
+            mix_cp.microb = mix_cp.microb + OrgMass::scale(fm, ly.cp.microb);
+            mix_cp.str = mix_cp.str + OrgMass::scale(fm, ly.cp.str);
+            mix_cp.lig = mix_cp.lig + OrgMass::scale(fm, ly.cp.lig);
+            mix_cp.meta = mix_cp.meta + OrgMass::scale(fm, ly.cp.meta);
         }
         for l in 0..nly {
             let fnm = sol_msn[l] / sol_mass[l];
             let fd = frac_dep[l];
+            let sm = sol_mass[l];
             let ly = &mut self.layers[l];
             ly.no3 = fnm * ly.no3 + fd * mix_no3;
             ly.nh4 = fnm * ly.nh4 + fd * mix_nh4;
@@ -620,17 +649,168 @@ impl Hru {
             ly.lab = fnm * ly.lab + fd * mix_lab;
             ly.act = fnm * ly.act + fd * mix_act;
             ly.sta = fnm * ly.sta + fd * mix_sta;
+            ly.cp.tot = OrgMass::scale(fnm, ly.cp.tot) + OrgMass::scale(fd, mix_cp.tot);
             for (m, pl) in mix_rsd.iter().zip(self.plants.iter_mut()) {
                 let r = &mut pl.soil_rsd[l];
-                *r = OrgMass::scale(fnm, *r).add(OrgMass::scale(fd, *m));
+                *r = OrgMass::scale(fnm, *r) + OrgMass::scale(fd, *m);
                 let surf_rsd = OrgMass::scale(emix * fd, pl.rsd);
-                *r = r.add(surf_rsd);
-                pl.rsd = pl.rsd.sub(surf_rsd);
-                self.rsd_tot = self.rsd_tot.sub(surf_rsd);
+                *r = *r + surf_rsd;
+                pl.rsd = pl.rsd - surf_rsd;
+                self.rsd_tot = self.rsd_tot - surf_rsd;
             }
-            ly.hact = OrgMass::scale(fnm, ly.hact).add(OrgMass::scale(fd, mix_hact));
-            ly.hsta = OrgMass::scale(fnm, ly.hsta).add(OrgMass::scale(fd, mix_hsta));
+            ly.hact = OrgMass::scale(fnm, ly.hact) + OrgMass::scale(fd, mix_hact);
+            ly.hsta = OrgMass::scale(fnm, ly.hsta) + OrgMass::scale(fd, mix_hsta);
+            ly.cp.hs = OrgMass::scale(fnm, ly.cp.hs) + OrgMass::scale(fd, mix_cp.hs);
+            ly.cp.hp = OrgMass::scale(fnm, ly.cp.hp) + OrgMass::scale(fd, mix_cp.hp);
+            ly.cp.microb = OrgMass::scale(fnm, ly.cp.microb) + OrgMass::scale(fd, mix_cp.microb);
+            ly.cp.str = OrgMass::scale(fnm, ly.cp.str) + OrgMass::scale(fd, mix_cp.str);
+            ly.cp.lig = OrgMass::scale(fnm, ly.cp.lig) + OrgMass::scale(fd, mix_cp.lig);
+            ly.cp.meta = OrgMass::scale(fnm, ly.cp.meta) + OrgMass::scale(fd, mix_cp.meta);
+            ly.clay = 100.0 / sm * (fnm * ly.clay * sm / 100.0 + fd * mix_clay);
+            ly.silt = 100.0 / sm * (fnm * ly.silt * sm / 100.0 + fd * mix_silt);
+            ly.sand = 100.0 / sm * (fnm * ly.sand * sm / 100.0 + fd * mix_sand);
+            if !bio {
+                ly.rock = 100.0 / sm * (fnm * ly.rock * sm / 100.0 + fd * mix_rock);
+            }
             ly.st = fnm * ly.st + fd * mix_sw;
+        }
+    }
+
+    /// SWAT+ `mgt_newtillmix_wet`: tillage under a paddy's water, the water's depth added to the
+    /// mixing. Nutrients of the soil above `deptil` mix, and the water takes its share (the
+    /// water's own nutrients, meant to mix in, are dropped: SWAT+ zeroes the sums after adding
+    /// them; corrected, with `fixes`, they mix in). The texture mixes with the last layer's
+    /// mixed share, the only one left.
+    pub(super) fn tillmix_wet(&mut self, emix: f32, deptil: f32, cswat: i32, fixes: bool) {
+        let area = self.area_ha;
+        let depth = self.wet.as_ref().map_or(0.0, |w| w.depth);
+        let mut dtil = deptil;
+        let tdep = depth * 1000.0 + dtil;
+        if dtil <= 0.0 {
+            return;
+        }
+        if dtil < 10.0 {
+            dtil = 11.0;
+        }
+        let nly = self.layers.len();
+        let bd1 = self.layers[0].bd;
+        let sol_mass: Vec<f32> = self.layers.iter().map(|l| (l.thick / 1000.0) * 10000.0 * bd1 * 1000.0 * (1.0 - l.rock / 100.0)).collect();
+        let mut sol_msn = vec![0.0_f32; nly];
+        let mut frac_dep = vec![0.0_f32; nly];
+        let mut frac_dep1 = vec![0.0_f32; nly];
+        let mut smix = [0.0_f32; 20];
+        if fixes && let Some(w) = self.wet.as_ref() {
+            let b = &w.water;
+            smix[1] = b.no3 / area;
+            smix[3] = b.nh3 / area;
+            smix[4] = b.solp / area;
+            smix[8] = b.orgn / area;
+            smix[9] = b.sedp / area;
+        }
+        let mut cmix = [OrgMass::default(); 12];
+        let mut frac_mixed = 0.0_f32;
+        for l in 0..nly {
+            let prev = if l == 0 { 0.0 } else { self.layers[l - 1].d };
+            let ly = &self.layers[l];
+            let sol_msm;
+            if ly.d <= dtil {
+                sol_msm = emix * sol_mass[l];
+                sol_msn[l] = sol_mass[l] - sol_msm;
+                frac_dep[l] = ly.thick / dtil;
+                frac_dep1[l] = ly.thick / tdep;
+            } else if ly.d > dtil && prev < dtil {
+                sol_msm = emix * sol_mass[l] * (dtil - prev) / ly.thick;
+                sol_msn[l] = sol_mass[l] - sol_msm;
+                frac_dep[l] = (dtil - prev) / dtil;
+                frac_dep1[l] = (tdep - prev) / tdep;
+            } else {
+                sol_msm = 0.0;
+                sol_msn[l] = sol_mass[l];
+                frac_dep[l] = 0.0;
+                frac_dep1[l] = 0.0;
+            }
+            frac_mixed = sol_msm / sol_mass[l];
+            let fm = frac_mixed;
+            smix[1] += ly.no3 * fm;
+            smix[2] += ly.hsta.n * fm;
+            smix[3] += ly.nh4 * fm;
+            smix[4] += ly.lab * fm;
+            smix[5] += ly.hsta.p * fm;
+            smix[6] += ly.hact.n * fm;
+            smix[7] += ly.act * fm;
+            smix[8] += ly.cp.tot.n * fm;
+            smix[9] += ly.cp.tot.p * fm;
+            smix[10] += ly.sta * fm;
+            smix[11] += ly.cp.tot.m * fm;
+            smix[15] += ly.cp.tot.c * fm;
+            smix[17] += ly.clay * frac_dep[l];
+            smix[18] += ly.silt * frac_dep[l];
+            smix[19] += ly.sand * frac_dep[l];
+            if cswat == 2 {
+                let v = [
+                    ly.cp.str.c,
+                    ly.cp.lig.c,
+                    ly.cp.lig.n,
+                    ly.cp.meta.c,
+                    ly.cp.meta.m,
+                    ly.cp.lig.m,
+                    ly.cp.str.m,
+                    ly.cp.str.n,
+                    ly.cp.meta.n,
+                    ly.cp.microb.n,
+                    ly.hact.n,
+                    ly.hsta.n,
+                ];
+                for (k, x) in v.iter().enumerate() {
+                    cmix[k].m += x * fm;
+                }
+            }
+        }
+        smix[17] /= dtil;
+        smix[18] /= dtil;
+        smix[19] /= dtil;
+        if let Some(w) = self.wet.as_mut() {
+            let b = &mut w.water;
+            b.no3 = smix[1] * depth * 1000.0 / tdep * area;
+            b.nh3 = smix[3] * depth * 1000.0 / tdep * area;
+            b.solp = smix[7] * depth * 1000.0 / tdep * area;
+            b.orgn = smix[8] * depth * 1000.0 / tdep * area;
+            b.sedp = smix[9] * depth * 1000.0 / tdep * area;
+        }
+        for l in 0..nly {
+            let fnm = sol_msn[l] / sol_mass[l];
+            let (fd, fd1) = (frac_dep[l], frac_dep1[l]);
+            let ly = &mut self.layers[l];
+            ly.no3 = ly.no3 * fnm + smix[1] * fd1;
+            ly.hsta.n = ly.hsta.n * fnm + smix[2] * fd;
+            ly.nh4 = ly.nh4 * fnm + smix[3] * fd1;
+            ly.lab = ly.lab * fnm + smix[4] * fd;
+            ly.hsta.p = ly.hsta.p * fnm + smix[5] * fd;
+            ly.hact.n = ly.hact.n * fnm + smix[6] * fd;
+            ly.act = ly.act * fnm + smix[7] * fd1;
+            ly.cp.tot.n = ly.cp.tot.n * fnm + smix[8] * fd1;
+            ly.cp.tot.p = ly.cp.tot.p * fnm + smix[9] * fd1;
+            ly.sta = ly.sta * fnm + smix[10] * fd;
+            ly.cp.tot.m = ly.cp.tot.m * fnm + smix[11] * fd;
+            ly.cp.tot.c = ly.cp.tot.c * fnm + smix[15] * fd;
+            ly.clay = ly.clay * fnm + smix[17] * frac_mixed;
+            ly.silt = ly.silt * fnm + smix[18] * frac_mixed;
+            ly.sand = ly.sand * fnm + smix[19] * frac_mixed;
+            if cswat == 2 {
+                let c = |k: usize, x: f32| x * fnm + cmix[k].m * fd;
+                ly.cp.str.c = c(0, ly.cp.str.c);
+                ly.cp.lig.c = c(1, ly.cp.lig.c);
+                ly.cp.lig.n = c(2, ly.cp.lig.n);
+                ly.cp.meta.c = c(3, ly.cp.meta.c);
+                ly.cp.meta.m = c(4, ly.cp.meta.m);
+                ly.cp.lig.m = c(5, ly.cp.lig.m);
+                ly.cp.str.m = c(6, ly.cp.str.m);
+                ly.cp.str.n = c(7, ly.cp.str.n);
+                ly.cp.meta.n = c(8, ly.cp.meta.n);
+                ly.cp.microb.n = c(9, ly.cp.microb.n);
+                ly.hact.n = c(10, ly.hact.n);
+                ly.hsta.n = c(11, ly.hsta.n);
+            }
         }
     }
 }

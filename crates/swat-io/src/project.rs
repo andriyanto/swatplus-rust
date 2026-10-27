@@ -54,9 +54,51 @@ pub fn load_project(src: &dyn FileSource) -> Result<(Project, LoadReport)> {
     if let Some((_, text)) = fetch("simulation", "prt")? {
         project.print = print::read(&text)?;
     }
+    // basin_read_objs: the basin's name and areas, and how many objects of each kind
+    // hyd_connect reads (`sp_ob`).
+    let mut counts: Option<Vec<i64>> = None;
+    if let Some((name, text)) = fetch("simulation", "object_cnt")? {
+        let mut rec = crate::list::Records::new(&name, &text);
+        rec.skip()?;
+        rec.skip()?;
+        if let Ok(f) = rec.read(19) {
+            project.basin_name = f.text_or(0, "");
+            project.area_ls_ha = f.real_or(1, 0.0)?;
+            project.area_tot_ha = f.real_or(2, 0.0)?;
+            counts = Some((4..19).map(|k| f.int_or(k, 0).unwrap_or(0) as i64).collect());
+        }
+    }
     for kind in ObjectKind::ALL {
+        // sp_ob: hru, hru_lte, ru, gwflow, aqu, chan, res, recall, exco, dr, canal, pump,
+        // outlet, chandeg, aqu2d.
+        let k = match kind {
+            ObjectKind::Hru => Some(0),
+            ObjectKind::HruLte => Some(1),
+            ObjectKind::RoutingUnit => Some(2),
+            ObjectKind::Gwflow => Some(3),
+            ObjectKind::Aquifer => Some(4),
+            ObjectKind::Channel => Some(5),
+            ObjectKind::Reservoir => Some(6),
+            ObjectKind::Recall => Some(7),
+            ObjectKind::ExportCoefficient => Some(8),
+            ObjectKind::DeliveryRatio => Some(9),
+            ObjectKind::Outlet => Some(12),
+            ObjectKind::ChannelDeg => Some(13),
+            ObjectKind::Aquifer2d => Some(14),
+        };
+        let n = match (&counts, k) {
+            (Some(c), Some(k)) => Some(c.get(k).copied().unwrap_or(0).max(0) as usize),
+            _ => None,
+        };
+        if n == Some(0) {
+            continue;
+        }
         if let Some((name, text)) = fetch("connect", kind.cio_slot())? {
-            project.objects.extend(con::read(kind, &name, &text)?);
+            let mut obs = con::read(kind, &name, &text)?;
+            if let Some(n) = n {
+                obs.truncate(n);
+            }
+            project.objects.extend(obs);
         }
     }
     if let Some((name, text)) = fetch("climate", "weat_sta")? {
@@ -146,23 +188,15 @@ pub fn load_project(src: &dyn FileSource) -> Result<(Project, LoadReport)> {
     project.res_nut = it.next().flatten();
     project.wetland = it.next().flatten();
     project.wet_hyd = it.next().flatten();
-    project.weir_res = fetch("reservoir", "weir_res")?.is_some();
+    project.weir_res = match fetch("reservoir", "weir_res")? {
+        Some((name, text)) => Some(table::read_table(&name, &text, schema::WEIR_RES)?),
+        None => None,
+    };
     if let Some((_, text)) = fetch("lum", "management_sch")? {
         project.management = hru::read_management(&text)?;
     }
     if let Some((_, text)) = fetch("init", "plant")? {
         project.plant_communities = hru::read_plant_communities(&text)?;
-    }
-    // basin_read_objs: the basin's name and areas.
-    if let Some((name, text)) = fetch("simulation", "object_cnt")? {
-        let mut rec = crate::list::Records::new(&name, &text);
-        rec.skip()?;
-        rec.skip()?;
-        if let Ok(f) = rec.read(3) {
-            project.basin_name = f.text_or(0, "");
-            project.area_ls_ha = f.real_or(1, 0.0)?;
-            project.area_tot_ha = f.real_or(2, 0.0)?;
-        }
     }
     // lsu_read_elements: landscape units.
     if let Some((name, text)) = fetch("regions", "def_lsu")? {
@@ -211,6 +245,17 @@ pub fn load_project(src: &dyn FileSource) -> Result<(Project, LoadReport)> {
         project.cal_upd = crate::cal::read_calibration(&name, &text)?;
     }
     project.co2_yr_dat = src.read("co2_yr.dat").ok().flatten().is_some();
+    // mgt_read_puddle, manure_orgmin_read, manure_db_read, plant_transplant_read: fixed names.
+    for (name, fields, slot) in [
+        ("puddle.ops", schema::PUDDLE_OPS, &mut project.puddle_ops),
+        ("manure_om.frt", schema::MANURE_OM, &mut project.manure_om),
+        ("manure_db.frt", schema::MANURE_DB, &mut project.manure_db),
+        ("transplant.ops", schema::TRANSPLANT, &mut project.transplant_ops),
+    ] {
+        if let Some(text) = src.read(name)? {
+            *slot = Some(table::read_table(name, &text, fields)?);
+        }
+    }
     // soils_init opens it by this name, whatever file.cio says.
     if let Some(text) = src.read("soil_lyr_depths.sol")? {
         project.soil_lyr_depths = Some(hru::read_soil_lyr_depths(&text)?);

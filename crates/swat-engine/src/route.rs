@@ -357,6 +357,25 @@ impl Network {
             aqu_of[ob] = Some(iaq);
             aqus.push(Aqu { ob, db, alpha_e, nloss, d });
         }
+        // cal_conditions: the aquifers' calibration (after aqu_initial).
+        for u in &project.cal_upd {
+            let p = crate::hru::cal_parm(project, u);
+            if p.ob_typ != "aqu" {
+                continue;
+            }
+            let elems: Vec<usize> = if u.elems.is_empty() { (1..=aqus.len()).collect() } else { u.elems.clone() };
+            for e in elems {
+                let a = aqus.get_mut(e.wrapping_sub(1)).ok_or_else(|| format!("calibration of {}: aquifer {e}", u.name))?;
+                match u.name.as_str() {
+                    "alpha" => {
+                        a.db.alpha = crate::hru::chg_par(u, &p, a.db.alpha);
+                        a.alpha_e = (-a.db.alpha).exp();
+                    }
+                    "revap_co" => a.db.revap_co = crate::hru::chg_par(u, &p, a.db.revap_co),
+                    other => return Err(format!("calibration of {other}")),
+                }
+            }
+        }
 
         // The command order (`cmd_next`): objects fire, in passes over the array, once all
         // their inflows and (for routing units) all their elements have.

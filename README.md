@@ -53,12 +53,14 @@ branch (`SWAT+ Fortran build` workflow).
 The aim is the same results as SWAT+, so its behaviour is reproduced even where it surprises.
 What has been found so far is in [`docs/swat-quirks.md`](docs/swat-quirks.md).
 
+Rice paddies (weir, ponding, puddling) and their validation are in [`docs/paddy.md`](docs/paddy.md).
+
 Which output tables it writes, and how SWAT+ sums them into months, years and average annual values, is in [`docs/outputs.md`](docs/outputs.md).
 
 The quirks that are plainly bugs can be corrected instead with `run <folder> --fix-swat`; the
 results then differ from SWAT+'s. They are listed in [`docs/swat-fixes.md`](docs/swat-fixes.md).
 
-Batanghari matches SWAT+ bit for bit (phase 3d). Next: Pessel (phase 3e) — see [`docs/phase3.md`](docs/phase3.md). For a project the port can't
+Batanghari and Pessel match SWAT+ bit for bit (phases 3d and 3e, [`docs/phase3.md`](docs/phase3.md)), and so does Osu_1hru, SWAT+'s rice paddy example: weir, ponding irrigation, puddling, manure and calibration, on every table over 14 years (phase 4). For a project the port can't
 simulate yet (other decision table conditions and actions, other operations, other PET
 methods…), `run` says why and writes the weather and precipitation only.
 
