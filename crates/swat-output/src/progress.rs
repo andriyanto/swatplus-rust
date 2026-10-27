@@ -59,7 +59,7 @@ impl Reporter {
     }
 
     pub fn day(&mut self, done: usize, days: usize, d: Day) {
-        let pct = if days == 0 { 100 } else { done * 100 / days };
+        let pct = (done * 100).checked_div(days).unwrap_or(100);
         if self.last_pct != Some(pct) || done == days {
             self.last_pct = Some(pct);
             (self.emit)(&progress(done, days, d));

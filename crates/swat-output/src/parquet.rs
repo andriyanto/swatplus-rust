@@ -347,10 +347,10 @@ fn parse_f32(tok: &str) -> f32 {
     if let Ok(v) = tok.parse::<f32>() {
         return v;
     }
-    if tok.contains(".E") || tok.contains(".e") {
-        if let Ok(v) = tok.replace(".E", ".0E").replace(".e", ".0e").parse::<f32>() {
-            return v;
-        }
+    if (tok.contains(".E") || tok.contains(".e"))
+        && let Ok(v) = tok.replace(".E", ".0E").replace(".e", ".0e").parse::<f32>()
+    {
+        return v;
     }
     f32::NAN
 }
