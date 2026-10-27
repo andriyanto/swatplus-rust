@@ -116,8 +116,7 @@ impl Hru {
                     tst = f1;
                 }
             }
-            if let Some(fcimp) = fcimp {
-                let sd = self.sub.as_mut().expect("sub-daily");
+            if let (Some(fcimp), Some(sd)) = (fcimp, self.sub.as_mut()) {
                 if rintns[k] > 0.017 {
                     sd.urb_abstinit = (sd.urb_abstinit - ts[k - 1]).max(0.0);
                 } else {
@@ -151,8 +150,9 @@ impl Hru {
         for &v in ts.iter().take(n) {
             tot += v;
         }
-        if tot > 12.0 {
-            let sd = self.sub.as_mut().expect("sub-daily");
+        if tot > 12.0
+            && let Some(sd) = self.sub.as_mut()
+        {
             sd.swtrg = true;
             sd.rateinf_prev = rateinf[n + 1];
         }
@@ -167,9 +167,9 @@ impl Hru {
         let clay = l1.clay;
         let silt = l1.silt;
         let sand = 100.0 - clay - silt;
-        let erod_k = if clay >= 40.0 && sand >= 20.0 && sand <= 45.0 {
+        let erod_k = if clay >= 40.0 && (20.0..=45.0).contains(&sand) {
             2.0
-        } else if clay >= 27.0 && sand >= 20.0 && sand <= 45.0 {
+        } else if clay >= 27.0 && (20.0..=45.0).contains(&sand) {
             1.7
         } else if silt <= 40.0 && sand <= 20.0 {
             2.0
