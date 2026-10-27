@@ -148,9 +148,8 @@ table, crop yields too, matches SWAT+.
   plant (`pop_com` stays 0), so the potential leaf area is always `blai`. The port accepts it.
 
 **Ps_peren** is Ps_coast with oil palm maturing in 365 days, 136 palms a hectare (the usual
-9 m triangular spacing) and 50,000 row crop plants. Every table matches SWAT+; reaching
-maturity within the year, the palms' leaf area falls from 4.9 to 1.1 and the basin's ET from
-1,253 to 657 mm a year.
+9 m triangular spacing) and 50,000 row crop plants. Every table matches SWAT+; the palms'
+average leaf area falls from 4.9 to 1.1, and the basin's ET from 1,253 to 657 mm a year.
 
 ## Sources
 
