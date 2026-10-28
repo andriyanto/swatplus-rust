@@ -24,6 +24,21 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # Batanghari and Pessel are private data, kept in andriyanto/swatplus-testdata and read
+      # with a read-only token. Without it (a fork's pull request) only SWAT+'s own scenarios
+      # and their variants run.
+      - name: Get the private scenarios
+        env:
+          TOKEN: ${{ secrets.TESTDATA_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::warning title=private scenarios::no TESTDATA_TOKEN: Batanghari, Pessel and their variants are skipped"
+            exit 0
+          fi
+          git clone -q --depth 1 "https://x-access-token:${TOKEN}@github.com/andriyanto/swatplus-testdata.git" private
+          mv private/Batanghari private/Pessel testdata/
+          rm -rf private
+
       - name: Get the SWAT+ Fortran engine
         run: |
           git fetch --depth 1 origin fortran-bin
@@ -44,6 +59,9 @@ jobs:
           status=0
           trap 'echo "::error title=stopped::at scenario ${scenario:-none} (line $LINENO)"' ERR
           scripts/make-variants.sh testdata/Ames_sub1 variants
+          scenarios="Osu_1hru Ames_sub1 Ames_bare Ames_past0 Ames_past Ames_corn Ames_cornf Ames_cosy Ames_cosy2 Ames_dtbl Ames_tile"
+          if [ -d testdata/Batanghari ]; then
+          scenarios="$scenarios Bh_land Batanghari Bh_res Bh_rel Ps_coast Ps_paddy Ps_musk Ps_atmo Ps_tile Ps_bmp Ps_septic Ps_solp Ps_urban Ps_hourly Ps_land Ps_urbhr Ps_pet Ps_cal Ps_harv Ps_peren Ps_hu Ps_uh Ps_gap Ps_edge Bh_nosed Pessel"
           # Phase 3: Batanghari (and Bh_land, its HRUs with Hargreaves PET), 2015-2019 (three
           # printed years) to keep the tables small.
           scripts/make-phase3-variants.py testdata/Batanghari variants
@@ -56,7 +74,8 @@ jobs:
           # And the whole of Pessel, 2015 only, printed from the first day.
           sed -i '3s/2025/2015/' testdata/Pessel/time.sim
           sed -i '3s/^2 /0 /' testdata/Pessel/print.prt
-          for scenario in Osu_1hru Ames_sub1 Ames_bare Ames_past0 Ames_past Ames_corn Ames_cornf Ames_cosy Ames_cosy2 Ames_dtbl Ames_tile Bh_land Batanghari Bh_res Bh_rel Ps_coast Ps_paddy Ps_musk Ps_atmo Ps_tile Ps_bmp Ps_septic Ps_solp Ps_urban Ps_hourly Ps_land Ps_urbhr Ps_pet Ps_cal Ps_harv Ps_peren Ps_hu Ps_uh Ps_gap Ps_edge Bh_nosed Pessel; do
+          fi
+          for scenario in $scenarios; do
             src=testdata/$scenario
             test -d "$src" || src=variants/$scenario
             mkdir -p runs/$scenario

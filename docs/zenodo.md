@@ -2,8 +2,9 @@
 
 Published on 28 October 2026: 1.0.1 [10.5281/zenodo.23721044](https://doi.org/10.5281/zenodo.23721044), 1.0.2 [10.5281/zenodo.23728544](https://doi.org/10.5281/zenodo.23728544); all versions [10.5281/zenodo.23721043](https://doi.org/10.5281/zenodo.23721043). 1.0.2's files open (Geoscientific Model Development requires the code in a public archive).
 
-The repository is private, so a release goes to Zenodo by hand (Zenodo's GitHub integration
-archives public repositories). Its metadata is in `.zenodo.json` and `CITATION.cff`.
+Up to 1.0.2 the repository was private, so releases went to Zenodo by hand; it is public from
+1.0.3, without the private scenarios (`testdata/PRIVATE.md`), and Zenodo's GitHub integration can
+archive its releases. Its metadata is in `.zenodo.json` and `CITATION.cff`.
 
 1. Merge the release into `main`, tag it (`git tag -a v1.0.1 -m "swatplus-rust 1.0.1"`, push the
    tag).

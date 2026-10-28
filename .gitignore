@@ -1,2 +1,6 @@
 /target
 dist/
+__pycache__/
+# Private data, in andriyanto/swatplus-testdata (see testdata/PRIVATE.md).
+/testdata/Batanghari/
+/testdata/Pessel/
