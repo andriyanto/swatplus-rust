@@ -70,7 +70,7 @@ simulate (a feature it refuses), `run` says why and passes that part's water on,
 
 ## Citing
 
-Yanto, A. (2026). *swatplus-rust: SWAT+ translated from Fortran into Rust, verified bit for bit* (Version 1.0.1) [Computer software]. Zenodo. https://doi.org/10.5281/zenodo.23721044
+Yanto, A. (2026). *swatplus-rust: SWAT+ translated from Fortran into Rust, verified bit for bit* (Version 1.0.2) [Computer software]. Zenodo. https://doi.org/10.5281/zenodo.23728544
 
 The DOI [10.5281/zenodo.23721043](https://doi.org/10.5281/zenodo.23721043) cites all versions (it resolves to the latest). The files on Zenodo are shared on request; `CITATION.cff` has the metadata.
 
