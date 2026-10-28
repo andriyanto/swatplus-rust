@@ -23,6 +23,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - name: File names Windows can check out
+        run: |
+          # CON, PRN, AUX, NUL, COM1-9 and LPT1-9 (with any extension) and the characters
+          # <>:"|?* can't be file names on Windows: a checkout there fails (release 1.0.1).
+          bad=$(git ls-files | grep -iE '(^|/)(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.[^/]*)?(/|$)|[<>:"|?*]' || true)
+          if [ -n "$bad" ]; then echo "::error title=Windows file names::$bad"; exit 1; fi
       - name: Format
         run: cargo fmt --all --check
       - name: Lint

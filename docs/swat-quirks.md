@@ -53,7 +53,7 @@ lists them.
   0.003). Ames_sub1 writes `cn_froz` as 0; SWAT+ runs with 0.000862.
   (`swat-model/src/basin.rs::BasinParams::complete`)
 - **Connection files** are read twice per row, the second time with as many outflows as
-  `out_tot` says. (`hyd_read_connect`; `swat-io/src/con.rs`)
+  `out_tot` says. (`hyd_read_connect`; `swat-io/src/connect.rs`)
 
 ## Climate
 

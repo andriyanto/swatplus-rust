@@ -1010,7 +1010,7 @@ Modul ini berisi struct untuk file definisi unit routing (`rout_unit.ele`, `rout
 
 Bab ini membahas crate `swat-io`, lapisan paling bawah engine: kode yang mengubah teks file masukan SWAT+ di folder *TxtInOut* (`file.cio`, `time.sim`, `print.prt`, `codes.bsn`, `parameters.bsn`, file `*.con`, file iklim, tabel basis data, `soils.sol`, `management.sch`, tabel keputusan, `septic.str`, `recall.rec`, file kalibrasi) menjadi struktur data crate `swat-model` (`Project`, `TimeSim`, `PrintSettings`, `SpatialObject`, `Table`, dan seterusnya). Crate ini tidak menghitung proses hidrologi apa pun; tugasnya hanya memastikan bahwa sebuah file *berarti hal yang sama* bagi port Rust seperti bagi SWAT+ Fortran: nilai yang sama, nilai bawaan (default) yang sama, dan kelonggaran yang sama terhadap file yang cacat atau tidak lengkap.
 
-File Rust yang dicakup: `crates/swat-io/src/lib.rs`, `source.rs`, `list.rs`, `table.rs`, `cio.rs`, `time.rs`, `print.rs`, `basin.rs`, `con.rs`, `routing.rs`, `climate.rs`, `hru.rs`, `septic.rs`, `recall.rs`, `cal.rs`, `project.rs`, ditambah uji integrasi `crates/swat-io/tests/refdata.rs`. Hampir setiap pembaca bergantung pada `list.rs`, emulasi masukan *list-directed* Fortran (`read (unit, *) a, b, c`) persis seperti gfortran memprosesnya; karena itu `list.rs` dibahas lebih dulu dan paling rinci, sebab aturan pemotongan token, nilai *null*, garis miring, dan perilaku akhir file di sana menentukan arti setiap file lainnya.
+File Rust yang dicakup: `crates/swat-io/src/lib.rs`, `source.rs`, `list.rs`, `table.rs`, `cio.rs`, `time.rs`, `print.rs`, `basin.rs`, `connect.rs`, `routing.rs`, `climate.rs`, `hru.rs`, `septic.rs`, `recall.rs`, `cal.rs`, `project.rs`, ditambah uji integrasi `crates/swat-io/tests/refdata.rs`. Hampir setiap pembaca bergantung pada `list.rs`, emulasi masukan *list-directed* Fortran (`read (unit, *) a, b, c`) persis seperti gfortran memprosesnya; karena itu `list.rs` dibahas lebih dulu dan paling rinci, sebab aturan pemotongan token, nilai *null*, garis miring, dan perilaku akhir file di sana menentukan arti setiap file lainnya.
 
 Dalam alur simulasi, `swat-io` dipanggil sekali di awal: `load_project` (subbab 4.9) membaca `file.cio`, lalu mengikuti urutan pembacaan SWAT+ (`readcio_read` → `basin_read_cc`/`basin_read_prm` → `time_read` → `basin_print_codes_read` → `basin_read_objs` → `hyd_read_connect` → `cli_staread`/`cli_wgnread` → basis data → `hru_read` → data terukur iklim). Hasilnya, sebuah `Project` plus `LoadReport` (daftar file yang hilang atau tidak terbaca), diteruskan ke `swat-engine` (bab-bab berikutnya) yang melakukan inisialisasi dan simulasi harian. Crate ini tidak pernah menyentuh disk secara langsung: semua file datang melalui trait `FileSource`, sehingga engine yang sama dapat dijalankan dari folder di disk maupun dari berkas yang dipegang di memori (misalnya di peramban). Seluruh crate dikompilasi dengan larangan `unwrap`, `expect`, `panic`, `unimplemented`, dan `unreachable` di luar uji (atribut `deny(clippy::…)` di `lib.rs`): file yang rusak menghasilkan `Error`, bukan kepanikan program.
 
@@ -1410,7 +1410,7 @@ Empat file ini dibaca pertama kali oleh SWAT+ dan menentukan apa yang dibaca dan
 
 **Uji unit subbab 4.4:** `cio::tests::rows_by_position_and_defaults`, `extra_names_are_ignored`; `time::tests::reads`; `print::tests::reads` (urutan tetap tanpa label; dengan `dbout` `y` nama asli dipakai), `no_intervals`; `basin::tests::codes`, `params_by_position`, `a_bad_integer_ends_the_read`, `short_file_keeps_defaults`.
 
-### 4.5  Objek spasial dan unit (`con.rs`, `routing.rs`)
+### 4.5  Objek spasial dan unit (`connect.rs`, `routing.rs`)
 
 SWAT+ memodelkan DAS sebagai graf objek spasial (HRU, HRU-lte, unit perutean/*routing unit*, akuifer, kanal, reservoir, *recall*, ekspor koefisien, *delivery ratio*, *outlet*, kanal SWAT-DEG, akuifer 2D). Setiap jenis punya file koneksi `*.con` yang menyatakan atribut objek dan aliran keluarnya; unit perutean dan unit lanskap juga punya file definisi dan elemen. Subbab ini membahas pembaca file tersebut serta `aquifer.aqu` dan `channel-lte.cha`, yang dibaca di modul yang sama.
 
@@ -1432,7 +1432,7 @@ Fungsi bantu `swat_model::cal::define_unit_elements` (padanan `define_unit_eleme
 
 #### 4.5.1  `con::read`
 
-- **Lokasi:** `crates/swat-io/src/con.rs`, `pub fn read(kind: ObjectKind, file: &str, text: &str) -> Result<Vec<SpatialObject>>`
+- **Lokasi:** `crates/swat-io/src/connect.rs`, `pub fn read(kind: ObjectKind, file: &str, text: &str) -> Result<Vec<SpatialObject>>`
 - **Padanan SWAT+:** `hyd_read_connect` (`hyd_read_connect.f90`).
 - **Tujuan:** membaca satu file koneksi (`hru.con`, `rout_unit.con`, `aquifer.con`, `chandeg.con`, `reservoir.con`, `recall.con`, dan lain-lain) menjadi daftar objek.
 - **File dan kolom:** judul, kepala, lalu per objek 13 nilai tetap (`FIXED`): `id name gis_id area lat lon elev props wst cst ovfl rule out_tot`, diikuti `out_tot` kuartet `obj_typ obj_id hyd_typ frac`.
@@ -1837,7 +1837,7 @@ Selain uji unit yang disebut di akhir setiap subbab (34 fungsi uji, termasuk dua
 | `ames_hru_inputs` | `tests/refdata.rs` | skenario Ames_sub1: `hru-data.hru`; tanah, tekstur satu kata, lapisan; `cn_froz` 0 menjadi default oleh `complete()`; baris `biomix` `tillage.til`; `carbon.bsn` (dibaca karena `cswat = 2`); tanaman `plants.plt`; komunitas `plant.ini`; `nutrients.sol` tidak ada; `co2_yr.dat` tidak ada; topografi, hidrologi, `landuse.lum`, `cntable.lum` (larik `cn`), salju, `soil_plant.ini`. |
 | `osu_hru_inputs` | `tests/refdata.rs` | skenario Osu_1hru: satu HRU dengan penyimpanan permukaan *paddy*; tanah yang dirujuknya ada dan berlapis. |
 
-**Ringkasan cakupan bab.** Bab ini mendokumentasikan 78 fungsi non-uji crate `swat-io`: `lib.rs` 3, `source.rs` 6, `list.rs` 27, `table.rs` 3, `cio.rs` 1, `time.rs` 1, `print.rs` 1, `basin.rs` 3, `con.rs` 1, `routing.rs` 8, `climate.rs` 6, `hru.rs` 9, `septic.rs` 3, `recall.rs` 2, `cal.rs` 2, `project.rs` 1; ditambah 34 fungsi uji unit dan 5 fungsi di `tests/refdata.rs`.
+**Ringkasan cakupan bab.** Bab ini mendokumentasikan 78 fungsi non-uji crate `swat-io`: `lib.rs` 3, `source.rs` 6, `list.rs` 27, `table.rs` 3, `cio.rs` 1, `time.rs` 1, `print.rs` 1, `basin.rs` 3, `connect.rs` 1, `routing.rs` 8, `climate.rs` 6, `hru.rs` 9, `septic.rs` 3, `recall.rs` 2, `cal.rs` 2, `project.rs` 1; ditambah 34 fungsi uji unit dan 5 fungsi di `tests/refdata.rs`.
 
 ## Bab 5  swat-engine: inisialisasi dan loop simulasi
 
@@ -10377,7 +10377,7 @@ Katalog ini menggabungkan semua butir di `docs/swat-quirks.md` serta bagian *Qui
 | 9 | Pencarian menurut nama linear, mengambil kecocokan pertama, dibandingkan sebagai string Fortran (spasi di belakang diabaikan); nama tak ditemukan memberi penunjuk 0 | semua pencarian nama; `swat-model/src/table.rs` | lihat butir 13, 26, 27 | Tidak |
 | 10 | Tekstur tanah satu kata (`L- L- L- L` dibaca sampai spasi pertama). Lapisan pertama lebih tipis dari 20 mm menjadi 20 mm bila tanah satu lapis atau lapis kedua lebih dalam dari 20 mm | `soil_db_read`; `swat-io/src/hru.rs` | kedalaman lapisan | Tidak |
 | 11 | Parameter DAS di bawah 1e-6 diganti bawaan oleh `basin_prm_default`, yang untuk beberapa variabel bukan nilai awalnya (`prf` 1 bukan 484, `cmn` 0,0003 bukan 0,003). `cn_froz` 0 di Ames\_sub1 menjadi 0,000862 | `basin_prm_default`; `BasinParams::complete` | limpasan tanah beku, dsb. | Tidak |
-| 12 | Berkas koneksi dibaca dua kali per baris, kedua kalinya dengan jumlah aliran keluar sebanyak `out_tot` | `hyd_read_connect`; `swat-io/src/con.rs` |  | Tidak |
+| 12 | Berkas koneksi dibaca dua kali per baris, kedua kalinya dengan jumlah aliran keluar sebanyak `out_tot` | `hyd_read_connect`; `swat-io/src/connect.rs` |  | Tidak |
 | 13 | Nama data di `hru-data.hru` yang tidak ditemukan meninggalkan penunjuk 1 (bawaan `hru_databases`): HRU dengan tata guna `null` dari Editor mendapat tata guna pertama `landuse.lum` beserta tanaman, pengelolaan dan CN-nya; begitu pula topografi, hidrologi, salju, data tanah-tanaman | `hru_read`; `Row::find_or_first` | HRU tanpa tata guna tetap bertanaman | Tidak |
 | 14 | `object.cnt` menentukan berapa objek tiap jenis dibaca: berkas koneksi dengan hitungan 0 (`recall.con` Osu) tidak dibaca, dan hanya n baris pertama yang dibaca | `basin_read_objs` |  | Tidak |
 | 15 | `print.prt` tanpa label objek (`dbout` `n`) dibaca baris demi baris dalam urutan tetap SWAT+ apa pun nama barisnya: baris ekstra (`hru_cb` di Osu) menggeser bendera semua baris sesudahnya; Osu mencetak `channel_sd` dengan bendera baris `channel` | `basin_print_codes_read` | tabel mana yang dicetak | Tidak |
