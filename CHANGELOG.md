@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Faster, same results**: a channel's stream temperature (`ch_temp`) sums the gage's lagged air
+  temperatures once per gage and day instead of once per channel, and a plant's data is shared
+  instead of copied three times a day. Pessel 2015–2025 runs about 10 % faster; every table is
+  unchanged. The profile is in `docs/performance.md`.
+
 ## 1.0.3
 
 - **Point source tables** (`recall_*`, `basin_psc_*`) write their values as SWAT+'s list-directed
