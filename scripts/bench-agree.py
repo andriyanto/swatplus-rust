@@ -44,12 +44,16 @@ def data(path, skip):
         return [l.split() for l in f.readlines()[skip:] if l.split()]
 
 
-def drift(a, b):
-    """(all values equal, largest relative difference) of two aligned row lists."""
+def drift(a, b, cols=None):
+    """(all values equal, largest relative difference) of two aligned row lists, the values
+    paired by column: `cols` lists (column in a, column in b), else by position."""
     same, worst = True, 0.0
     for ra, rb in zip(a, b):
-        for x, y in zip(ra, rb):
-            vx, vy = num(x), num(y)
+        pairs = cols if cols is not None else [(i, i) for i in range(min(len(ra), len(rb)))]
+        for i, j in pairs:
+            if i >= len(ra) or j >= len(rb):
+                continue
+            vx, vy = num(ra[i]), num(rb[j])
             if vx is None or vy is None:
                 continue
             if math.isnan(vx) and math.isnan(vy):
@@ -59,6 +63,18 @@ def drift(a, b):
                 d = abs(vx - vy) / max(abs(vx), abs(vy))
                 worst = max(worst, d if not math.isnan(d) else 1.0)
     return same and len(a) == len(b), worst
+
+
+def names(path):
+    """The column names: the second line of a SWAT+ table, a repeated name numbered as the
+    port's Parquet does (`_2`)."""
+    with open(path, errors="replace") as f:
+        f.readline()
+        out, seen = [], {}
+        for n in f.readline().split():
+            seen[n] = seen.get(n, 0) + 1
+            out.append(n if seen[n] == 1 else f"{n}_{seen[n]}")
+    return out
 
 
 rows = []
@@ -84,7 +100,10 @@ for s in scenarios:
                 ok = subprocess.call([rust, "compare", f, t], stdout=o, stderr=subprocess.STDOUT) == 0
             # Title, column names, units: then the rows, in the same order when both have them all.
             a, b = data(f, 3), data(t, 3)
-            same, worst = drift(a, b) if len(a) == len(b) else (False, float("nan"))
+            # The port may write fewer columns than SWAT+, or in another order: pair them by name.
+            na, nb = names(f), names(t)
+            cols = [(na.index(n), k) for k, n in enumerate(nb) if n in na]
+            same, worst = drift(a, b, cols) if len(a) == len(b) else (False, float("nan"))
         result = "identical" if same and ok else ("ok" if ok else "mismatch")
         rows.append({"scenario": s, "table": name[:-4], "result": result, "max_rel_diff": f"{worst:.3g}"})
 

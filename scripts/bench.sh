@@ -41,7 +41,7 @@ echo "scenario,engine,rep,wall_s,user_s,sys_s,max_rss_kb,files,bytes" > "$csv"
   echo "date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "host: $(uname -srm)"
   echo "arch: $(uname -m)"
-  grep -m1 "model name" /proc/cpuinfo 2>/dev/null | sed 's/^/cpu: /' || true
+  { grep -m1 "model name" /proc/cpuinfo 2>/dev/null || lscpu 2>/dev/null | grep -m1 -i "model name"; } | sed 's/^[^:]*: */cpu: /' || true
   echo "cores: $(nproc)"
   awk '/MemTotal/ {printf "memory: %.1f GB\n", $2/1048576}' /proc/meminfo 2>/dev/null || true
   grep -qi microsoft /proc/version 2>/dev/null && echo "wsl: yes" || echo "wsl: no"
