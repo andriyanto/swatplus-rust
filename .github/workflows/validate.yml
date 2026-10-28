@@ -105,6 +105,7 @@ jobs:
       # logs can be fetched with git for the archive the paper cites.
       - name: Publish to the validation-logs branch
         if: always() && github.event_name != 'pull_request'
+        continue-on-error: true
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
