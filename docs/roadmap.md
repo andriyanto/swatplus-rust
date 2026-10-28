@@ -71,6 +71,7 @@ flowchart LR
 | **H3** | Aliran tak tunak 1D dengan bangunan, kopling satu arah dengan SWAT+ | HEC-RAS *unsteady* 1D | Direncanakan |
 | **T1** | Rekayasa terain di RustGIS: permukaan dari data ukur (penampang, profil memanjang, titik situasi) dipadukan dengan DEM; model 3D desain (SketchUp, BIM); DEM siap-hidrolika, skenario terain berversi, ketidakpastian | RAS Mapper *terrain modification*, dan lebih | Direncanakan; syarat H4, membantu H2–H3 |
 | **H4** | Genangan 2D di atas DEM, paralel, dengan keluaran peta ala RAS Mapper | HEC-RAS 2D | Direncanakan |
+| **V1** | Visualisasi 3D dan isometrik di RustGIS: muka air 3D di atas terain, animasi, penampang, web | RAS Mapper 3D, dan lebih | Direncanakan; fondasi 3D RustGIS sudah ada |
 | **H5** | Kopling dua arah: air balik dan genangan kembali ke SWAT+ | — | Riset |
 | **H6** | Sistem prakiraan banjir: data waktu nyata, prakiraan hujan, asimilasi, ensembel | — | Tujuan jangka panjang |
 
@@ -371,6 +372,45 @@ sampai ke cekungan di sebelah sel basah. Rencana engine ini:
 
 - **Uji:** solusi analitik (misalnya Thacker), dan rangkaian kasus uji baku untuk model 2D seperti
   *benchmark* Environment Agency Inggris (Néelz dan Pender, 2013); pembandingan dengan HEC-RAS 2D.
+
+### V1: visualisasi 3D dan isometrik (RustGIS)
+
+Hasil H0–H4 ditampilkan di atas peta dan terain, sebagai peta datar, perspektif, atau isometrik.
+
+**Yang sudah ada di RustGIS:** peta miring sampai 85° dengan rotasi arah (`crates/map/src/camera.rs`),
+relief dari DEM lokal atau *elevation tiles* dengan pembesaran tinggi 0–20× (`map.terrain`), objek
+ekstrusi berpencahayaan (bangunan), mode globe, dan *backend* GPU `wgpu` di aplikasi desktop.
+
+**Yang ditambahkan:**
+
+1. **Kamera isometrik (ortografik)** di samping kamera perspektif: proyeksi sejajar, sehingga skala
+   sama di seluruh layar dan jarak tetap terbaca. Sudut baku isometrik (arah 45°, kemiringan sekitar
+   54,7°) sebagai pilihan cepat, dengan arah dan kemiringan tetap bebas diatur. Terain, ekstrusi dan
+   lapisan yang ada dipakai ulang. Batang skala dan arah utara tetap benar di mode ini.
+2. **Permukaan air 3D:** muka air dari H4 (dan H2–H3 untuk alur) digambar sebagai mesh tersendiri di
+   atas terain, bukan warna yang ditempel ke tanah. Warna menurut kedalaman, kecepatan, bahaya atau
+   asal air (tracer H4), agak transparan, dengan panah atau partikel kecepatan. Tanggul, jalan dan
+   bangunan dari T1 tampak menahan atau terlimpasi.
+3. **Animasi waktu:** penggeser waktu, putar dan jeda, kecepatan putar, dan hidrograf serta TMA di
+   titik tinjau yang bergerak sinkron dengan peta. Pembandingan dua skenario berdampingan atau
+   sebagai peta selisih, dengan kamera terkunci bersama.
+4. **Penampang di layar:** garis potong digambar di peta, lalu profil terain, dasar alur, muka air
+   dan tanggul tampil di panel samping dan ikut beranimasi. Alat yang sama dipakai penyunting
+   terain T1.
+5. **Neraca air di peta:** hasil SWAT+ (hujan, ET, limpasan, debit per subDAS dan saluran) ditampilkan
+   sebagai warna dan aliran di atas peta 3D, melanjutkan prototipe animasi neraca air Batanghari.
+6. **Ekspor:** gambar resolusi tinggi dan video (MP4) dari animasi, dengan jalur kamera yang bisa
+   diatur (terbang menyusuri sungai), serta legenda, skala dan waktu di setiap bingkai.
+7. **Web lewat WASM:** tampilan yang sama di peramban tanpa instalasi, untuk berbagi hasil dengan
+   instansi. Perlu dicek dulu sejauh mana jalur WASM RustGIS mendukung fitur 3D di atas.
+
+- **Uji:** jarak dan luas yang diukur di mode isometrik sama dengan nilai sebenarnya; muka air dan
+  kedalaman yang ditampilkan sama dengan nilai sel keluaran (tidak ada interpolasi yang menambah air,
+  lihat "peta jujur" di H4); bingkai animasi cocok dengan langkah waktu keluaran; uji tangkapan layar
+  (*snapshot*, seperti `egui_kittest` yang sudah dipakai RustGIS) untuk mencegah regresi tampilan.
+
+Data rahasia (Batanghari, Pessel) hanya ditampilkan dan diekspor sebagai berkas lokal, tidak
+diterbitkan sebagai halaman web publik.
 
 ### H5: kopling dua arah
 
