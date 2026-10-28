@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **Point source tables** (`recall_*`, `basin_psc_*`) write their values as SWAT+'s list-directed
+  `write` does (gfortran's `1PG16.9E2`: nine significant digits), so the printed values are
+  SWAT+'s to the digit; the port wrote the shortest decimal of the same float, which read back
+  up to 6e-8 apart. The basin's name takes 25 characters, as `bsn%name`.
+- **Validation logs**: each validation run keeps its comparisons (counts and differences, no
+  values) as an artifact and on the `validation-logs` branch, with a summary by scenario
+  (`scripts/validation-summary.py`); the run of 28 October is in `docs/validation-results/`.
+- **The repository is public**, without the private scenarios Batanghari and Pessel, which CI
+  reads from a private repository (`testdata/PRIVATE.md`).
+
 ## 1.0.2
 
 - **The source checks out on Windows**: `crates/swat-io/src/con.rs` (CON is a reserved name
