@@ -989,6 +989,12 @@ impl Network {
         out
     }
 
+    /// The channels' hydraulics on the day (`ChHyd`), in the order of [`Network::channels`].
+    pub fn channel_hyds(&self) -> Vec<crate::channel::ChHyd> {
+        let Some(chs) = self.channels.as_ref() else { return Vec::new() };
+        self.chan_of.iter().flatten().map(|&k| chs.hyd_of(k)).collect()
+    }
+
     /// The reservoirs: number (1-based), GIS id, name and the reservoir.
     pub fn reservoir_days(&self) -> impl Iterator<Item = (usize, i32, &str, &crate::res::Reservoir)> {
         self.reservoirs.iter().enumerate().map(|(i, r)| (i + 1, self.obs[r.ob].gis_id, self.obs[r.ob].name.as_str(), r))

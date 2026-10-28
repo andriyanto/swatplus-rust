@@ -77,6 +77,31 @@ const SUBDAY_UNITS: &str = "                                                    
 
 const KEYS: &str = "  jday   mon   day    yr    unit  gis_id  name            ";
 
+/// `channel_hyd_day.txt`'s columns and units.
+const CHANNEL_HYD: [(&str, &str); 21] = [
+    ("flo_out", "m^3/s"),
+    ("dep_out", "m"),
+    ("wid_out", "m"),
+    ("area_out", "m^2"),
+    ("perim_out", "m"),
+    ("vel_out", "m/s"),
+    ("ttime_out", "hr"),
+    ("flo_in", "m^3/s"),
+    ("dep_in", "m"),
+    ("vel_in", "m/s"),
+    ("flo_peak", "m^3/s"),
+    ("dep_peak", "m"),
+    ("vel_peak", "m/s"),
+    ("vol_ch", "m^3"),
+    ("vol_fp", "m^3"),
+    ("dep_bf", "m"),
+    ("wid_bf", "m"),
+    ("overbank", "0/1"),
+    ("dep_mann", "m"),
+    ("vel_mann", "m/s"),
+    ("wid_mann", "m"),
+];
+
 const WEATHER: [&str; 6] = ["tmx", "tmn", "tmpav", "solarad", "wndspd", "rhum"];
 
 /// The tables the port writes, as `print.prt` names them, and their file name stems.
@@ -128,6 +153,9 @@ pub struct TextTables<S: Store> {
     crop_yld: String,
     /// Progress reports, if wanted.
     pub progress: Option<crate::progress::Reporter>,
+    /// Write `channel_hyd_day.txt` (not a SWAT+ table: `docs/channel-hydraulics.md`) on every day
+    /// in `print.prt`'s print window, whether or not `channel_sd` prints daily.
+    pub channel_hyd: bool,
 }
 
 fn period_index(p: Option<Period>) -> usize {
@@ -165,6 +193,7 @@ impl<S: Store> TextTables<S> {
             fixes: false,
             crop_yld: print.crop_yld.clone(),
             progress: None,
+            channel_hyd: false,
         }
     }
 
@@ -468,6 +497,55 @@ impl<S: Store> OutputSink for TextTables<S> {
 
     fn cha_day(&mut self, d: Day, ich: usize, gis_id: i32, name: &str, w: &ChWat, stor: &Hyd, hin: &Hyd, hout: &Hyd, wtemp: f32) {
         self.cha_row("channel_sd", None, d, ich, gis_id, name, w, stor, hin, hout, Some(wtemp), false);
+        self.flush(CHUNK);
+    }
+
+    fn cha_hyd(&mut self, d: Day, ich: usize, gis_id: i32, name: &str, h: &swat_engine::channel::ChHyd) {
+        if !self.channel_hyd {
+            return;
+        }
+        let title = self.title.clone();
+        let out = self.sheet("channel_hyd", None, |o| {
+            let _ = writeln!(o, "{title}");
+            let _ = write!(o, "{KEYS}");
+            for (n, _) in CHANNEL_HYD {
+                let _ = write!(o, " {n:>14}");
+            }
+            let _ = writeln!(o);
+            let _ = write!(o, "{:width$}", "", width = KEYS.len());
+            for (_, u) in CHANNEL_HYD {
+                let _ = write!(o, " {u:>14}");
+            }
+            let _ = writeln!(o);
+        });
+        keys(out, d, ich, gis_id, name);
+        for v in [
+            h.out.flo_rate,
+            h.out.dep,
+            h.out.top_wid,
+            h.out.xsec_area,
+            h.out.wet_perim,
+            h.out.vel,
+            h.out.ttime,
+            h.inflow.flo_rate,
+            h.inflow.dep,
+            h.inflow.vel,
+            h.peak_flo,
+            h.peak.dep,
+            h.peak.vel,
+            h.vol_ch,
+            h.vol_fp,
+            h.bankfull_dep,
+            h.bankfull_wid,
+        ] {
+            out.push_str(&e15_4(v));
+        }
+        let _ = write!(out, "{:>15}", i32::from(h.out.dep > h.bankfull_dep));
+        let (d, v, w) = h.manning_out;
+        for x in [d, v, w] {
+            out.push_str(&e15_4(x));
+        }
+        out.push('\n');
         self.flush(CHUNK);
     }
 

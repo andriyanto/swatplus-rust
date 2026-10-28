@@ -64,7 +64,7 @@ Rice paddies (weir, ponding, puddling) and their validation are in [`docs/paddy.
 
 Where the run time goes, from a profile of Pessel, is in [`docs/performance.md`](docs/performance.md).
 
-Which output tables it writes, and how SWAT+ sums them into months, years and average annual values, is in [`docs/outputs.md`](docs/outputs.md).
+Which output tables it writes, and how SWAT+ sums them into months, years and average annual values, is in [`docs/outputs.md`](docs/outputs.md). With `run <folder> --channel-hyd` it also writes each channel's daily depth, width, velocity and storage from SWAT-DEG's rating curve, and a depth by Manning's formula on the channel's geometry, in `channel_hyd_day.txt` (not a SWAT+ table; [`docs/channel-hydraulics.md`](docs/channel-hydraulics.md)).
 
 The quirks that are plainly bugs can be corrected instead with `run <folder> --fix-swat`; the
 results then differ from SWAT+'s. They are listed in [`docs/swat-fixes.md`](docs/swat-fixes.md).
