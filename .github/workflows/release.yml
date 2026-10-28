@@ -71,4 +71,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/* --title "swatplus-rust $GITHUB_REF_NAME" --notes-file CHANGELOG.md
+          # A release made on GitHub first (with its notes) gets the files; otherwise it is made here.
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --title "swatplus-rust ${GITHUB_REF_NAME#v}" --notes-file CHANGELOG.md
+          fi
