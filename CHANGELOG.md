@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.2
+
+- **The source checks out on Windows**: `crates/swat-io/src/con.rs` (CON is a reserved name
+  there) is now `connect.rs`, the module still `con`. Release 1.0.1 built nothing for that
+  reason. CI checks the file names; the release builds each platform even when another fails.
+
 ## 1.0.1
 
 - **Reservoirs and wetlands without their `sediment.res` row** keep settling factors of 0, as

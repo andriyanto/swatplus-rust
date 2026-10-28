@@ -10,6 +10,8 @@ pub mod basin;
 pub mod cal;
 pub mod cio;
 pub mod climate;
+// `con` is a reserved file name on Windows: the module is `con`, its file `connect.rs`.
+#[path = "connect.rs"]
 pub mod con;
 pub mod hru;
 pub mod list;
