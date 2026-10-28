@@ -325,6 +325,35 @@ Genangan dataran banjir di atas DEM, untuk peta luas, kedalaman dan lama genanga
 5. Terain masukan dari T1, termasuk tabel subgrid, skenario terain dan ensembel terain.
 6. Hujan langsung di sel 2D (*rain-on-grid*) sebagai pilihan, dengan limpasan dari HRU SWAT+.
 
+**Kondisi awal dan asal air yang jelas.** Dua kelemahan yang sering terlihat di simulasi genangan:
+alur sungai dimulai kosong lalu "diisi" oleh hidrograf, dan sel rendah tiba-tiba tergenang tanpa
+jelas airnya dari mana. Penyebab yang umum: kondisi awal kering, satu elevasi muka air awal yang
+diberlakukan ke seluruh area 2D (semua sel di bawah elevasi itu langsung basah, walaupun tidak
+tersambung), hujan yang langsung jatuh di sel, dan peta kedalaman yang menginterpolasi muka air
+sampai ke cekungan di sebelah sel basah. Rencana engine ini:
+
+1. **Kondisi awal dari SWAT+:** simulasi kontinu SWAT+ sudah punya volume dan debit setiap saluran
+   pada hari mulai. Alur 1D dan sel 2D di alur diisi dari keadaan itu (diubah menjadi muka air lewat
+   kurva rating H1 atau profil tunak H2), bukan dari nol.
+2. **Pemanasan (*spin-up*) dan *hot start*:** run dimulai beberapa hari sebelum kejadian dengan
+   aliran dasar, atau dari berkas keadaan run sebelumnya, sehingga kejadian banjir dimulai dari
+   sungai yang sudah mengalir.
+3. **Muka air awal hanya untuk sel yang tersambung:** elevasi awal diberikan ke badan air (sungai,
+   danau, rawa) dan sel yang tersambung hidraulis dengannya, bukan ke semua sel di bawah elevasi
+   tertentu. Sel yang basah di awal dilaporkan.
+4. **Hujan lewat SWAT+, bukan hujan mentah:** bila *rain-on-grid* dipakai, yang masuk ke sel adalah
+   limpasan permukaan HRU (sudah dikurangi infiltrasi dan intersepsi), dan dapat dimatikan per area.
+5. **Pelacak asal air (*tracer*):** setiap sel mencatat bagian air yang berasal dari luapan sungai,
+   hujan lokal, aliran lateral, bangunan atau batas hilir (pasang surut, air balik), dengan waktu
+   tibanya. Peta "asal genangan" menjawab langsung dari mana air di setiap sel datang.
+6. **Neraca massa per sumber** di setiap langkah keluaran, sehingga air yang "muncul" tanpa sumber
+   terlihat sebagai galat.
+7. **Peta jujur:** pilihan tampilan nilai sel apa adanya, dan tampilan halus yang hanya mengisi
+   cekungan yang tersambung hidraulis dengan sel basah.
+
+- **Uji:** alur yang sudah berisi aliran dasar tetap tunak tanpa hidrograf masuk; cekungan tertutup
+  tanpa hujan tetap kering; jumlah air dari tracer sama dengan total neraca massa.
+
 **Keluaran dan visualisasi (setara RAS Mapper, dan lebih):**
 
 - Peta per langkah keluaran: kedalaman, elevasi muka air, kecepatan (besar dan arah), dan debit
