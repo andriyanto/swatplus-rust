@@ -72,6 +72,7 @@ flowchart LR
 | **T1** | Rekayasa terain di RustGIS: permukaan dari data ukur (penampang, profil memanjang, titik situasi) dipadukan dengan DEM; model 3D desain (SketchUp, BIM); DEM siap-hidrolika, skenario terain berversi, ketidakpastian | RAS Mapper *terrain modification*, dan lebih | Direncanakan; syarat H4, membantu H2–H3 |
 | **H4** | Genangan 2D di atas DEM, paralel, dengan keluaran peta ala RAS Mapper | HEC-RAS 2D | Direncanakan |
 | **V1** | Visualisasi 3D dan isometrik di RustGIS: muka air 3D di atas terain, animasi, penampang, web | RAS Mapper 3D, dan lebih | Direncanakan; fondasi 3D RustGIS sudah ada |
+| **A1** | Asisten AI RustGIS untuk SWAT+: buka, sunting, jalankan dan baca hasil model lewat chat; lalu kalibrasi, terain dan laporan (A2–A5) | — | Direncanakan; asisten dan crate SWAT+ di fork sudah ada |
 | **H5** | Kopling dua arah: air balik dan genangan kembali ke SWAT+ | — | Riset |
 | **H6** | Sistem prakiraan banjir: data waktu nyata, prakiraan hujan, asimilasi, ensembel | — | Tujuan jangka panjang |
 
@@ -445,6 +446,61 @@ ekstrusi berpencahayaan (bangunan), mode globe, dan *backend* GPU `wgpu` di apli
 Data rahasia (Batanghari, Pessel) hanya ditampilkan dan diekspor sebagai berkas lokal, tidak
 diterbitkan sebagai halaman web publik.
 
+### A1: asisten AI untuk SWAT+ (RustGIS)
+
+RustGIS sudah punya asisten AI (`crates/assistant`): model pilihan pengguna (Anthropic, OpenAI,
+akun ChatGPT, Gemini, OpenRouter, Ollama), skill dalam format Agent Skills, server MCP
+(`rustgis-cli mcp`) dan delegasi ke *coding agent* lewat ACP. Asisten bekerja **lewat perintah
+RustGIS**: setiap aksi satu langkah *undo*, dan aksi yang menyentuh berkas atau jaringan menunggu
+persetujuan pengguna. Jadi menambah kemampuannya berarti menambah **perintah** dan **skill**.
+
+Fork `andriyanto/rustgis` sudah punya model proyek SWAT+ (`crates/swat-model`: menyunting satu nilai
+tanpa mengubah byte lain) dan pembaca TxtInOut (`crates/swat-txtinout`), tetapi belum dipasang
+sebagai perintah. Kedua crate itu tidak ada di repo asli `opengeos/RustGIS`.
+
+1. **A1.0 Sinkronisasi fork** dengan `opengeos/RustGIS` (misalnya crate `keychain` yang baru), agar
+   pekerjaan A1 tidak bercabang jauh dari repo asli.
+2. **A1.1 Engine sebagai pustaka:** `swat-engine`, `swat-io` dan `swat-output` dari swatplus-rust
+   dipakai sebagai dependensi yang dikunci ke versi rilis, sehingga run berjalan di desktop dan di
+   browser (WASM) tanpa program terpisah. Run berjalan di latar; kemajuan dan pembatalan memakai
+   API langkah (E1).
+3. **A1.2 Perintah `swat.*`:**
+
+   | Kelompok | Perintah | Isi |
+   | --- | --- | --- |
+   | Proyek | `swat.open`, `swat.summary`, `swat.check` | Buka folder atau arsip TxtInOut; ringkasan (periode, jumlah HRU, saluran, waduk, akuifer); berkas yang hilang (`cio::missing`) dan isian yang di luar batas |
+   | Parameter | `swat.find`, `swat.get` | Cari parameter menurut nama, berkas, objek atau kelas (misalnya semua HRU sawah), lalu baca nilainya |
+   | Sunting | `swat.set`, `swat.set_many`, `swat.diff`, `swat.revert` | Ubah satu nilai, atau banyak sekaligus dengan aturan ganti, tambah atau kali relatif (seperti konvensi SWAT-CUP), dengan pemeriksaan batas; selisih terhadap aslinya; batalkan |
+   | Simpan | `swat.save` | Tulis hanya berkas yang berubah, byte lain tetap; perlu persetujuan |
+   | Run | `swat.run`, `swat.runs` | Jalankan mode asli atau `--fix-swat`, periode bisa diganti; riwayat run mencatat versi engine, selisih parameter dan sidik berkas, sehingga setiap hasil bisa diulang |
+   | Keluaran | `swat.output.list`, `swat.output.read`, `swat.balance`, `swat.compare` | Daftar tabel; baca tabel, objek, kolom dan periode dengan agregasi; neraca air DAS (hujan, ET, limpasan, perkolasi, aliran dasar); perbandingan dua run |
+   | Pengamatan | `swat.observed`, `swat.metrics` | Muat debit atau TMA terukur (CSV); NSE, KGE, PBIAS, R² terhadap saluran tertentu |
+   | Peta dan grafik | `swat.map`, `swat.chart` | Gabungkan keluaran dengan peta subDAS, HRU dan sungai (`Watershed/Shapes`) untuk peta tematik; hidrograf dan grafik neraca air |
+
+4. **A1.3 Skill:** `swat-model` (berkas, objek dan arti parameter), `swat-edit` (menyunting dengan
+   aman: batas, konfirmasi, selisih), `swat-run-results` (menjalankan, membaca hasil, dan memeriksa
+   kewajaran neraca air, misalnya rasio ET/hujan dan limpasan yang tidak masuk akal), dan
+   `swat-diagnose` (galat umum dan cara menelusurinya). Dokumentasi swatplus-rust (nota desain,
+   `swat-quirks.md`, `swat-fixes.md`) dimasukkan ke dokumentasi yang dicari asisten.
+5. **A1.4 Data rahasia:** asisten mengirim hasil perintah ke penyedia model. Proyek bisa ditandai
+   **rahasia** (misalnya Batanghari dan Pessel): asisten hanya menerima ringkasan dan statistik, tanpa
+   geometri dan deret lengkap, kecuali pengguna mengizinkan per permintaan. Pilihan lain adalah
+   model lokal lewat Ollama, sehingga data tidak keluar dari komputer.
+
+- **Uji:** setiap perintah diuji sendiri; proyek uji publik (`Osu_1hru`, `Ames_sub1`) dibuka, satu
+  parameter diubah, dijalankan, dan keluarannya sama dengan run engine langsung; simpan bolak-balik
+  memberi byte identik kecuali nilai yang diubah; uji percakapan dengan model tiruan (loop agen
+  RustGIS tanpa I/O sudah bisa diuji begitu); mode rahasia tidak pernah mengirim geometri atau deret.
+
+**Lanjutan, mengikuti fase:**
+
+| Butir | Isi | Fase |
+| --- | --- | --- |
+| **A2** Kalibrasi berbantuan AI | Analisis sensitivitas, usulan rentang parameter, run batch paralel, pemilihan terbaik dengan NSE/KGE terhadap debit atau TMA | F2, setelah mode paralel |
+| **A3** Rekayasa terain lewat chat | Perintah T1: data ukur ke permukaan, pemaduan dengan DEM, tanggul, galian, skenario terain | F2–F6, mengikuti T1 |
+| **A4** Interpretasi dan laporan | Membaca hasil, membuat peta dan grafik, menulis ringkasan teknis dari run dan skenario | F4 |
+| **A5** Hidrolika dan prakiraan lewat chat | Perintah H2–H4 dan H6: profil muka air, genangan, peta bahaya, status prakiraan | F3–F7 |
+
 ### H5: kopling dua arah
 
 Muka air hidrolika memengaruhi kembali SWAT+: air balik ke saluran hulu, genangan yang menyusup
@@ -497,6 +553,7 @@ flowchart TD
     HYD[H1 keluaran hidrolika]
     Z[T1.0 geometri Z/M]
     GS[hujan GSMaP, mode ilmiah]
+    A1[A1 asisten AI untuk SWAT+]
   end
   subgraph F2
     E2[E2 simpan dan muat keadaan]
@@ -528,6 +585,9 @@ flowchart TD
   F8[F8 H5 kopling dua arah]
   F9[F9 uji coba bersama instansi]
   E1 --> E2
+  E1 --> A1
+  A1 --> A2[F2 A2 kalibrasi berbantuan AI]
+  PAR --> A2
   E1 --> E3
   HYD --> RC
   Z --> DAT
@@ -555,8 +615,8 @@ flowchart TD
 | Fase | Isi | Repo | Bergantung pada | Hasil yang bisa dipakai atau diterbitkan |
 | --- | --- | --- | --- | --- |
 | **F0** | Merge PR #4 (optimasi) dan #5 (roadmap); rilis 1.0.4 | E | — | Engine ±10% lebih cepat, identik |
-| **F1** | (a) **E1 API langkah**, refaktor identik; (b) H0 mode paralel `--fix-swat`, dibangun di atas E1; (c) H1 tabel `channel_hyd_*`; (d) T1.0 geometri ber-Z dan M; (e) hujan GSMaP: pembaca, peta mode ilmiah, rata-rata per subDAS | E, E, E, G, G | b setelah a; c, d, e bebas | Engine yang bisa dijalankan per langkah; kalibrasi jauh lebih cepat (dipakai MPhil); kedalaman dan kecepatan per saluran; RustGIS membaca data ukur ber-Z; peta hujan waktu nyata Indonesia |
-| **F2** | (a) **E2 simpan dan muat keadaan**; (b) H0 `lu_change` dan `scen_lu.dtl`, diverifikasi terhadap SWAT+; (c) H1 kurva rating dari penampang survei; (d) T1.1 datum tinggi, mosaik DEMNAS; (e) T1.3 permukaan dari data ukur (CSV, shapefile/GeoPackage ber-Z, LandXML, DXF dengan label elevasi) dipadukan dengan DEM | E, E, E, G, G | F1a → a; F1c → c; F1d → d, e | *Hot start* dan *spin-up*; simulasi perubahan lahan; lengkung debit hidrolis di pos AWLR; DEM terkoreksi survei. **Naskah:** pemaduan data ukur dan DEM |
+| **F1** | (a) **E1 API langkah**, refaktor identik; (b) H0 mode paralel `--fix-swat`, dibangun di atas E1; (c) H1 tabel `channel_hyd_*`; (d) T1.0 geometri ber-Z dan M; (e) hujan GSMaP: pembaca, peta mode ilmiah, rata-rata per subDAS; (f) A1.0–A1.4 asisten AI untuk SWAT+: sinkronisasi fork, engine sebagai pustaka, perintah `swat.*`, skill, mode rahasia | E, E, E, G, G, G | b setelah a; c, d, e bebas; f bebas (kemajuan dan pembatalan run setelah a) | Engine yang bisa dijalankan per langkah; kalibrasi jauh lebih cepat (dipakai MPhil); kedalaman dan kecepatan per saluran; RustGIS membaca data ukur ber-Z; peta hujan waktu nyata Indonesia; model SWAT+ bisa dibuka, disunting, dijalankan dan dibaca lewat chat |
+| **F2** | (a) **E2 simpan dan muat keadaan**; (b) H0 `lu_change` dan `scen_lu.dtl`, diverifikasi terhadap SWAT+; (c) H1 kurva rating dari penampang survei; (d) T1.1 datum tinggi, mosaik DEMNAS; (e) T1.3 permukaan dari data ukur (CSV, shapefile/GeoPackage ber-Z, LandXML, DXF dengan label elevasi) dipadukan dengan DEM; (f) A2 kalibrasi berbantuan AI | E, E, E, G, G, G | F1a → a; F1c → c; F1d → d, e; F1b, F1f → f | *Hot start* dan *spin-up*; simulasi perubahan lahan; lengkung debit hidrolis di pos AWLR; DEM terkoreksi survei. **Naskah:** pemaduan data ukur dan DEM |
 | **F3** | (a) **E3 titik kopling**, dengan uji kopling "lewat"; (b) **E5 koreksi sub-harian** di `--fix-swat`; (c) H2 aliran tunak 1D; (d) alat penampang di layar dan penyunting terain; (e) T1.4–T1.5 batimetri berparameter, garis patah, bukaan struktur | E, E, E, G, G | F1a → a; F2c, F2e → c, e | Engine siap dikopling; muka air banjir rencana Q25–Q100, tinggi jagaan tanggul; pembandingan dengan HEC-RAS *steady* |
 | **F4** | (a) H3 Saint-Venant Preissmann, bangunan, kopling satu arah lewat E3, kondisi awal dari SWAT+; (b) V1 kamera isometrik dan animasi waktu (hasil 1D dan neraca air SWAT+) | E, G | F3a, F3b, F3c; fondasi 3D RustGIS | Hidrograf dan air balik di titik tinjau; animasi neraca air dan muka air 1D. **Naskah:** kopling SWAT+ dengan hidrolika 1D |
 | **F5** | (a) T1.2 DSM→DTM dan T1.9 subgrid; (b) H4 inersia lokal paralel, kondisi awal dari keadaan SWAT+ (E2), *spin-up*, tracer asal air, neraca massa per sumber, peta jujur, keluaran ala RAS Mapper; (c) keluaran engine: volume saluran pada tanggal mulai dan perubahan dasar alur SWAT-DEG; (d) V1 permukaan air 3D, partikel kecepatan, ekspor GeoTIFF dan video | G, E, E, G | F3e, F4a, F4b, F2a | Peta genangan, waktu tiba, lama dan bahaya; uji *benchmark* Environment Agency. **Naskah:** genangan 2D dengan pelacak asal air |
@@ -571,7 +631,7 @@ flowchart TD
   kopling dan prakiraan, dan paling aman dikerjakan sekarang, selagi validasi menjaga setiap nilai.
   Mode paralel dibangun di atasnya agar dua refaktor besar tidak bertabrakan di `run.rs`.
 - **F1 dan F2 melayani riset MPhil lebih dulu** (paralel, `channel_hyd`, kurva rating dari survei,
-  `lu_change`), sehingga riset tidak menunggu hidrolika.
+  `lu_change`, asisten SWAT+ dan kalibrasi berbantuan AI), sehingga riset tidak menunggu hidrolika.
 - **Semua butir E harus identik di mode asli**, dan masing-masing punya uji kesetaraannya sendiri
   (run per langkah, run yang disimpan lalu dilanjutkan, kopling "lewat", masukan dari memori),
   di samping validasi 37 skenario yang sudah ada.
