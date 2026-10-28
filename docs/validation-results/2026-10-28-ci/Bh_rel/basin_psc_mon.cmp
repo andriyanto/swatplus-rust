@@ -1,0 +1,19 @@
+basin_psc_mon.txt: 36 rows; columns compared: 18
+  ok       flo        values      36  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sed        values      36  mismatches      0  max abs 0.0001  max rel 2.94e-8
+  ok       orgn       values      36  mismatches      0  max abs 0.0120  max rel 4.42e-8
+  ok       sedp       values      36  mismatches      0  max abs 0.0006  max rel 2.21e-8
+  ok       no3        values      36  mismatches      0  max abs 0.0060  max rel 4.42e-8
+  ok       solp       values      36  mismatches      0  max abs 0.0030  max rel 2.85e-8
+  ok       chla       values      36  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       nh3        values      36  mismatches      0  max abs 0.0120  max rel 3.04e-8
+  ok       no2        values      36  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       cbod       values      36  mismatches      0  max abs 0.0500  max rel 1.36e-8
+  ok       dox        values      36  mismatches      0  max abs 0.0014  max rel 2.66e-8
+  ok       san        values      36  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sil        values      36  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       cla        values      36  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sag        values      36  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       lag        values      36  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       grv        values      36  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       null       values      36  mismatches      0  max abs 0.0000  max rel 1.79e-8

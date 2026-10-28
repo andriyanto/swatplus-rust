@@ -1,0 +1,26 @@
+hru_pw_mon.txt: 6624 rows; columns compared: 25
+  ok       lai        values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       bioms      values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       yield      values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       residue    values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sol_tmp    values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       strsw      values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       strsa      values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       strstmp    values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       strsn      values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       strsp      values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       strss      values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       nplt       values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       percn      values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       pplnt      values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       tmx        values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       tmn        values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       tmpav      values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       solarad    values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       wndspd     values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       rhum       values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       phubas0    values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       lai_max    values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       bm_max     values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       bm_grow    values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       c_gro      values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0

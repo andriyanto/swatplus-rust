@@ -1,0 +1,14 @@
+basin_ls_mon.txt: 12 rows; columns compared: 13
+  ok       sedyld     values      12  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sedorgn    values      12  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sedorgp    values      12  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       surqno3    values      12  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       lat3no3    values      12  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       surqsolp   values      12  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       usle       values      12  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sedminp    values      12  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       tileno3    values      12  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       lchlabp    values      12  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       tilelabp   values      12  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       satexn     values      12  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       percn      values       0  mismatches      0  max abs 0.0000  max rel 0.00e0

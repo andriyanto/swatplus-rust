@@ -1,0 +1,19 @@
+basin_psc_aa.txt: 1 rows; columns compared: 18
+  ok       flo        values       1  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sed        values       1  mismatches      0  max abs 0.0005  max rel 1.56e-8
+  ok       orgn       values       1  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sedp       values       1  mismatches      0  max abs 0.0010  max rel 3.12e-9
+  ok       no3        values       1  mismatches      0  max abs 0.0200  max rel 1.25e-8
+  ok       solp       values       1  mismatches      0  max abs 0.0200  max rel 1.56e-8
+  ok       chla       values       1  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       nh3        values       1  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       no2        values       1  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       cbod       values       1  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       dox        values       1  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       san        values       1  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sil        values       1  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       cla        values       1  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sag        values       1  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       lag        values       1  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       grv        values       1  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       null       values       1  mismatches      0  max abs 0.0000  max rel 3.57e-9

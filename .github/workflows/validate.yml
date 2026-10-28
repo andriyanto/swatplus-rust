@@ -15,6 +15,8 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: write
 jobs:
   validate:
     runs-on: ubuntu-24.04
@@ -86,3 +88,31 @@ jobs:
             rm -f runs/$scenario/fortran/*_day.txt runs/$scenario/rust/*_day.txt runs/$scenario/fortran/*_subday.txt runs/$scenario/rust/*_subday.txt
           done
           exit $status
+      - name: Keep the comparisons
+        if: always()
+        run: |
+          mkdir -p validation-logs
+          for d in runs/*/; do n=$(basename "$d"); mkdir -p validation-logs/$n; cp "$d"*.cmp validation-logs/$n/ 2>/dev/null || true; done
+          scripts/validation-summary.py validation-logs "Commit \`$GITHUB_SHA\`, run $GITHUB_RUN_ID, $(date -u +%Y-%m-%d)." > validation-logs/summary.md
+          cat validation-logs/summary.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validation-logs
+          path: validation-logs
+          retention-days: 90
+      # The latest run on main (or started by hand) also goes to the validation-logs branch, so the
+      # logs can be fetched with git for the archive the paper cites.
+      - name: Publish to the validation-logs branch
+        if: always() && github.event_name != 'pull_request'
+        continue-on-error: true
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd validation-logs
+          git init -q -b validation-logs
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add .
+          git commit -q -m "Validation logs of ${GITHUB_SHA:0:7} (run $GITHUB_RUN_ID)"
+          git push -f "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" validation-logs
