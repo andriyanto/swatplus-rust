@@ -58,7 +58,8 @@ flowchart LR
 - **Lapisan kopling**: memetakan saluran SWAT-DEG ke ruas hidrolika dan menyamakan langkah waktu
   (harian atau per jam di SWAT+, detik sampai menit di hidrolika).
 - **RustGIS**: menyiapkan masukan, yaitu penampang dari survei atau dipotong dari DEM (DEMNAS),
-  garis sungai, nilai *n* dari tata guna lahan, dan jaring 2D. RustGIS juga menampilkan hasilnya.
+  garis sungai, nilai *n* dari tata guna lahan, dan jaring 2D; merekayasa terain menjadi terain
+  siap-hidrolika dan terain skenario (T1). RustGIS juga menampilkan hasilnya.
 
 ## Tahapan
 
@@ -68,7 +69,8 @@ flowchart LR
 | **H1** | Keluaran hidrolika SWAT-DEG; kurva rating dari penampang survei | — | Berikutnya |
 | **H2** | Aliran tunak 1D: profil muka air dari penampang melintang | HEC-RAS *steady* | Direncanakan |
 | **H3** | Aliran tak tunak 1D dengan bangunan, kopling satu arah dengan SWAT+ | HEC-RAS *unsteady* 1D | Direncanakan |
-| **H4** | Genangan 2D di atas DEM, paralel | HEC-RAS 2D | Direncanakan |
+| **T1** | Rekayasa terain di RustGIS: DEM siap-hidrolika, skenario terain berversi, ketidakpastian | RAS Mapper *terrain modification*, dan lebih | Direncanakan; syarat H4, membantu H2–H3 |
+| **H4** | Genangan 2D di atas DEM, paralel, dengan keluaran peta ala RAS Mapper | HEC-RAS 2D | Direncanakan |
 | **H5** | Kopling dua arah: air balik dan genangan kembali ke SWAT+ | — | Riset |
 | **H6** | Sistem prakiraan banjir: data waktu nyata, prakiraan hujan, asimilasi, ensembel | — | Tujuan jangka panjang |
 
@@ -141,6 +143,90 @@ skema yang juga dipakai HEC-RAS 1D.
   solusi Ritter dan Stoker; kekekalan massa di setiap langkah; pembandingan dengan HEC-RAS
   *unsteady* pada ruas contoh.
 
+### T1: rekayasa terain (RustGIS)
+
+Model 2D hanya sebaik DEM-nya. DEMNAS adalah model permukaan: memuat atap, tajuk pohon dan sawit,
+tidak melihat dasar sungai di bawah air, dan sering kehilangan tanggul, jalan dan saluran yang
+sempit. T1 mengubahnya menjadi **terain siap-hidrolika**, dan menjadikan perubahan terain sebagai
+skenario yang bisa dihitung.
+
+RAS Mapper menyediakan modifikasi terain dasar: alur (*channel*) dari penampang, garis (tanggul atau
+jalan dengan elevasi tertentu) dan poligon (elevasi ditetapkan atau digeser). Itu berguna, tetapi
+terbatas: setiap modifikasi dibuat tangan satu per satu, tidak berparameter, tidak memuat
+ketidakpastian, dan tidak terhubung dengan proses di DAS. T1 ditulis asli dalam Rust di RustGIS,
+dan setiap operasinya berupa **resep yang tercatat** (bukan suntingan piksel yang hilang jejaknya),
+sehingga terain akhir bisa dibangun ulang, dibandingkan, dan diuji.
+
+**1. Fondasi: datum, mosaik, potong.**
+- Mosaik dan potong ubin DEMNAS (dan DEM global seperti FABDEM atau MERIT) menurut batas DAS.
+- Penyelarasan datum tegak: geoid DEMNAS (EGM2008 atau InaGeoid) terhadap BM lokal survei dan nol
+  papan duga AWLR. Selisihnya bisa puluhan sentimeter sampai beberapa meter, dan langsung menjadi
+  galat muka air.
+- Laporan mutu: lubang data, tepi ubin, artefak garis, dan selisih terhadap titik ikat.
+
+**2. Dari model permukaan ke model terain (DSM → DTM).**
+- Koreksi tajuk otomatis memakai **peta tutupan lahan** (yang sama dengan SWAT+) dan **tinggi
+  kanopi** dari produk satelit, dengan nilai koreksi per kelas yang bisa dikalibrasi.
+- Penyaringan bangunan dan objek dengan filter morfologi; titik ikat lapangan sebagai pembanding.
+- Untuk daerah perkotaan, bangunan bisa dipilih: dihapus (aliran lewat), dipertahankan sebagai
+  penghalang, atau diberi porositas.
+
+**3. Alur sungai dan batimetri.**
+- Alur dari penampang survei, diinterpolasi sepanjang garis sungai dengan sistem koordinat alur
+  (stasiun dan jarak dari as), bukan interpolasi biasa yang merusak bentuk alur di tikungan.
+- **Bentuk alur berparameter** bila penampang jarang atau tidak ada: trapesium, parabola, atau
+  bentuk dari lebar muka air citra dan kedalaman dari geometri hidraulik (lebar, kedalaman dan debit
+  saling terkait), sehingga semua ruas punya dasar yang masuk akal.
+- Profil memanjang dasar sungai yang dihaluskan dan dipaksa monoton bila perlu, dengan pengecualian
+  untuk bendung dan ambang.
+- Tikungan, pulau, cabang dan muara.
+
+**4. Garis dan struktur.**
+- Garis patah (*breakline*) untuk tanggul, jalan, rel, pematang sawah besar dan saluran irigasi:
+  elevasi puncak dari survei, dari DEM yang dihaluskan, atau ditetapkan; lebar dan kemiringan talud
+  diatur.
+- **Bukaan struktur:** jembatan, gorong-gorong dan pintu air memotong timbunan jalan atau tanggul,
+  dan dicatat sebagai struktur untuk H3–H4, bukan sekadar lubang di DEM.
+- Pemaksaan ketersambungan hidrologis (*breaching*) yang terkendali, sebagai pengganti pengisian
+  cekungan buta yang meratakan dataran banjir.
+- Perataan badan air (*hydro-flattening*) untuk danau, waduk dan rawa, dengan elevasi dari data
+  atau dari tepi.
+
+**5. Terain sebagai skenario.**
+- Terain rencana: tanggul baru atau ditinggikan, normalisasi alur, galian kolam retensi, sudetan,
+  tanggul jebol (lebar dan elevasi jebolan sebagai parameter), timbunan perumahan atau jalan baru.
+- Setiap skenario adalah lapisan resep di atas terain dasar, **berversi**, dengan peta selisih
+  elevasi dan volume galian dan timbunan.
+- Satu masukan ke H4 untuk membandingkan skenario: luas, kedalaman dan lama genangan sebelum dan
+  sesudah, dan volume pekerjaan tanah per skenario.
+
+**6. Terain yang berubah dan terain yang tidak pasti.**
+- **Perubahan dasar sungai dari sedimen:** degradasi dan agradasi alur yang dihitung SWAT-DEG
+  diterjemahkan menjadi perubahan elevasi dasar per ruas, sehingga terain bisa diperbarui antar
+  periode simulasi panjang.
+- **Ensembel terain:** galat DEM dan ketidakpastian batimetri dibuat sebagai sejumlah realisasi
+  terain, lalu dijalankan di H4. Hasilnya peta peluang genangan, bukan satu garis batas yang
+  terlihat pasti. Ensembel ini sejalan dengan ensembel hujan di H6.
+
+**7. Subgrid dan multi-resolusi.**
+- Informasi DEM resolusi halus (misalnya 1–8 m) dipertahankan di dalam sel 2D yang lebih besar
+  sebagai tabel elevasi–volume dan elevasi–luas per sel dan per sisi sel, seperti pendekatan
+  *subgrid* HEC-RAS 2D, sehingga model cepat tanpa kehilangan alur dan tanggul kecil.
+- Resolusi halus di alur dan pemukiman, kasar di dataran luas.
+
+**8. Penyuntingan dan pemeriksaan.**
+- Penyunting terain interaktif di RustGIS: profil memanjang dan melintang, sunting garis dan
+  poligon, pratinjau selisih seketika.
+- **Uji mutu otomatis** sebelum terain dipakai: selisih terhadap penampang survei dan titik ikat
+  (RMSE, bias), ketersambungan alur dari hulu ke hilir, cekungan palsu yang tersisa, dan tanggul
+  yang bocor.
+- Ekspor GeoTIFF dan tabel subgrid, sehingga terain yang sama bisa dipakai di HEC-RAS untuk
+  pembandingan.
+
+- **Uji:** terain sintetis dengan jawaban yang diketahui (alur trapesium, tanggul dengan bukaan);
+  volume galian dan timbunan terhadap hitungan analitik; penampang yang dipotong dari terain hasil
+  terhadap penampang survei masukan; dan genangan H4 di terain hasil terhadap bekas banjir.
+
 ### H4: genangan 2D
 
 Genangan dataran banjir di atas DEM, untuk peta luas, kedalaman dan lama genangan.
@@ -150,6 +236,23 @@ Genangan dataran banjir di atas DEM, untuk peta luas, kedalaman dan lama genanga
 2. Lalu persamaan air dangkal penuh dengan volume hingga, bila diperlukan untuk aliran cepat.
 3. Paralel di CPU sejak awal. GPU (`wgpu`) sebagai fitur opsional untuk grid besar.
 4. Kopling dengan H3: limpasan dari alur 1D ke sel 2D, dan kembali.
+5. Terain masukan dari T1, termasuk tabel subgrid, skenario terain dan ensembel terain.
+6. Hujan langsung di sel 2D (*rain-on-grid*) sebagai pilihan, dengan limpasan dari HRU SWAT+.
+
+**Keluaran dan visualisasi (setara RAS Mapper, dan lebih):**
+
+- Peta per langkah keluaran: kedalaman, elevasi muka air, kecepatan (besar dan arah), dan debit
+  per satuan lebar.
+- Peta ringkasan: genangan maksimum, kedalaman dan kecepatan maksimum, **waktu tiba** genangan,
+  **lama** genangan di atas ambang, dan **bahaya** (kedalaman × kecepatan, kelas bahaya untuk
+  orang, kendaraan dan bangunan).
+- Animasi pergerakan air di atas peta: kedalaman berwarna, panah atau partikel kecepatan, dan
+  hidrograf titik tinjau yang bergerak bersama peta.
+- Dari ensembel (T1, H6): **peta peluang genangan** dan waktu tiba dengan rentang ketidakpastian.
+- Perbandingan skenario: peta selisih kedalaman dan lama genangan antar skenario lahan (H0) dan
+  skenario terain (T1).
+- Ekspor GeoTIFF (dan COG), GeoPackage untuk batas genangan, video, dan tampilan web lewat WASM
+  sehingga peta dibuka di peramban tanpa instalasi.
 
 - **Uji:** solusi analitik (misalnya Thacker), dan rangkaian kasus uji baku untuk model 2D seperti
   *benchmark* Environment Agency Inggris (Néelz dan Pender, 2013); pembandingan dengan HEC-RAS 2D.
@@ -205,6 +308,10 @@ keputusan** bagi mereka, bukan sumber peringatan mandiri.
 | Data bangunan (bendung, jembatan, pintu) | | | ✓ | ✓ | ✓ |
 | TMA dan debit terukur (untuk uji) | ✓ | ✓ | ✓ | | ✓ |
 | Peta atau bekas genangan (untuk uji) | | | | ✓ | ✓ |
+| Titik ikat elevasi, BM, nol papan duga AWLR (untuk datum T1) | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Tanggul, jalan, rel, saluran, jembatan (garis dan elevasi puncak) | | | ✓ | ✓ | ✓ |
+| Tinggi kanopi dan bangunan (untuk DSM → DTM) | | | | ✓ | ✓ |
+| Rencana teknis (tanggul, normalisasi, kolam retensi) untuk skenario terain | | ✓ | ✓ | ✓ | |
 | Hujan dan TMA waktu nyata, prakiraan hujan dan arsipnya | | | | | ✓ |
 
 ## Hal sulit yang sudah diketahui
@@ -215,6 +322,9 @@ keputusan** bagi mereka, bukan sumber peringatan mandiri.
 - **Perbedaan skala waktu:** SWAT+ harian atau per jam, hidrolika detik sampai menit.
 - **Penampang dari DEM:** DEM tidak melihat dasar sungai di bawah air, sehingga penampang dari DEM
   perlu dikoreksi dengan survei atau dengan asumsi bentuk dasar.
+- **Terain:** galat DEM satu meter bisa mengubah luas genangan di dataran datar seperti hilir Batang
+  Hari jauh lebih besar daripada perbedaan antar-skema numerik. Karena itu T1 dan ensembel terain
+  sama pentingnya dengan solvernya.
 - **Verifikasi tanpa kode acuan:** kepercayaan dibangun dari banyak kasus uji kecil yang terbukti,
   bukan dari satu pembandingan besar.
 
@@ -232,9 +342,20 @@ menjadi bahan uji H1 dan H2.
   Hydrology*, 387, 33–45.
 - Brunner, G. W. (2016). *HEC-RAS River Analysis System: Hydraulic Reference Manual*. US Army Corps
   of Engineers, Hydrologic Engineering Center.
+- Casas, A., Benito, G., Thorndycraft, V. R., & Rico, M. (2006). The topographic data source of
+  digital terrain models as a key element in the accuracy of hydraulic flood modelling. *Earth
+  Surface Processes and Landforms*, 31, 444–456.
 - Chow, V. T. (1959). *Open-Channel Hydraulics*. McGraw-Hill.
 - Cunge, J. A., Holly, F. M., & Verwey, A. (1980). *Practical Aspects of Computational River
   Hydraulics*. Pitman.
+- Hawker, L., Uhe, P., Paulo, L., Sosa, J., Savage, J., Sampson, C., & Neal, J. (2022). A 30 m
+  global map of elevation with forests and buildings removed. *Environmental Research Letters*, 17,
+  024016.
+- Lindsay, J. B. (2016). Efficient hybrid breaching-filling sink removal methods for flow path
+  enforcement in digital elevation models. *Hydrological Processes*, 30, 846–857.
+- Merwade, V., Cook, A., & Coonrod, J. (2008). GIS techniques for creating river terrain models for
+  hydrodynamic modeling and flood inundation mapping. *Environmental Modelling & Software*, 23,
+  1300–1311.
 - Néelz, S., & Pender, G. (2013). *Benchmarking the latest generation of 2D hydraulic modelling
   packages*. Environment Agency, Bristol, UK.
 - Alfieri, L., Burek, P., Dutra, E., Krzeminski, B., Muraro, D., Thielen, J., & Pappenberger, F.
