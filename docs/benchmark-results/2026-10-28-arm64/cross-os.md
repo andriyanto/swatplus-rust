@@ -28,8 +28,9 @@ digit:
 | hru0171 | 5356.289 | 5356.288 | 1.9e-7 |
 | hru0183 | 1198.175 | 1198.174 | 8.3e-7 |
 | hru0277 | 873.799 | 873.798 | 1.1e-6 |
+| hru0865 | 175.490 | 175.489 | 5.7e-6 |
+| hru1490 | 1681.713 | 1681.712 | 5.9e-7 |
 
-(The table lists the 5 rows shown on screen; the other 2 differ the same way.)
 `swatplus-rust compare` reports no mismatch on this table.
 
 ## Why only `usle`
@@ -52,5 +53,5 @@ all water, sediment, nutrient, crop and aquifer tables agree byte for byte.
 
 The engine gives the same results on Linux and Windows. The only difference comes from
 the operating system's math library, on one diagnostic column, at the level of printing
-precision (at most 4.2e-6 relative). The same holds against SWAT+ Fortran: see the
+precision (at most 5.7e-6 relative). The same holds against SWAT+ Fortran: see the
 agreement tables in `README.md`.
