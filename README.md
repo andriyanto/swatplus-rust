@@ -43,6 +43,9 @@ cargo run --release -p swatplus-rust -- run testdata/Osu_1hru --out out --format
 cargo run --release -p swatplus-rust -- compare <SWAT+ hru_pw_day.txt> out/hru_pw_day.txt
 ```
 
+The plan beyond the port, towards a coupled hydrology–hydraulics engine (1D and 2D river
+hydraulics beside SWAT+), is in [`docs/roadmap.md`](docs/roadmap.md) (Indonesian).
+
 A design note in Indonesian, function by function (Markdown, Word and PDF), is in
 [`docs/nota-desain/`](docs/nota-desain/README.md).
 
