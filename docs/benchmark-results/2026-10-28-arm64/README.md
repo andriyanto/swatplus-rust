@@ -45,3 +45,9 @@ check that paired the columns by position; the water and nutrient balance tables
 SWAT+ writes more of, showed as *within tolerance* and with relative differences up to 2. The
 `compare/` files, which pair them by name, show no difference; `scripts/bench-agree.py` now pairs
 by name.
+
+## Linux and Windows
+
+The same v1.0.2 program, built for Linux and for Windows on ARM64, was run on the same
+laptop: 19 of 20 tables are identical byte for byte, and the last differs on 7 values of the
+diagnostic `usle` column, in the last printed digit. See [cross-os.md](cross-os.md).
