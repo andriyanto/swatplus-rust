@@ -1,7 +1,7 @@
 cff-version: 1.2.0
 message: "If you use swatplus-rust, please cite it as below."
 title: "swatplus-rust: SWAT+ translated from Fortran into Rust, verified bit for bit"
-version: 1.0.1
+version: 1.0.2
 date-released: 2026-10-28
 doi: 10.5281/zenodo.23721043
 identifiers:
