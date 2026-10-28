@@ -8,7 +8,6 @@ repository-code: "https://github.com/andriyanto/swatplus-rust"
 authors:
   - given-names: Andri
     family-names: Yanto
-    email: andriyanto.gis@gmail.com
     orcid: "https://orcid.org/0009-0008-4233-5913"
 keywords:
   - SWAT+
