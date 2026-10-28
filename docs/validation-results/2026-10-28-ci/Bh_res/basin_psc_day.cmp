@@ -1,19 +1,19 @@
 basin_psc_day.txt: 1096 rows; columns compared: 18
-  ok       flo        values    1096  mismatches      0  max abs 0.0250  max rel 2.85e-8
-  ok       sed        values    1096  mismatches      0  max abs 0.0000  max rel 4.22e-8
-  ok       orgn       values    1096  mismatches      0  max abs 0.0005  max rel 5.48e-8
-  ok       sedp       values    1096  mismatches      0  max abs 0.0000  max rel 3.42e-8
-  ok       no3        values    1096  mismatches      0  max abs 0.0002  max rel 5.48e-8
-  ok       solp       values    1096  mismatches      0  max abs 0.0001  max rel 3.42e-8
+  ok       flo        values    1096  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sed        values    1096  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       orgn       values    1096  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sedp       values    1096  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       no3        values    1096  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       solp       values    1096  mismatches      0  max abs 0.0000  max rel 0.00e0
   ok       chla       values    1096  mismatches      0  max abs 0.0000  max rel 0.00e0
-  ok       nh3        values    1096  mismatches      0  max abs 0.0005  max rel 3.80e-8
+  ok       nh3        values    1096  mismatches      0  max abs 0.0000  max rel 0.00e0
   ok       no2        values    1096  mismatches      0  max abs 0.0000  max rel 0.00e0
-  ok       cbod       values    1096  mismatches      0  max abs 0.0060  max rel 4.57e-8
-  ok       dox        values    1096  mismatches      0  max abs 0.0001  max rel 3.42e-8
+  ok       cbod       values    1096  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       dox        values    1096  mismatches      0  max abs 0.0000  max rel 0.00e0
   ok       san        values    1096  mismatches      0  max abs 0.0000  max rel 0.00e0
   ok       sil        values    1096  mismatches      0  max abs 0.0000  max rel 0.00e0
   ok       cla        values    1096  mismatches      0  max abs 0.0000  max rel 0.00e0
   ok       sag        values    1096  mismatches      0  max abs 0.0000  max rel 0.00e0
   ok       lag        values    1096  mismatches      0  max abs 0.0000  max rel 0.00e0
   ok       grv        values    1096  mismatches      0  max abs 0.0000  max rel 0.00e0
-  ok       null       values    1096  mismatches      0  max abs 0.0000  max rel 3.21e-8
+  ok       null       values    1096  mismatches      0  max abs 0.0000  max rel 0.00e0

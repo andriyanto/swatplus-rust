@@ -1,19 +1,19 @@
 recall_yr.txt: 6 rows; columns compared: 18
-  ok       flo        values       6  mismatches      0  max abs 0.0020  max rel 1.35e-8
-  ok       sed        values       6  mismatches      0  max abs 0.0004  max rel 2.71e-8
-  ok       orgn       values       6  mismatches      0  max abs 0.0000  max rel 1.08e-8
-  ok       sedp       values       6  mismatches      0  max abs 0.0000  max rel 1.13e-8
-  ok       no3        values       6  mismatches      0  max abs 0.0000  max rel 2.03e-8
-  ok       solp       values       6  mismatches      0  max abs 0.0000  max rel 9.64e-9
+  ok       flo        values       6  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sed        values       6  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       orgn       values       6  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sedp       values       6  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       no3        values       6  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       solp       values       6  mismatches      0  max abs 0.0000  max rel 0.00e0
   ok       chla       values       6  mismatches      0  max abs 0.0000  max rel 0.00e0
-  ok       nh3        values       6  mismatches      0  max abs 0.0000  max rel 1.08e-8
+  ok       nh3        values       6  mismatches      0  max abs 0.0000  max rel 0.00e0
   ok       no2        values       6  mismatches      0  max abs 0.0000  max rel 0.00e0
-  ok       cbod       values       6  mismatches      0  max abs 0.0002  max rel 1.35e-8
-  ok       dox        values       6  mismatches      0  max abs 0.0000  max rel 2.03e-8
+  ok       cbod       values       6  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       dox        values       6  mismatches      0  max abs 0.0000  max rel 0.00e0
   ok       san        values       6  mismatches      0  max abs 0.0000  max rel 0.00e0
   ok       sil        values       6  mismatches      0  max abs 0.0000  max rel 0.00e0
   ok       cla        values       6  mismatches      0  max abs 0.0000  max rel 0.00e0
   ok       sag        values       6  mismatches      0  max abs 0.0000  max rel 0.00e0
   ok       lag        values       6  mismatches      0  max abs 0.0000  max rel 0.00e0
   ok       grv        values       6  mismatches      0  max abs 0.0000  max rel 0.00e0
-  ok       null       values       6  mismatches      0  max abs 0.0000  max rel 7.14e-9
+  ok       null       values       6  mismatches      0  max abs 0.0000  max rel 0.00e0

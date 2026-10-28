@@ -1,19 +1,19 @@
 recall_mon.txt: 72 rows; columns compared: 18
-  ok       flo        values      72  mismatches      0  max abs 0.0009  max rel 5.41e-8
-  ok       sed        values      72  mismatches      0  max abs 0.0001  max rel 4.57e-8
-  ok       orgn       values      72  mismatches      0  max abs 0.0000  max rel 3.69e-8
-  ok       sedp       values      72  mismatches      0  max abs 0.0000  max rel 4.67e-8
-  ok       no3        values      72  mismatches      0  max abs 0.0000  max rel 5.50e-8
-  ok       solp       values      72  mismatches      0  max abs 0.0000  max rel 3.16e-8
+  ok       flo        values      72  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sed        values      72  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       orgn       values      72  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sedp       values      72  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       no3        values      72  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       solp       values      72  mismatches      0  max abs 0.0000  max rel 0.00e0
   ok       chla       values      72  mismatches      0  max abs 0.0000  max rel 0.00e0
-  ok       nh3        values      72  mismatches      0  max abs 0.0000  max rel 3.69e-8
+  ok       nh3        values      72  mismatches      0  max abs 0.0000  max rel 0.00e0
   ok       no2        values      72  mismatches      0  max abs 0.0000  max rel 0.00e0
-  ok       cbod       values      72  mismatches      0  max abs 0.0001  max rel 4.21e-8
-  ok       dox        values      72  mismatches      0  max abs 0.0000  max rel 5.50e-8
+  ok       cbod       values      72  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       dox        values      72  mismatches      0  max abs 0.0000  max rel 0.00e0
   ok       san        values      72  mismatches      0  max abs 0.0000  max rel 0.00e0
   ok       sil        values      72  mismatches      0  max abs 0.0000  max rel 0.00e0
   ok       cla        values      72  mismatches      0  max abs 0.0000  max rel 0.00e0
   ok       sag        values      72  mismatches      0  max abs 0.0000  max rel 0.00e0
   ok       lag        values      72  mismatches      0  max abs 0.0000  max rel 0.00e0
   ok       grv        values      72  mismatches      0  max abs 0.0000  max rel 0.00e0
-  ok       null       values      72  mismatches      0  max abs 0.0000  max rel 1.33e-8
+  ok       null       values      72  mismatches      0  max abs 0.0000  max rel 0.00e0

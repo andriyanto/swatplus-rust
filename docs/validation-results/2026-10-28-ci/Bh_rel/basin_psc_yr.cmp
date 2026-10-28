@@ -1,19 +1,19 @@
 basin_psc_yr.txt: 3 rows; columns compared: 18
-  ok       flo        values       3  mismatches      0  max abs 4.0000  max rel 1.25e-8
-  ok       sed        values       3  mismatches      0  max abs 0.0005  max rel 1.56e-8
-  ok       orgn       values       3  mismatches      0  max abs 0.0500  max rel 1.56e-8
-  ok       sedp       values       3  mismatches      0  max abs 0.0010  max rel 3.12e-9
-  ok       no3        values       3  mismatches      0  max abs 0.0200  max rel 1.25e-8
-  ok       solp       values       3  mismatches      0  max abs 0.0500  max rel 3.91e-8
+  ok       flo        values       3  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sed        values       3  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       orgn       values       3  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sedp       values       3  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       no3        values       3  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       solp       values       3  mismatches      0  max abs 0.0000  max rel 0.00e0
   ok       chla       values       3  mismatches      0  max abs 0.0000  max rel 0.00e0
   ok       nh3        values       3  mismatches      0  max abs 0.0000  max rel 0.00e0
   ok       no2        values       3  mismatches      0  max abs 0.0000  max rel 0.00e0
   ok       cbod       values       3  mismatches      0  max abs 0.0000  max rel 0.00e0
-  ok       dox        values       3  mismatches      0  max abs 0.0120  max rel 1.88e-8
+  ok       dox        values       3  mismatches      0  max abs 0.0000  max rel 0.00e0
   ok       san        values       3  mismatches      0  max abs 0.0000  max rel 0.00e0
   ok       sil        values       3  mismatches      0  max abs 0.0000  max rel 0.00e0
   ok       cla        values       3  mismatches      0  max abs 0.0000  max rel 0.00e0
   ok       sag        values       3  mismatches      0  max abs 0.0000  max rel 0.00e0
   ok       lag        values       3  mismatches      0  max abs 0.0000  max rel 0.00e0
   ok       grv        values       3  mismatches      0  max abs 0.0000  max rel 0.00e0
-  ok       null       values       3  mismatches      0  max abs 0.0000  max rel 7.14e-9
+  ok       null       values       3  mismatches      0  max abs 0.0000  max rel 0.00e0

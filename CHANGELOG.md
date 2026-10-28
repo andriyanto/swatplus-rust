@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.3
 
 - **Point source tables** (`recall_*`, `basin_psc_*`) write their values as SWAT+'s list-directed
   `write` does (gfortran's `1PG16.9E2`: nine significant digits), so the printed values are
