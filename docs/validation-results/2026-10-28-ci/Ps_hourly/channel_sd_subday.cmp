@@ -1,0 +1,2 @@
+channel_sd_subday.txt: 1946496 rows; columns compared: 1
+  ok       flo_out    values 1946496  mismatches      0  max abs 0.0000  max rel 0.00e0

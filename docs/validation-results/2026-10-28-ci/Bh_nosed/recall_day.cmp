@@ -1,0 +1,19 @@
+recall_day.txt: 2192 rows; columns compared: 18
+  ok       flo        values    2192  mismatches      0  max abs 0.0000  max rel 5.60e-8
+  ok       sed        values    2192  mismatches      0  max abs 0.0000  max rel 5.60e-8
+  ok       orgn       values    2192  mismatches      0  max abs 0.0000  max rel 5.38e-8
+  ok       sedp       values    2192  mismatches      0  max abs 0.0000  max rel 5.94e-8
+  ok       no3        values    2192  mismatches      0  max abs 0.0000  max rel 5.94e-8
+  ok       solp       values    2192  mismatches      0  max abs 0.0000  max rel 5.31e-8
+  ok       chla       values    2192  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       nh3        values    2192  mismatches      0  max abs 0.0000  max rel 5.38e-8
+  ok       no2        values    2192  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       cbod       values    2192  mismatches      0  max abs 0.0000  max rel 5.74e-8
+  ok       dox        values    2192  mismatches      0  max abs 0.0000  max rel 5.94e-8
+  ok       san        values    2192  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sil        values    2192  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       cla        values    2192  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sag        values    2192  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       lag        values    2192  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       grv        values    2192  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       null       values    2192  mismatches      0  max abs 0.0000  max rel 0.00e0

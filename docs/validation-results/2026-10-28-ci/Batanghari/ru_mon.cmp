@@ -1,0 +1,19 @@
+ru_mon.txt: 10224 rows; columns compared: 18
+  ok       flo        values   10224  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sed        values   10224  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       orgn       values   10224  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sedp       values   10224  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       no3        values   10224  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       solp       values   10224  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       chla       values   10224  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       nh3        values   10224  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       no2        values   10224  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       cbod       values   10224  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       dox        values   10224  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       san        values   10224  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sil        values   10224  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       cla        values   10224  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sag        values   10224  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       lag        values   10224  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       grv        values   10224  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       null       values   10224  mismatches      0  max abs 0.0000  max rel 0.00e0
