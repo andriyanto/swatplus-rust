@@ -64,12 +64,13 @@ flowchart LR
 
 | Tahap | Isi | Setara | Status |
 | --- | --- | --- | --- |
-| **H0** | Inti SWAT+ terverifikasi; optimasi; mode paralel reprodusibel | SWAT+ | 1.0.3 selesai; optimasi berjalan (`docs/performance.md`); paralel direncanakan |
+| **H0** | Inti SWAT+ terverifikasi; optimasi; mode paralel reprodusibel; perubahan tata guna lahan (`lu_change`) | SWAT+ | 1.0.3 selesai; optimasi berjalan (`docs/performance.md`); paralel dan `lu_change` direncanakan |
 | **H1** | Keluaran hidrolika SWAT-DEG; kurva rating dari penampang survei | — | Berikutnya |
 | **H2** | Aliran tunak 1D: profil muka air dari penampang melintang | HEC-RAS *steady* | Direncanakan |
 | **H3** | Aliran tak tunak 1D dengan bangunan, kopling satu arah dengan SWAT+ | HEC-RAS *unsteady* 1D | Direncanakan |
 | **H4** | Genangan 2D di atas DEM, paralel | HEC-RAS 2D | Direncanakan |
 | **H5** | Kopling dua arah: air balik dan genangan kembali ke SWAT+ | — | Riset |
+| **H6** | Sistem prakiraan banjir: data waktu nyata, prakiraan hujan, asimilasi, ensembel | — | Tujuan jangka panjang |
 
 ### H0: inti SWAT+, kecepatan, paralel
 
@@ -80,6 +81,20 @@ flowchart LR
 - **Berikutnya:** mode paralel di `--fix-swat`. Keadaan yang terbawa antar-HRU dijadikan milik
   masing-masing HRU, lalu HRU dihitung paralel setiap hari. Ujinya: hasil identik di berapa pun
   jumlah thread.
+
+**Perubahan tata guna lahan di tengah simulasi.** Saat ini setiap run memakai satu peta tata guna
+lahan, sehingga perbandingan skenario (lahan sekarang terhadap lahan rencana atau masa lalu) sudah
+bisa dilakukan dengan run terpisah. Perubahan lahan *selama* run belum di-port, yaitu aksi
+`lu_change` di tabel keputusan (`actions`) dan skenario `scen_lu.dtl` (`dtbl_scen_read`). Engine
+menolaknya dengan pesan jelas. Port-nya mengikuti aturan yang sama dengan bagian lain:
+terjemahan setia, diverifikasi nilai demi nilai terhadap SWAT+ dengan skenario uji baru, misalnya
+varian Batanghari dengan pembukaan hutan bertahap. Ini dibutuhkan untuk:
+
+- **simulasi jangka panjang yang realistis**, misalnya DAS yang hutannya berangsur menjadi sawit;
+- **kalibrasi yang jujur**: parameter (CN, ESCO, dan lainnya) dikalibrasi dengan tutupan lahan yang
+  sesuai dengan periode data debit, sehingga tidak "menyesuaikan diri" untuk menutupi selisih peta
+  lahan;
+- **memisahkan pengaruh iklim dan pengaruh lahan** pada perubahan debit dan sedimen.
 
 ### H1: keluaran hidrolika yang sudah dihitung
 
@@ -146,17 +161,51 @@ kembali ke tanah atau menjadi tampungan lahan basah, dan pengaruhnya pada tanama
 Ini bidang riset tersendiri. Di sini SWAT+ tidak lagi berjalan "seperti aslinya", jadi mode ini
 terpisah dan diberi tanda jelas.
 
+### H6: sistem prakiraan banjir
+
+Model yang terverifikasi baru satu bagian dari sistem prakiraan. Kesalahan terbesar dalam
+prakiraan banjir biasanya berasal dari prakiraan hujan, bukan dari modelnya. H6 menambahkan:
+
+| Komponen | Isinya |
+| --- | --- |
+| Data waktu nyata | Hujan dan TMA dari pos telemetri, diambil otomatis setiap jam atau lebih sering |
+| Prakiraan hujan | Prakiraan cuaca numerik (BMKG, produk global), radar, dan prakiraan jangka sangat pendek dari satelit |
+| Asimilasi data | Keadaan model (kadar air tanah, debit, muka air) diperbarui dengan pengamatan terbaru sebelum setiap prakiraan |
+| Prakiraan ensembel | Puluhan prakiraan dengan masukan hujan berbeda, sehingga hasilnya berupa peluang melewati ambang siaga |
+| Ambang dan keluaran | Batas siaga per pos dan lokasi rawan; peta genangan prakiraan (dari H4) |
+| Tata guna lahan terkini | Peta lahan diperbarui berkala dari citra satelit (lewat RustGIS) |
+| Operasi | Berjalan otomatis, tahan gangguan data, diawasi, dengan arsip setiap prakiraan |
+
+Syarat dan urutannya:
+
+1. **Langkah waktu per jam**: mode sub-harian SWAT+ dan hidrolika tak tunak (H3).
+2. **Verifikasi pada banjir historis** dengan hujan terukur (simulasi).
+3. **Uji ulang prakiraan (*hindcast*)** dengan arsip prakiraan hujan. Hasilnya: tingkat keberhasilan,
+   peringatan palsu, dan waktu tenggang yang realistis per DAS. DAS kecil dan curam memberi waktu
+   tenggang beberapa jam, sedangkan DAS besar seperti Batang Hari memberi waktu berhari-hari dari
+   hulu ke hilir.
+4. **Uji coba bersama instansi** di satu DAS, sebelum menjadi sistem operasional.
+
+Kecepatan dan paralelisme engine (H0) menjadi syarat praktis di sini: setiap kali data baru masuk,
+seluruh ensembel harus selesai dalam beberapa menit.
+
+Peringatan banjir resmi adalah kewenangan instansi pemerintah: BMKG (cuaca), BWS/BBWS dan Dinas
+SDA (sungai), BNPB/BPBD (penanggulangan bencana). Sistem ini dirancang sebagai **alat pendukung
+keputusan** bagi mereka, bukan sumber peringatan mandiri.
+
 ## Data yang dibutuhkan, per tahap
 
-| Data | H1 | H2 | H3 | H4 |
-| --- | :-: | :-: | :-: | :-: |
-| Model SWAT+ (TxtInOut) | ✓ | | ✓ | ✓ |
-| Penampang melintang hasil survei | ✓ (di pos) | ✓ | ✓ | |
-| DEM (DEMNAS) dan garis sungai | | penampang dari DEM | penampang dari DEM | ✓ |
-| Nilai *n* (dari tata guna lahan dan material dasar) | ✓ | ✓ | ✓ | ✓ |
-| Data bangunan (bendung, jembatan, pintu) | | | ✓ | ✓ |
-| TMA dan debit terukur (untuk uji) | ✓ | ✓ | ✓ | |
-| Peta atau bekas genangan (untuk uji) | | | | ✓ |
+| Data | H1 | H2 | H3 | H4 | H6 |
+| --- | :-: | :-: | :-: | :-: | :-: |
+| Model SWAT+ (TxtInOut) | ✓ | | ✓ | ✓ | ✓ |
+| Peta tata guna lahan per periode (untuk `lu_change`, kalibrasi dan skenario) | ✓ | | ✓ | ✓ | ✓ (terkini) |
+| Penampang melintang hasil survei | ✓ (di pos) | ✓ | ✓ | | |
+| DEM (DEMNAS) dan garis sungai | | penampang dari DEM | penampang dari DEM | ✓ | ✓ |
+| Nilai *n* (dari tata guna lahan dan material dasar) | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Data bangunan (bendung, jembatan, pintu) | | | ✓ | ✓ | ✓ |
+| TMA dan debit terukur (untuk uji) | ✓ | ✓ | ✓ | | ✓ |
+| Peta atau bekas genangan (untuk uji) | | | | ✓ | ✓ |
+| Hujan dan TMA waktu nyata, prakiraan hujan dan arsipnya | | | | | ✓ |
 
 ## Hal sulit yang sudah diketahui
 
@@ -188,5 +237,8 @@ menjadi bahan uji H1 dan H2.
   Hydraulics*. Pitman.
 - Néelz, S., & Pender, G. (2013). *Benchmarking the latest generation of 2D hydraulic modelling
   packages*. Environment Agency, Bristol, UK.
+- Alfieri, L., Burek, P., Dutra, E., Krzeminski, B., Muraro, D., Thielen, J., & Pappenberger, F.
+  (2013). GloFAS – global ensemble streamflow forecasting and flood early warning. *Hydrology and
+  Earth System Sciences*, 17, 1161–1175.
 
 (Rujukan ditulis dari ingatan; edisi dan nomor laporan perlu dicek sebelum dikutip.)
