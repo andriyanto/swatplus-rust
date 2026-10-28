@@ -158,6 +158,13 @@ terhubung dengan proses di DAS. T1 ditulis asli dalam Rust di RustGIS,
 dan setiap operasinya berupa **resep yang tercatat** (bukan suntingan piksel yang hilang jejaknya),
 sehingga terain akhir bisa dibangun ulang, dibandingkan, dan diuji.
 
+**0. Prasyarat di RustGIS: geometri ber-Z dan M.** Model geometri RustGIS (`Coord`) saat ini 2D.
+Pembaca shapefile sudah mengenali PointZ, PolylineZ dan sejenisnya, tetapi nilai Z dibuang
+(`crates/data/src/io.rs`), begitu juga pembaca WKT dan WKB (`interop.rs`, `wkb.rs`). Langkah
+pertama T1 adalah membawa Z dan M di model geometri, pembaca dan penulis (shapefile, GeoPackage,
+WKB, WKT), tanpa mengubah perilaku alat 2D yang sudah ada. **Uji:** baca–tulis bolak-balik
+shapefile dan GeoPackage ber-Z dan M dengan nilai identik; semua uji 2D lama tetap lulus.
+
 **1. Fondasi: datum, mosaik, potong.**
 - Mosaik dan potong ubin DEMNAS (dan DEM global seperti FABDEM atau MERIT) menurut batas DAS.
 - Penyelarasan datum tegak: geoid DEMNAS (EGM2008 atau InaGeoid) terhadap BM lokal survei dan nol
@@ -184,12 +191,27 @@ dipakai langsung, dan sambungannya dengan DEM berupa tepi tajam.
     keluaran alat ukur;
   - profil memanjang dasar sungai, puncak tanggul dan muka air saat pengukuran;
   - titik detail situasi dari *total station* atau GNSS RTK, dan titik pemeruman (*echo sounder*);
-  - gambar CAD (DXF) dan LandXML hasil olahan perangkat lunak survei, termasuk garis kontur dan
-    garis patah;
+  - **shapefile dan GeoPackage ber-Z**: PointZ untuk titik situasi, pemeruman dan BM; PolylineZ
+    untuk garis penampang, profil memanjang dan puncak tanggul; nilai M (bila ada) sebagai stasiun
+    alur. Elevasi juga bisa diambil dari **kolom atribut** (misalnya `ELEV`, `Z`, `TINGGI`) bila
+    geometrinya 2D;
+  - **LandXML**, jalur terbersih dari Civil 3D: *surface* (TIN dan garis patah), *alignment* (as
+    sungai berstasiun), dan penampang dari *sample line* tetap membawa artinya;
+  - **DXF** dari AutoCAD, Land Desktop, Civil 3D dan perangkat lain: titik dan polyline 3D, *3D
+    face*, kontur. DWG dibaca lewat ekspor ke DXF atau LandXML;
+  - **elevasi dari teks label**: gambar konsultan sering berisi titik atau garis 2D dengan elevasi
+    hanya sebagai teks. Teks terdekat ditempelkan ke objeknya, dan pasangan yang meragukan ditandai
+    untuk diperiksa;
+  - **gambar penampang 2D** (grafik stasiun–elevasi berskala di DXF) diubah menjadi data
+    stasiun–elevasi, lalu ditempatkan di peta dengan garis penampang atau patok di gambar situasi;
+  - CSV dan format keluaran Trimble Business Center, Leica Infinity, Topcon Magnet dan Global
+    Mapper;
   - metadata: datum tinggi, BM acuan, tanggal ukur, dan alat.
 - **Pemeriksaan sebelum dipakai:** penampang yang terbalik arah kiri–kanan, stasiun yang tidak
-  urut, BM yang berbeda antar-lembar, loncatan elevasi, dan penampang yang tidak memotong garis
-  sungai.
+  urut, BM yang berbeda antar-lembar, loncatan elevasi, penampang yang tidak memotong garis
+  sungai, dan Z bernilai 0 atau kode kosong (misalnya -9999) yang harus ditandai, bukan dipakai.
+  Datum tinggi dinyatakan pengguna per sumber, karena `.prj` dan DXF hanya memuat sistem koordinat
+  horizontal (atau tidak sama sekali).
 - **Pembuatan permukaan:**
   - interpolasi dalam **koordinat alur** (stasiun sepanjang sungai, jarak dari as), sehingga dasar
     sungai di antara dua penampang mengikuti alur di tikungan;
@@ -341,7 +363,7 @@ keputusan** bagi mereka, bukan sumber peringatan mandiri.
 | Model SWAT+ (TxtInOut) | ✓ | | ✓ | ✓ | ✓ |
 | Peta tata guna lahan per periode (untuk `lu_change`, kalibrasi dan skenario) | ✓ | | ✓ | ✓ | ✓ (terkini) |
 | Penampang melintang hasil survei | ✓ (di pos) | ✓ | ✓ | ✓ (lewat T1) | ✓ |
-| Profil memanjang, titik situasi, pemeruman, DXF/LandXML (untuk T1) | | ✓ | ✓ | ✓ | ✓ |
+| Profil memanjang, titik situasi, pemeruman; shapefile/GeoPackage ber-Z, LandXML, DXF (untuk T1) | | ✓ | ✓ | ✓ | ✓ |
 | DEM (DEMNAS) dan garis sungai | | penampang dari DEM | penampang dari DEM | ✓ | ✓ |
 | Nilai *n* (dari tata guna lahan dan material dasar) | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Data bangunan (bendung, jembatan, pintu) | | | ✓ | ✓ | ✓ |
