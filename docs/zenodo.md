@@ -1,5 +1,7 @@
 # Publishing a release on Zenodo
 
+Published: 1.0.1 on 28 October 2026, [10.5281/zenodo.23721044](https://doi.org/10.5281/zenodo.23721044); all versions [10.5281/zenodo.23721043](https://doi.org/10.5281/zenodo.23721043). Files restricted, shared on request.
+
 The repository is private, so a release goes to Zenodo by hand (Zenodo's GitHub integration
 archives public repositories). Its metadata is in `.zenodo.json` and `CITATION.cff`.
 
