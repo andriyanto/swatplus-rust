@@ -1,6 +1,6 @@
 # Publishing a release on Zenodo
 
-Published on 28 October 2026: 1.0.1 [10.5281/zenodo.23721044](https://doi.org/10.5281/zenodo.23721044), 1.0.2 [10.5281/zenodo.23728544](https://doi.org/10.5281/zenodo.23728544); all versions [10.5281/zenodo.23721043](https://doi.org/10.5281/zenodo.23721043). Files restricted, shared on request.
+Published on 28 October 2026: 1.0.1 [10.5281/zenodo.23721044](https://doi.org/10.5281/zenodo.23721044), 1.0.2 [10.5281/zenodo.23728544](https://doi.org/10.5281/zenodo.23728544); all versions [10.5281/zenodo.23721043](https://doi.org/10.5281/zenodo.23721043). 1.0.2's files open (Geoscientific Model Development requires the code in a public archive).
 
 The repository is private, so a release goes to Zenodo by hand (Zenodo's GitHub integration
 archives public repositories). Its metadata is in `.zenodo.json` and `CITATION.cff`.
@@ -12,8 +12,8 @@ archives public repositories). Its metadata is in `.zenodo.json` and `CITATION.c
 3. On zenodo.org: *New upload*. Files: the `.zip` and `docs/nota-desain/nota-desain.pdf`.
    Fill the form from `.zenodo.json`: resource type *Software*, title, creators, description,
    version, license *LGPL-2.1-only*, keywords, related work (*Is derived from* SWAT+).
-4. Access: *Restricted* files, with access requests on. The record and its DOI are public; the
-   files go to whom you grant them.
+4. Access: *Public* files. (1.0.1 was published with *Restricted* files and access requests;
+   from 1.0.2 they are open, as GMD's code policy needs.)
 5. *Publish*. The DOI goes into `CITATION.cff`, `.zenodo.json` (as `doi`) and the README.
 
 A new version later: *New version* on the record, the next tag's archive.
