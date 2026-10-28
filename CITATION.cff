@@ -14,6 +14,9 @@ identifiers:
   - type: doi
     value: 10.5281/zenodo.23728544
     description: "Version 1.0.2"
+  - type: doi
+    value: 10.5281/zenodo.23735240
+    description: "Version 1.0.3"
 license: LGPL-2.1-only
 repository-code: "https://github.com/andriyanto/swatplus-rust"
 authors:
