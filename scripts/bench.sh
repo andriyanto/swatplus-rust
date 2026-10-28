@@ -12,6 +12,9 @@
 #   END_YEAR=     if set, every scenario ends that year (a quicker run)
 #   WORK=...      where the runs go (on Windows: inside WSL, not under /mnt/c)
 #   RUST=...      swatplus-rust (default: target/release/swatplus-rust, built here)
+#   SAME_OUTPUT=1 print.prt asks only for the tables the port writes (no csv, management,
+#                 carbon or other outputs), so both engines write about the same: the time is
+#                 then mostly the simulation's, not the writing's
 set -euo pipefail
 cd "$(dirname "$0")/.."
 REPS=${REPS:-5}
@@ -49,12 +52,52 @@ echo "scenario,engine,rep,wall_s,user_s,sys_s,max_rss_kb,files,bytes" > "$csv"
   echo "fortran sha256: $(sha256sum "$FORTRAN" | cut -d' ' -f1)"
   echo "reps: $REPS"
   echo "end year: ${END_YEAR:-as in time.sim}"
+  echo "outputs: $([ -n "${SAME_OUTPUT:-}" ] && echo "only the port's tables (SAME_OUTPUT)" || echo "as in print.prt")"
 } > "$out/machine.txt"
 cat "$out/machine.txt"
 
 prepare() { # scenario dest
   rm -rf "$2"
   cp -r "testdata/$1" "$2"
+  if [ -n "${SAME_OUTPUT:-}" ]; then
+    python3 - "$2/print.prt" <<'PY'
+import sys
+PORT = {"reservoir", "basin_res", "recall", "basin_psc", "hru_wb", "hru_nb", "hru_ls", "hru_pw", "ru",
+        "aquifer", "channel_sd", "basin_wb", "basin_nb", "basin_ls", "basin_pw", "lsunit_wb", "lsunit_nb",
+        "lsunit_ls", "lsunit_pw", "basin_aqu", "basin_sd_cha"}
+# Under these headers, these columns go to n: csvout and cdfout; mgtout, hydcon and fdcout.
+OFF = {"csvout": (0, 2), "crop_yld": (1, 2, 3)}
+
+def set_cols(line, cols):
+    """Each whitespace-separated value numbered in `cols` becomes n, the columns kept."""
+    out, k, i = [], -1, 0
+    while i < len(line):
+        if line[i] in " \t\r":
+            out.append(line[i]); i += 1; continue
+        j = i
+        while j < len(line) and line[j] not in " \t\r":
+            j += 1
+        k += 1
+        tok = line[i:j]
+        out.append(("n" + " " * (len(tok) - 1)) if k in cols and tok in ("y", "l", "b", "a") else tok)
+        i = j
+    return "".join(out)
+
+path = sys.argv[1]
+lines = open(path, newline="").read().split("\n")
+objects = False
+for i, l in enumerate(lines):
+    t = l.split()
+    if objects and len(t) == 5 and t[0] not in PORT:
+        lines[i] = set_cols(l, (1, 2, 3, 4))
+    if t and t[0] == "objects":
+        objects = True
+    prev = lines[i - 1].split()[:1] if i else []
+    if prev and prev[0] in OFF:
+        lines[i] = set_cols(l, OFF[prev[0]])
+open(path, "w", newline="").write("\n".join(lines))
+PY
+  fi
   if [ -n "${END_YEAR:-}" ]; then
     awk -v y="$END_YEAR" 'NR == 3 { $4 = y; printf "%8s%10s%10s%10s%10s\n", $1, $2, $3, $4, $5; next } { print }' "$2/time.sim" > "$2/time.tmp"
     mv "$2/time.tmp" "$2/time.sim"
@@ -97,22 +140,8 @@ for s in "${scenarios[@]}"; do
   done
 done
 
-# Do the two engines agree here? Every table the port wrote against SWAT+'s, by
-# `swatplus-rust compare` (decision K12's tolerance), from each scenario's last runs.
-echo "scenario,table,result" > "$out/agreement.csv"
-for s in "${scenarios[@]}"; do
-  for t in "$WORK/$s-rust/out"/*.txt; do
-    [ -e "$t" ] || continue
-    f="$WORK/$s-fortran/$(basename "$t")"
-    [ -f "$f" ] || continue
-    if "$RUST" compare "$f" "$t" > "$out/$s-$(basename "$t" .txt).cmp" 2>&1; then r=ok; else r=mismatch; fi
-    cmp -s <(tail -n +2 "$f" | tr -s ' ') <(tail -n +2 "$t" | tr -s ' ') && r=identical
-    echo "$s,$(basename "$t" .txt),$r" >> "$out/agreement.csv"
-  done
-done
-echo "agreement: $(tail -n +2 "$out/agreement.csv" | cut -d, -f3 | sort | uniq -c | tr '\n' ' ')"
-
-python3 scripts/bench-summary.py "$csv" "$out/machine.txt" "$out/agreement.csv" > "$out/summary.md"
+# Do the two engines agree here? (scripts/bench-agree.py, which also writes summary.md)
+python3 scripts/bench-agree.py "$out" "$WORK" "$RUST" > /dev/null
 cat "$out/summary.md"
 echo
 echo "results: $out (runs.csv, agreement.csv, machine.txt, summary.md)"

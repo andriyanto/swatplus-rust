@@ -36,6 +36,11 @@ The second shows how much of the agreement and of the speed comes from the fusio
 SWAT+'s own Release build uses `-O` (gcc's `-O1`), as its `CMakeLists.txt` sets it; the port is
 built with `opt-level` 3 and thin LTO. Each is timed as its project builds it.
 
+`SAME_OUTPUT=1` turns off in `print.prt` everything but the tables the port writes (the CSV,
+management, carbon, hydrograph and flow duration outputs too), so both write about the same and
+the time is mostly the simulation's. `scripts/bench-agree.py <results folder>` checks the
+agreement again on the last runs (in `$WORK`), without timing anything.
+
 What to keep in mind when reading the numbers:
 
 - **SWAT+ writes more than the port**: besides the tables `print.prt` asks for, its logs and

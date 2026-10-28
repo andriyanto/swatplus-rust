@@ -35,12 +35,14 @@ for scen, x in speed:
 if len(sys.argv) > 3:
     agree = list(csv.DictReader(open(sys.argv[3])))
     print("\n## Agreement of the tables\n")
-    print("Each table the port wrote, against SWAT+'s from the same run: identical (the same text, spacing aside), ok (within decision K12's tolerance, `swatplus-rust compare`) or mismatch.\n")
-    print("| Scenario | Tables | Identical | Within tolerance | Mismatch |")
-    print("| --- | ---: | ---: | ---: | ---: |")
+    print("Each table the port wrote, against SWAT+'s from the same run: identical (every value the same number), within decision K12's tolerance, or mismatch; and the largest relative difference of any value.\n")
+    print("| Scenario | Tables | Identical | Within tolerance | Mismatch | Largest relative difference |")
+    print("| --- | ---: | ---: | ---: | ---: | ---: |")
     for scen in dict.fromkeys(a["scenario"] for a in agree):
-        rs = [a["result"] for a in agree if a["scenario"] == scen]
-        print(f"| {scen} | {len(rs)} | {rs.count('identical')} | {rs.count('ok')} | {rs.count('mismatch')} |")
+        ag = [a for a in agree if a["scenario"] == scen]
+        rs = [a["result"] for a in ag]
+        worst = max((float(a.get("max_rel_diff") or 0) for a in ag if a.get("max_rel_diff") not in (None, "", "nan")), default=0.0)
+        print(f"| {scen} | {len(rs)} | {rs.count('identical')} | {rs.count('ok')} | {rs.count('mismatch')} | {worst:.2g} |")
     bad = [f"{a['scenario']} {a['table']}" for a in agree if a["result"] == "mismatch"]
     if bad:
         print("\nMismatches: " + ", ".join(bad) + " (the .cmp files say where).")
