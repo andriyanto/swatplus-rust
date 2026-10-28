@@ -69,7 +69,7 @@ flowchart LR
 | **H1** | Keluaran hidrolika SWAT-DEG; kurva rating dari penampang survei | — | Berikutnya |
 | **H2** | Aliran tunak 1D: profil muka air dari penampang melintang | HEC-RAS *steady* | Direncanakan |
 | **H3** | Aliran tak tunak 1D dengan bangunan, kopling satu arah dengan SWAT+ | HEC-RAS *unsteady* 1D | Direncanakan |
-| **T1** | Rekayasa terain di RustGIS: permukaan dari data ukur (penampang, profil memanjang, titik situasi) dipadukan dengan DEM; DEM siap-hidrolika, skenario terain berversi, ketidakpastian | RAS Mapper *terrain modification*, dan lebih | Direncanakan; syarat H4, membantu H2–H3 |
+| **T1** | Rekayasa terain di RustGIS: permukaan dari data ukur (penampang, profil memanjang, titik situasi) dipadukan dengan DEM; model 3D desain (SketchUp, BIM); DEM siap-hidrolika, skenario terain berversi, ketidakpastian | RAS Mapper *terrain modification*, dan lebih | Direncanakan; syarat H4, membantu H2–H3 |
 | **H4** | Genangan 2D di atas DEM, paralel, dengan keluaran peta ala RAS Mapper | HEC-RAS 2D | Direncanakan |
 | **H5** | Kopling dua arah: air balik dan genangan kembali ke SWAT+ | — | Riset |
 | **H6** | Sistem prakiraan banjir: data waktu nyata, prakiraan hujan, asimilasi, ensembel | — | Tujuan jangka panjang |
@@ -219,7 +219,7 @@ dipakai langsung, dan sambungannya dengan DEM berupa tepi tajam.
     garis lurus antar-penampang;
   - TIN dengan garis patah untuk titik situasi (tanggul, tebing, saluran), lalu dirasterkan;
   - *kriging* sebagai pilihan, yang sekaligus memberi peta ketidakpastian, dipakai untuk ensembel
-    terain (bagian 7).
+    terain (bagian 8).
 - **Pemaduan dengan DEM:**
   - selisih datum antara survei dan DEM dihitung di daerah yang tumpang tindih dan dikoreksi lebih
     dulu;
@@ -252,7 +252,33 @@ dipakai langsung, dan sambungannya dengan DEM berupa tepi tajam.
 - Perataan badan air (*hydro-flattening*) untuk danau, waduk dan rawa, dengan elevasi dari data
   atau dari tepi.
 
-**6. Terain sebagai skenario.**
+**6. Model 3D desain (SketchUp, BIM, dan lainnya) sebagai modifikasi terain.**
+
+Desain kolam retensi, tanggul, bendung, jalan layang atau kawasan perumahan sering dibuat sebagai
+model 3D. Model itu bisa langsung menjadi modifikasi terain atau struktur, tanpa digambar ulang.
+
+- **Format:** berkas `.skp` tertutup dan SDK-nya hanya untuk Windows dan macOS, jadi jalurnya lewat
+  ekspor: COLLADA (`.dae`, tersedia di SketchUp versi gratis), KMZ (COLLADA beserta lokasi
+  geografisnya), OBJ, STL, glTF, dan IFC untuk model BIM dari Revit, Tekla, Civil 3D dan
+  sejenisnya.
+- **Penempatan di peta:** model SketchUp memakai koordinat lokal. Posisinya diambil dari lokasi
+  geografis model (*geo-location* di KMZ) atau dari dua titik ikat atau lebih (geser, putar, skala),
+  lalu elevasinya disamakan dengan datum terain. Satuan (inci, mm, m) diperiksa otomatis.
+- **Cara model dipakai, dipilih per objek:**
+  - **mengganti permukaan** (timbunan, tanggul, jalan di atas tanah): elevasi tertinggi model di
+    setiap sel menggantikan terain;
+  - **galian** (kolam retensi, saluran, sudetan): elevasi terendah permukaan dalam model menjadi
+    dasar baru, dan volume galian dihitung;
+  - **penghalang** (bangunan): sel ditutup atau diberi porositas, sesuai pilihan di bagian 2;
+  - **struktur di atas aliran** (jembatan, jalan layang, gedung berkolong): lantai dan pilar tidak
+    "ditempel" ke terain, karena air mengalir di bawahnya. Bentuknya diubah menjadi data struktur
+    untuk H3–H4: elevasi bawah lantai, lebar bukaan, dan letak pilar.
+- **Pemeriksaan:** model tidak tertutup, muka ganda atau terbalik, dan objek yang mengambang di atas
+  atau tenggelam di bawah terain.
+- **Uji:** model sintetis (kotak, prisma tanggul, kolam) dengan volume yang diketahui; volume galian
+  dan timbunan dari model terhadap volume di SketchUp; posisi titik ikat setelah penempatan.
+
+**7. Terain sebagai skenario.**
 - Terain rencana: tanggul baru atau ditinggikan, normalisasi alur, galian kolam retensi, sudetan,
   tanggul jebol (lebar dan elevasi jebolan sebagai parameter), timbunan perumahan atau jalan baru.
 - Setiap skenario adalah lapisan resep di atas terain dasar, **berversi**, dengan peta selisih
@@ -260,7 +286,7 @@ dipakai langsung, dan sambungannya dengan DEM berupa tepi tajam.
 - Satu masukan ke H4 untuk membandingkan skenario: luas, kedalaman dan lama genangan sebelum dan
   sesudah, dan volume pekerjaan tanah per skenario.
 
-**7. Terain yang berubah dan terain yang tidak pasti.**
+**8. Terain yang berubah dan terain yang tidak pasti.**
 - **Perubahan dasar sungai dari sedimen:** degradasi dan agradasi alur yang dihitung SWAT-DEG
   diterjemahkan menjadi perubahan elevasi dasar per ruas, sehingga terain bisa diperbarui antar
   periode simulasi panjang.
@@ -268,13 +294,13 @@ dipakai langsung, dan sambungannya dengan DEM berupa tepi tajam.
   terain, lalu dijalankan di H4. Hasilnya peta peluang genangan, bukan satu garis batas yang
   terlihat pasti. Ensembel ini sejalan dengan ensembel hujan di H6.
 
-**8. Subgrid dan multi-resolusi.**
+**9. Subgrid dan multi-resolusi.**
 - Informasi DEM resolusi halus (misalnya 1–8 m) dipertahankan di dalam sel 2D yang lebih besar
   sebagai tabel elevasi–volume dan elevasi–luas per sel dan per sisi sel, seperti pendekatan
   *subgrid* HEC-RAS 2D, sehingga model cepat tanpa kehilangan alur dan tanggul kecil.
 - Resolusi halus di alur dan pemukiman, kasar di dataran luas.
 
-**9. Penyuntingan dan pemeriksaan.**
+**10. Penyuntingan dan pemeriksaan.**
 - Penyunting terain interaktif di RustGIS: profil memanjang dan melintang, sunting garis dan
   poligon, pratinjau selisih seketika.
 - **Uji mutu otomatis** sebelum terain dipakai: selisih terhadap penampang survei dan titik ikat
