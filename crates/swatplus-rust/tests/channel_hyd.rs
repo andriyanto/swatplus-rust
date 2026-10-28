@@ -50,6 +50,9 @@ impl OutputSink for Both {
     fn cha_day(&mut self, _: Day, _: usize, _: i32, _: &str, _: &ChWat, _: &Hyd, _: &Hyd, hout: &Hyd, _: f32) {
         self.1 = Some(hout.flo);
     }
+    fn wants_cha_hyd(&self) -> bool {
+        true
+    }
     fn cha_hyd(&mut self, _: Day, _: usize, _: i32, _: &str, h: &ChHyd) {
         self.0.push((self.1.take().expect("the channel's day comes first"), *h));
     }

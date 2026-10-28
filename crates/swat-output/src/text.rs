@@ -500,6 +500,10 @@ impl<S: Store> OutputSink for TextTables<S> {
         self.flush(CHUNK);
     }
 
+    fn wants_cha_hyd(&self) -> bool {
+        self.channel_hyd
+    }
+
     fn cha_hyd(&mut self, d: Day, ich: usize, gis_id: i32, name: &str, h: &swat_engine::channel::ChHyd) {
         if !self.channel_hyd {
             return;

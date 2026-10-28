@@ -235,7 +235,8 @@ pub fn manning_depth(ch: &RcChannel, bw: f32, chss: f32, flo_rate: f32) -> (f32,
     while at(hi).0 < target && hi < 1.0e4 {
         hi *= 2.0;
     }
-    for _ in 0..100 {
+    // Halving 60 times leaves far less than an f32's precision of the depth.
+    for _ in 0..60 {
         let mid = 0.5 * (lo + hi);
         if at(mid).0 < target {
             lo = mid;
@@ -410,8 +411,8 @@ struct SdCh {
     ch_out: Hyd,
     /// The water temperature printed for this channel (corrected mode: its own).
     wtemp: f32,
-    /// The day's hydraulics, recorded for output (`ChHyd`).
-    hyd: ChHyd,
+    /// The day's estimated peak inflow rate and the curve there, kept for `ChHyd`.
+    peak: (f32, Rc),
     /// The channel as `sd_rating_curve` used it (side slope as adjusted) and its bottom width.
     rc_ch: (RcChannel, f32),
 }
@@ -554,7 +555,7 @@ impl Channels {
                 ch_in: Hyd::default(),
                 ch_out: Hyd::default(),
                 wtemp: 0.0,
-                hyd: ChHyd::default(),
+                peak: (0.0, Rc::default()),
                 rc_ch: (RcChannel { chw: 0.0, chd: 0.0, chs: 0.0, chl: 0.0, chn: 0.0, chss: 0.0, fps: 0.0, fpn: 0.0 }, 0.0),
             };
             if c.chs < 1.0e-9 {
@@ -655,9 +656,21 @@ impl Channels {
         interp_flo(&self.chs[ich].elev, flo_rate)
     }
 
-    /// Channel `ich`'s (0-based) hydraulics on the last day routed.
+    /// Channel `ich`'s (0-based) hydraulics on the last day routed, worked out when asked for
+    /// (only the peak is kept from the routing).
     pub fn hyd_of(&self, ich: usize) -> ChHyd {
-        self.chs[ich].hyd
+        let c = &self.chs[ich];
+        ChHyd {
+            out: rating_at(&c.elev, c.ch_out.flo),
+            inflow: rating_at(&c.elev, c.ch_in.flo),
+            peak_flo: c.peak.0,
+            peak: c.peak.1,
+            vol_ch: c.ch_stor.flo,
+            vol_fp: c.fp_stor.flo,
+            bankfull_dep: c.chd,
+            bankfull_wid: c.chw,
+            manning_out: manning_depth(&c.rc_ch.0, c.rc_ch.1, c.rc_ch.0.chss, c.ch_out.flo),
+        }
     }
 
     /// The day's output of channel `ich` (0-based): storage, inflow and outflow (flow in m3/s),
@@ -892,18 +905,7 @@ impl Channels {
             hd1.temp = tw;
         }
         self.chs[ich].ch_out = Hyd { flo: hd1.flo / 86400.0, ..hd1 };
-        let c = &mut self.chs[ich];
-        c.hyd = ChHyd {
-            out: rating_at(&c.elev, c.ch_out.flo),
-            inflow: rating_at(&c.elev, c.ch_in.flo),
-            peak_flo: peak.0,
-            peak: peak.1,
-            vol_ch: c.ch_stor.flo,
-            vol_fp: c.fp_stor.flo,
-            bankfull_dep: c.chd,
-            bankfull_wid: c.chw,
-            manning_out: manning_depth(&c.rc_ch.0, c.rc_ch.1, c.rc_ch.0.chss, c.ch_out.flo),
-        };
+        self.chs[ich].peak = peak;
         hd1
     }
 
