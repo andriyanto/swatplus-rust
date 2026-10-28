@@ -401,12 +401,30 @@ ekstrusi berpencahayaan (bangunan), mode globe, dan *backend* GPU `wgpu` di apli
    sebagai warna dan aliran di atas peta 3D, melanjutkan prototipe animasi neraca air Batanghari.
 6. **Ekspor:** gambar resolusi tinggi dan video (MP4) dari animasi, dengan jalur kamera yang bisa
    diatur (terbang menyusuri sungai), serta legenda, skala dan waktu di setiap bingkai.
-7. **Web lewat WASM:** tampilan yang sama di peramban tanpa instalasi, untuk berbagi hasil dengan
+7. **Hujan waktu nyata dan hujan yang realistis di peta:**
+   - **Sumber utama: GSMaP_NOW (JAXA)**, grid 0,1°, diperbarui setiap 30 menit, mencakup seluruh
+     Indonesia, unduhan lewat FTP setelah registrasi gratis. Cadangan: GPM IMERG *Early* (NASA,
+     jeda beberapa jam, akses terbuka dengan akun Earthdata), dan radar BMKG bila akses diberikan.
+     Latar awan dari citra Himawari (inframerah dan sifat awan P-Tree).
+   - **Mode ilmiah:** skala warna intensitas hujan per jam mengikuti kelas BMKG (ringan, sedang,
+     lebat, sangat lebat), akumulasi 3, 6, 24 jam, dan rata-rata per subDAS sebagai masukan SWAT+.
+   - **Mode realistis:** partikel hujan yang jatuh di tampilan 3D/isometrik, dengan kerapatan dan
+     kecepatan menurut intensitas sel; arah miring menurut angin dari prakiraan cuaca; lapisan awan
+     2,5D di ketinggian puncak awan Himawari dengan ketebalan dari ketebalan optiknya; tanah yang
+     tampak basah dan genangan dari H4 di bawahnya.
+   - **Animasi halus:** bingkai di antara dua data 30 menit diisi dengan adveksi (pergerakan sel
+     hujan dihitung dari dua bingkai berurutan). Bingkai sisipan diberi tanda sebagai tampilan,
+     bukan data, dan tidak dipakai sebagai masukan model.
+   - **Syarat data:** ketentuan JAXA meminta pemberitahuan sebelum gambar atau data GSMaP
+     disebarkan luas (misalnya di aplikasi atau situs publik), jadi distribusi RustGIS dengan
+     GSMaP perlu izin JAXA lebih dulu; tanpa itu, pengguna memakai akun FTP mereka sendiri.
+8. **Web lewat WASM:** tampilan yang sama di peramban tanpa instalasi, untuk berbagi hasil dengan
    instansi. Perlu dicek dulu sejauh mana jalur WASM RustGIS mendukung fitur 3D di atas.
 
 - **Uji:** jarak dan luas yang diukur di mode isometrik sama dengan nilai sebenarnya; muka air dan
   kedalaman yang ditampilkan sama dengan nilai sel keluaran (tidak ada interpolasi yang menambah air,
-  lihat "peta jujur" di H4); bingkai animasi cocok dengan langkah waktu keluaran; uji tangkapan layar
+  lihat "peta jujur" di H4); rata-rata hujan GSMaP per subDAS sama dengan hitungan langsung dari
+  grid; bingkai animasi cocok dengan langkah waktu keluaran; uji tangkapan layar
   (*snapshot*, seperti `egui_kittest` yang sudah dipakai RustGIS) untuk mencegah regresi tampilan.
 
 Data rahasia (Batanghari, Pessel) hanya ditampilkan dan diekspor sebagai berkas lokal, tidak
