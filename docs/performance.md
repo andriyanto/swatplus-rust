@@ -24,10 +24,10 @@ the laptop of the benchmark: 85 s for what took 30 s there).
 
 | Part | Instructions | Share of the year | Share of 11 years |
 | --- | ---: | ---: | ---: |
-| `Hru::day`: the HRUs' day (water, plants, nutrients, erosion) | 16.4 G | 49.6 % | 61 % |
-| `Network::day`: routing units, aquifers, channels, reservoirs | 8.0 G | 24.1 % | 30 % |
+| `Hru::day`: the HRUs' day (water, plants, nutrients, erosion) | 16.4 G | 49.6 % | 60 % |
+| `Network::day`: routing units, aquifers, channels, reservoirs | 8.0 G | 24.1 % | 29 % |
 |   of which the channels (`Channels::control`) | 6.2 G | 18.7 % | 23 % |
-|   of which `ch_temp`'s lagged air temperatures | 3.4 G | 10.3 % | 13 % |
+|   of which `ch_temp`'s lagged air temperatures | 3.4 G | 10.3 % | 12 % |
 | Output, period sums, regions, copies | 2.5 G | 7.4 % | 9 % |
 | Reading the project (`load_project`; the weather 3.5 G) | 4.4 G | 13.3 % | 1.5 % |
 | Setting up the HRUs (`init_hrus`) | 1.8 G | 5.6 % | 0.6 % |
@@ -64,7 +64,7 @@ Every output table of Pessel 2015–2025 is byte-identical to version 1.0.3's, f
 |   of which the plants | 4.9 G | 2.8 G | −44 % |
 | `Network::day` | 8.0 G | 4.7 G | −41 % |
 |   of which the channels | 6.2 G | 2.9 G | −53 % |
-| `malloc` + `free` | 3.9 G | 2.1 G | −46 % |
+| `malloc` + `free` | 3.9 G | 2.1 G | −45 % |
 | Reading and set-up | 6.2 G | 6.2 G | 0 |
 
 Wall time of Pessel 2015–2025, two runs each, alternating: 88.4 and 84.8 s before, 77.4 and 77.9 s
