@@ -5,6 +5,7 @@
 //! (`days_mat` 0) and annuals with days to maturity.
 
 use std::ops::{Add, Sub};
+use std::sync::Arc;
 
 use swat_model::table::Table;
 
@@ -259,7 +260,9 @@ impl PlantDb {
 /// A plant growing in an HRU (`pcom(j)%plcur`, `plg`, `plm`, `plstr` and `pl_mass(j)` for it).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Plant {
-    pub db: PlantDb,
+    /// Shared, read-only during the run: the daily routines take a handle to it (a reference
+    /// count, no copy) while they change the plant.
+    pub db: Arc<PlantDb>,
     /// The name `plant.ini` gives it, which operations refer to.
     pub cpnm: String,
     /// What its harvests yielded since the simulation started (`yield_tot`), and how many
@@ -591,7 +594,7 @@ pub fn plant_init(
     pl.lai_pot = db.blai;
     pl.rtfr = vec![0.0; layers.len()];
     pl.soil_rsd = vec![OrgMass::default(); layers.len()];
-    pl.db = db;
+    pl.db = Arc::new(db);
     if pl.gro {
         if pl.db.perennial() {
             pl.phuacc_p = if pl.phumat_p > 0.0 { init.fr_yrmat + (pl.phumat * init.phuacc) / pl.phumat_p } else { init.fr_yrmat };
