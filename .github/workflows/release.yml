@@ -50,7 +50,10 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
-          path: swatplus-rust-*.*
+          # The archive only: the folder's name has dots too (swatplus-rust-v1.0.2-…).
+          path: |
+            swatplus-rust-*.tar.gz
+            swatplus-rust-*.zip
 
   wasm:
     runs-on: ubuntu-latest
@@ -90,7 +93,8 @@ jobs:
         run: |
           # A release made on GitHub first (with its notes) gets the files; otherwise it is made here.
           if gh release view "$TAG" > /dev/null 2>&1; then
-            gh release upload "$TAG" dist/* --clobber
+            ls -l dist
+            gh release upload "$TAG" dist/*.tar.gz dist/*.zip --clobber
           else
-            gh release create "$TAG" dist/* --title "swatplus-rust ${TAG#v}" --notes-file CHANGELOG.md
+            gh release create "$TAG" dist/*.tar.gz dist/*.zip --title "swatplus-rust ${TAG#v}" --notes-file CHANGELOG.md
           fi
