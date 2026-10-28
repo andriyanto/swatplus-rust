@@ -1,0 +1,13 @@
+date: 2026-10-28T00:02:29Z
+host: Linux 6.18.33.2-microsoft-standard-WSL2 aarch64
+arch: aarch64
+cores: 12
+memory: 15.4 GB
+wsl: yes
+swatplus-rust: swatplus-rust 1.0.1 (9e558b1)
+rustc: rustc 1.99.1 (58cf8f9c3 2026-10-13)
+fortran: /home/andri/swatplus-fortran/build/swatplus-6f51536-gnu-lin_aarch64-Rel
+gfortran: GNU Fortran (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+fortran sha256: 7bb263785bad1f49c3485c99201b2dc639e10f0f90917091b364536d0e5f6c2d
+reps: 5
+end year: as in time.sim
