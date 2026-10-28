@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.0.1
+
+- **Reservoirs and wetlands without their `sediment.res` row** keep settling factors of 0, as
+  in SWAT+: all their sediment above the normal concentration settles, and no soluble N or P
+  (the port used 1 and 0.2). Validated by the new variants Bh_nosed and Ps_edge.
+- **`surlag` calibrated more than once** compounds, each change from the last one's value.
+- **`run --strict`** writes the tables in full (Parquet too) before exiting with code 3;
+  `--out` no longer takes the next flag as its folder.
+- **`compare`** counts NaN, infinities and asterisks against a number as a mismatch (they were
+  skipped); NaN equals NaN.
+- **Text tables** write NaN and the infinities as gfortran does in the `E15.4` columns
+  (`0.E+01` before).
+- Docs: `usgs_reg` and the newer reservoir releases are ported (the docs said not); Bh_urb is no
+  longer run by CI.
+
 ## 1.0.0 — engine 1.0
 
 The first release of the engine RustGIS runs. Its output tables are SWAT+'s (commit `6f51536`)

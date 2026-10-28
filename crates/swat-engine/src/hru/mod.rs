@@ -855,6 +855,8 @@ pub(crate) fn cal_elems(u: &swat_model::cal::CalUpdate, n: usize) -> Vec<usize> 
 /// made after the set-up only reaches what is computed from the parameter later: a slope's
 /// time of concentration and USLE LS keep the old slope.
 fn cal_conditions(project: &Project, hrus: &mut [Hru]) -> Result<(), String> {
+    // bsn_prm%surlag: each change starts from the last one's value.
+    let mut surlag = project.params.get("surlag").unwrap_or(4.0);
     for u in &project.cal_upd {
         let p = cal_parm(project, u);
         if !matches!(p.ob_typ.as_str(), "hru" | "sol" | "bsn" | "aqu") {
@@ -874,7 +876,7 @@ fn cal_conditions(project: &Project, hrus: &mut [Hru]) -> Result<(), String> {
             match u.name.as_str() {
                 "surlag" => {
                     // Once (one element), for all HRUs.
-                    let surlag = chg(project.params.get("surlag").unwrap_or(4.0));
+                    surlag = chg(surlag);
                     for h in hrus.iter_mut() {
                         h.brt = 1.0 - (-surlag / h.tconc).exp();
                     }

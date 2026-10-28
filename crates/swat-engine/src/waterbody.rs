@@ -11,6 +11,10 @@ pub struct WbPrm {
     /// Normal sediment (mg/L) and its settling factor.
     pub nsed: f32,
     pub sed_stlr_co: f32,
+    /// The share of the soluble N and P that settles with the rates below: 0.2 when the
+    /// `sediment.res` row is found, else 0 (SWAT+ sets them only then).
+    pub soln_stl_fr: f32,
+    pub solp_stl_fr: f32,
     pub ires1: i32,
     pub ires2: i32,
     pub nsetlr1: f32,
@@ -32,10 +36,14 @@ fn find<'a>(t: Option<&'a swat_model::table::Table>, name: &str) -> Option<(&'a 
 
 impl WbPrm {
     /// The rows named `sed` and `nut` (the type's defaults when not found).
+    ///
+    /// `res_read` and `wet_initial` set the settling factor and the soluble shares only when the
+    /// `sediment.res` row is found; without it they stay 0: all sediment above the normal
+    /// concentration (0) settles, and no soluble N or P.
     pub fn new(project: &Project, sed: &str, nut: &str) -> WbPrm {
-        let (nsed, d50) = match find(project.res_sed.as_ref(), sed) {
-            Some((t, r)) => (t.real(r, "nsed").unwrap_or(0.0), t.real(r, "d50").unwrap_or(0.0)),
-            None => (0.0, 0.0),
+        let (nsed, sed_stlr_co, stl_fr) = match find(project.res_sed.as_ref(), sed) {
+            Some((t, r)) => (t.real(r, "nsed").unwrap_or(0.0), (-0.184 * t.real(r, "d50").unwrap_or(0.0)).exp(), 0.2),
+            None => (0.0, 0.0, 0.0),
         };
         let nt = find(project.res_nut.as_ref(), nut);
         let nr = |f: &str, d: f32| nt.map(|(t, r)| t.real(r, f).unwrap_or(d)).unwrap_or(d);
@@ -44,7 +52,9 @@ impl WbPrm {
         let rate = |f: &str, d: f32| nt.map(|(t, r)| t.real(r, f).unwrap_or(d) / 365.0).unwrap_or(d);
         WbPrm {
             nsed,
-            sed_stlr_co: (-0.184 * d50).exp(),
+            sed_stlr_co,
+            soln_stl_fr: stl_fr,
+            solp_stl_fr: stl_fr,
             ires1: ni("ires1"),
             ires2: ni("ires2"),
             nsetlr1: rate("nsetlr1", 0.0),
@@ -107,7 +117,7 @@ pub fn res_nutrient(b: &mut Hyd, o: &mut Hyd, p: &WbPrm, mo: i32, tave: f32) {
     let phosk = k(conc_p, p.conc_pmin, psetlr, p.theta_p);
     let nitrosolk = k(conc_soln, p.conc_nmin, p.nsolr, p.theta_n);
     let phossolk = k(conc_solp, p.conc_pmin, p.psolr, p.theta_p);
-    let (soln_stl_fr, solp_stl_fr) = (0.2_f32, 0.2_f32);
+    let (soln_stl_fr, solp_stl_fr) = (p.soln_stl_fr, p.solp_stl_fr);
     b.solp *= 1.0 - phossolk * solp_stl_fr;
     b.sedp *= 1.0 - phosk;
     b.orgn *= 1.0 - nitrok;

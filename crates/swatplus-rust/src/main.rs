@@ -32,7 +32,7 @@ fn main() -> ExitCode {
             let mut it = opts.iter();
             while let Some(a) = it.next() {
                 match (*a, it.clone().next().copied()) {
-                    ("--out", Some(v)) => {
+                    ("--out", Some(v)) if !v.starts_with("--") => {
                         o.out = v;
                         it.next();
                     }
@@ -186,14 +186,15 @@ fn run(dir: &str, o: &RunArgs) -> ExitCode {
     if o.fixes {
         note("--fix-swat: SWAT+'s bugs corrected, results will differ from SWAT+ (docs/swat-fixes.md)");
     }
+    // With --strict, a part not simulated still gives complete tables, then exit code 3.
+    let mut strict_fail: Option<String> = None;
     match swat_engine::run::run_with(&project, &mut tables, swat_engine::run::RunOptions { fixes: o.fixes }) {
         Ok(report) => {
             let skipped: Vec<&String> =
                 [&report.hru_skipped, &report.channel_skipped, &report.routing_skipped].into_iter().flatten().collect();
             if o.strict && !skipped.is_empty() {
                 let why: Vec<&str> = skipped.iter().map(|s| s.as_str()).collect();
-                fail(&format!("not simulated: {}", why.join("; ")));
-                return ExitCode::from(3);
+                strict_fail = Some(format!("not simulated: {}", why.join("; ")));
             }
             if let Some(why) = report.hru_skipped {
                 note(&format!("HRU water balance not simulated ({why}); hru_wb_day.txt has precipitation only"));
@@ -241,6 +242,10 @@ fn run(dir: &str, o: &RunArgs) -> ExitCode {
         if o.text && json {
             emit(&format!("{{\"event\":\"table\",\"file\":{}}}", swat_output::progress::quote(name)));
         }
+    }
+    if let Some(why) = strict_fail {
+        fail(&why);
+        return ExitCode::from(3);
     }
     if json {
         emit(&format!("{{\"event\":\"done\",\"days\":{},\"seconds\":{:.3}}}", days.len(), started.elapsed().as_secs_f64()));

@@ -4,25 +4,25 @@ version = 4
 
 [[package]]
 name = "swat-engine"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "swat-model",
 ]
 
 [[package]]
 name = "swat-io"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "swat-model",
 ]
 
 [[package]]
 name = "swat-model"
-version = "1.0.0"
+version = "1.0.1"
 
 [[package]]
 name = "swat-output"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "swat-engine",
  "swat-model",
@@ -30,7 +30,7 @@ dependencies = [
 
 [[package]]
 name = "swat-wasm"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "swat-engine",
  "swat-io",
@@ -40,7 +40,7 @@ dependencies = [
 
 [[package]]
 name = "swatplus-rust"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "swat-engine",
  "swat-io",

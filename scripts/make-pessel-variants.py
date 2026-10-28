@@ -802,6 +802,31 @@ def ps_cal(base, dst):
     print(f"{os.path.basename(dst)}: {len(PS_CAL)} more calibration changes")
 
 
+def ps_edge(base, dst):
+    """A copy of project `base` with two edge cases of the input: every other wetland names a
+    `sediment.res` row that doesn't exist (its settling factors stay 0 in SWAT+), and the
+    surface runoff lag is calibrated twice, the second change from the first one's value."""
+    if os.path.exists(dst):
+        shutil.rmtree(dst)
+    shutil.copytree(base, dst)
+    p = lambda f: os.path.join(dst, f)
+    lines = read(p("wetland.wet"))
+    k = lines[1].split().index("sed")
+    missing = 0
+    for i in range(2, len(lines)):
+        t = lines[i].split()
+        if t and int(t[0]) % 2 == 1:
+            lines[i] = set_field(lines[i], k, "nosed")
+            missing += 1
+    write(p("wetland.wet"), lines)
+    lines = read(p("calibration.cal"))
+    rows = [l for l in lines[3:] if l.split()]
+    for typ, val in (("pctchg", 50.0), ("pctchg", -20.0)):
+        rows.append(f"{'surlag':<16}{typ:>10}{val:>14.5f}{0:>10}{0:>10}{0:>10}{0:>10}{0:>10}{0:>10}{0:>10}{0:>10}")
+    write(p("calibration.cal"), [lines[0], str(int(lines[1].split()[0]) + 2), lines[2]] + rows + [""])
+    print(f"{os.path.basename(dst)}: {missing} wetlands without their sediment row, surlag calibrated twice")
+
+
 def ps_harv(base, dst):
     """A copy of project `base` with every kind of harvest: oil palm's fruit bunches picked each
     month (a biomass harvest only, `harv`), the generic farmland's grain harvested, its stover
@@ -981,6 +1006,7 @@ if __name__ == "__main__":
     ps_urbhr(os.path.join(out, "Ps_hourly"), os.path.join(out, "Ps_urbhr"))
     ps_pet(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_pet"))
     ps_cal(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_cal"))
+    ps_edge(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_edge"))
     ps_harv(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_harv"))
     ps_peren(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_peren"))
     ps_hu(os.path.join(out, "Ps_coast"), os.path.join(out, "Ps_hu"))

@@ -382,8 +382,8 @@ From `et_pot`, `et_act`, `sq_daycn` and `hru_urban`; the port is in `swat-engine
   with more than 0.1 mm of effective rain (it is computed inside the curve number routine).
 - **Urban silt is in tonnes, not t/ha**: `hru_urban` multiplies the washed-off solids by the
   HRU area for the silt class, not for the sediment.
-- **`usgs_reg`, the USGS regression loads, is not ported**; any other `urb_ro` than it and
-  `buildup_washoff` adds no loads.
+- **An `urb_ro` other than `usgs_reg` and `buildup_washoff` adds no loads.** (`usgs_reg`, the
+  USGS regression loads, is ported: `docs/nutrients.md`.)
 
 ## Data names in `hru-data.hru` (phase 3e)
 

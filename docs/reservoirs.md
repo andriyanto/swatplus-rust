@@ -47,6 +47,12 @@ reaches it.
 - **`recall.rec` is read whether or not there are recall objects**, and stops at the first file
   that is missing or ends before its header (Osu_1hru's `RECYR.`).
 
-Not ported yet (`run` says so): reservoirs released by condition tables (`ctbl_`), the weir,
-measured (`meas`), lake and hydropower release options, reservoirs with lapse rates, subdaily
-recalls and diversions (negative recall flows).
+- **A reservoir whose `sediment.res` row isn't found keeps settling factors of 0** (`res_read`
+  sets them only when it finds the row): all its sediment above the normal concentration (then
+  0) settles at once, and none of its soluble N and P. The same for a wetland (`wet_initial`).
+  Validated by Bh_nosed and Ps_edge.
+
+The natural lake, Hanasaki and hydropower release options and the other newer ones are in
+[`engine1.md`](engine1.md). Not ported yet (`run` says so): reservoirs released by condition
+tables (`ctbl_`), the weir, measured (`meas`) and `irr-h06` releases, reservoirs with lapse
+rates, subdaily recalls and diversions (negative recall flows).

@@ -575,8 +575,8 @@ impl Hru {
 
     /// `pest_enrsb`, `nut_orgn` and `nut_psed`: the enrichment ratio, and the organic N and the
     /// P that leave with the sediment.
-    /// `orgn` is false with the carbon model on, which has its own routine (`nut_orgnc2`, not
-    /// ported yet) instead of `nut_orgn`.
+    /// `orgn` is false with the carbon model on, which has its own routine (`nut_orgnc2`, in
+    /// `carbon.rs`) instead of `nut_orgn`.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn sediment_nutrients(
         &mut self,
