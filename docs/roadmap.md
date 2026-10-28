@@ -65,7 +65,7 @@ flowchart LR
 
 | Tahap | Isi | Setara | Status |
 | --- | --- | --- | --- |
-| **H0** | Inti SWAT+ terverifikasi; optimasi; mode paralel reprodusibel; perubahan tata guna lahan (`lu_change`) | SWAT+ | 1.0.3 selesai; optimasi berjalan (`docs/performance.md`); paralel dan `lu_change` direncanakan |
+| **H0** | Inti SWAT+ terverifikasi; optimasi; revisi struktur E1–E5 (API langkah, simpan-muat keadaan, titik kopling, masukan dari memori, koreksi sub-harian); mode paralel reprodusibel; perubahan tata guna lahan (`lu_change`) | SWAT+ | 1.0.3 selesai; optimasi berjalan (`docs/performance.md`); paralel dan `lu_change` direncanakan |
 | **H1** | Keluaran hidrolika SWAT-DEG; kurva rating dari penampang survei | — | Berikutnya |
 | **H2** | Aliran tunak 1D: profil muka air dari penampang melintang | HEC-RAS *steady* | Direncanakan |
 | **H3** | Aliran tak tunak 1D dengan bangunan, kopling satu arah dengan SWAT+ | HEC-RAS *unsteady* 1D | Direncanakan |
@@ -98,6 +98,21 @@ varian Batanghari dengan pembukaan hutan bertahap. Ini dibutuhkan untuk:
   sesuai dengan periode data debit, sehingga tidak "menyesuaikan diri" untuk menutupi selisih peta
   lahan;
 - **memisahkan pengaruh iklim dan pengaruh lahan** pada perubahan debit dan sedimen.
+
+**Revisi struktur engine (E1–E5).** Tahap-tahap berikutnya tidak mengubah rumus SWAT+, tetapi
+mengubah cara engine dijalankan dan dihubungkan. Mode asli tetap harus identik dengan Fortran, dan
+CI memeriksanya di setiap PR.
+
+| Butir | Isi | Dibutuhkan oleh |
+| --- | --- | --- |
+| **E1** API langkah | `run_with` (`run.rs`) sekarang satu loop dari hari pertama sampai terakhir. Dipecah menjadi `Simulation::new`, `step` dan `state`, sehingga simulasi bisa dihentikan, diperiksa, diubah dan dilanjutkan. Murni refaktor: hasil identik | H3, H5, H6, mode paralel |
+| **E2** Simpan dan muat keadaan | Percabangan di memori (struktur `Hru`, `Channels` dan `Network` sudah `Clone`) lalu simpan ke berkas, untuk *spin-up*, *hot start* dan cabang ensembel. Uji: run yang dihentikan, disimpan, dimuat dan dilanjutkan identik dengan run tanpa henti | H4 (kondisi awal), H6 |
+| **E3** Titik kopling | Ruas yang ditandai menyerahkan aliran masuk dan lateral ke hidrolika, lalu menerima aliran keluarnya sebagai pengganti routing SWAT-DEG. Uji: kopling "lewat" (yang mengembalikan routing SWAT-DEG sendiri) identik dengan run tanpa kopling | H3, H4, H5 |
+| **E4** Masukan dari memori | Cuaca (misalnya hujan GSMaP per subDAS) dan peta lahan dimasukkan ke simulasi yang sedang berjalan, tidak hanya dari berkas. Uji: masukan dari memori yang sama dengan berkas memberi hasil identik | H6 |
+| **E5** Koreksi sub-harian | Mode per jam sudah identik dengan SWAT+ (`Ps_hourly`), tetapi mewarisi kebiasaannya (`docs/subdaily.md`): `channel_sd_subday` berisi volume per langkah walau berlabel m³/s, hidrograf routing unit Green-Ampt milik HRU terakhir, QUAL2E sekali sehari. Dikoreksi di `--fix-swat` dan dicatat di `docs/swat-fixes.md` | H3 per jam, H6 |
+
+Engine tidak memakai keadaan global (tidak ada `static mut`) dan data proyek hanya dibaca, sehingga
+banyak simulasi bisa berjalan bersamaan untuk ensembel tanpa revisi.
 
 ### H1: keluaran hidrolika yang sudah dihitung
 
@@ -471,60 +486,102 @@ keputusan** bagi mereka, bukan sumber peringatan mandiri.
 
 ## Fase pengerjaan
 
-Tahap H, T dan V di atas disusun menurut isinya. Bagian ini menyusunnya menurut **urutan kerja**:
+Tahap H, T, V dan E di atas disusun menurut isinya. Bagian ini menyusunnya menurut **urutan kerja**:
 apa yang harus ada lebih dulu, apa yang bisa dikerjakan bersamaan, dan apa yang bisa diterbitkan di
 akhir setiap fase. Repo: **E** = `swatplus-rust` (engine), **G** = RustGIS.
 
 ```mermaid
 flowchart TD
-  F1a[F1 H1 keluaran hidrolika SWAT-DEG] --> F2b[F2 H1 kurva rating dari penampang survei]
-  F1b[F1 H0 paralel --fix-swat] --> F7[F7 H6 prakiraan]
-  F1c[F1 T1.0 geometri Z/M] --> F2c[F2 T1.1 datum, mosaik]
-  F1c --> F2d[F2 T1.3 permukaan dari data ukur + DEM]
-  F1d[F1 hujan GSMaP, mode ilmiah] --> F7
-  F2a[F2 H0 lu_change] --> F7
-  F2c --> F2d
-  F2b --> F3a[F3 H2 aliran tunak 1D]
-  F2d --> F3a
-  F3b[F3 penampang di layar, penyunting terain] --> F3c[F3 T1.4–T1.5 batimetri, garis, struktur]
-  F2d --> F3c
-  F3a --> F4a[F4 H3 tak tunak 1D + kopling]
-  F4b[F4 V1 kamera isometrik, animasi waktu] --> F5c[F5 V1 muka air 3D]
-  F3c --> F5a[F5 T1.2, T1.9 DSM→DTM, subgrid]
-  F4a --> F5b[F5 H4 genangan 2D, kondisi awal, tracer]
-  F5a --> F5b
-  F5b --> F5c
-  F5b --> F6a[F6 T1.6–T1.8 model 3D, skenario, ensembel terain]
-  F5c --> F6b[F6 V1 hujan realistis, video, web]
-  F6a --> F7
-  F5b --> F8[F8 H5 kopling dua arah]
-  F7 --> F9[F9 uji coba bersama instansi]
+  subgraph F1
+    E1[E1 API langkah] --> PAR[H0 paralel --fix-swat]
+    HYD[H1 keluaran hidrolika]
+    Z[T1.0 geometri Z/M]
+    GS[hujan GSMaP, mode ilmiah]
+  end
+  subgraph F2
+    E2[E2 simpan dan muat keadaan]
+    LU[H0 lu_change]
+    RC[H1 kurva rating dari survei]
+    DAT[T1.1 datum, mosaik] --> SURF[T1.3 permukaan dari data ukur + DEM]
+  end
+  subgraph F3
+    E3[E3 titik kopling]
+    E5[E5 koreksi sub-harian]
+    H2[H2 aliran tunak 1D]
+    XS[penampang di layar, penyunting terain] --> BAT[T1.4–T1.5 batimetri, garis, struktur]
+  end
+  subgraph F4
+    H3[H3 tak tunak 1D + kopling]
+    ISO[V1 kamera isometrik, animasi]
+  end
+  subgraph F5
+    DTM[T1.2, T1.9 DSM→DTM, subgrid] --> H4[H4 genangan 2D, kondisi awal, tracer]
+    H4 --> W3D[V1 muka air 3D]
+  end
+  subgraph F6
+    SCN[T1.6–T1.8 model 3D, skenario, ensembel terain]
+    RAIN[V1 hujan realistis, video, web]
+  end
+  subgraph F7
+    E4[E4 masukan dari memori] --> H6[H6 prakiraan]
+  end
+  F8[F8 H5 kopling dua arah]
+  F9[F9 uji coba bersama instansi]
+  E1 --> E2
+  E1 --> E3
+  HYD --> RC
+  Z --> DAT
+  Z --> SURF
+  RC --> H2
+  SURF --> H2
+  SURF --> BAT
+  H2 --> H3
+  E3 --> H3
+  E5 --> H3
+  BAT --> DTM
+  H3 --> H4
+  E2 --> H4
+  ISO --> W3D
+  H4 --> SCN
+  W3D --> RAIN
+  PAR --> H6
+  GS --> H6
+  LU --> H6
+  SCN --> H6
+  H4 --> F8
+  H6 --> F9
 ```
 
 | Fase | Isi | Repo | Bergantung pada | Hasil yang bisa dipakai atau diterbitkan |
 | --- | --- | --- | --- | --- |
 | **F0** | Merge PR #4 (optimasi) dan #5 (roadmap); rilis 1.0.4 | E | — | Engine ±10% lebih cepat, identik |
-| **F1** | (a) H1 tabel `channel_hyd_*`; (b) H0 mode paralel `--fix-swat`; (c) T1.0 geometri ber-Z dan M; (d) hujan GSMaP: pembaca, peta mode ilmiah, rata-rata per subDAS | E, E, G, G | — (empat jalur bebas, bisa bersamaan) | Kedalaman dan kecepatan per saluran; kalibrasi jauh lebih cepat (dipakai MPhil); RustGIS membaca data ukur ber-Z; peta hujan waktu nyata Indonesia |
-| **F2** | (a) H0 `lu_change` dan `scen_lu.dtl`, diverifikasi terhadap SWAT+; (b) H1 kurva rating dari penampang survei; (c) T1.1 datum tinggi, mosaik DEMNAS; (d) T1.3 permukaan dari data ukur (CSV, shapefile/GeoPackage ber-Z, LandXML, DXF dengan label elevasi) dipadukan dengan DEM | E, E, G, G | F1a → b; F1c → c, d | Simulasi perubahan lahan; lengkung debit hidrolis di pos AWLR; DEM terkoreksi survei. **Naskah:** pemaduan data ukur dan DEM |
-| **F3** | (a) H2 aliran tunak 1D; (b) alat penampang di layar dan penyunting terain (dipakai V1 dan T1); (c) T1.4–T1.5 batimetri berparameter, garis patah, bukaan struktur | E, G, G | F2b, F2d | Muka air banjir rencana Q25–Q100, tinggi jagaan tanggul; pembandingan dengan HEC-RAS *steady* |
-| **F4** | (a) H3 Saint-Venant Preissmann, bangunan, kopling satu arah dengan SWAT+, kondisi awal dari SWAT+; (b) V1 kamera isometrik dan animasi waktu (untuk hasil 1D dan neraca air SWAT+) | E, G | F3a; fondasi 3D RustGIS | Hidrograf dan air balik di titik tinjau; animasi neraca air dan muka air 1D. **Naskah:** kopling SWAT+ dengan hidrolika 1D |
-| **F5** | (a) T1.2 DSM→DTM dan T1.9 subgrid; (b) H4 inersia lokal paralel, kondisi awal tersambung, *spin-up*, tracer asal air, neraca massa per sumber, peta jujur, keluaran ala RAS Mapper; (c) V1 permukaan air 3D, partikel kecepatan, ekspor GeoTIFF dan video | G, E, G | F3c, F4a, F4b | Peta genangan, waktu tiba, lama dan bahaya; uji *benchmark* Environment Agency. **Naskah:** genangan 2D dengan pelacak asal air |
+| **F1** | (a) **E1 API langkah**, refaktor identik; (b) H0 mode paralel `--fix-swat`, dibangun di atas E1; (c) H1 tabel `channel_hyd_*`; (d) T1.0 geometri ber-Z dan M; (e) hujan GSMaP: pembaca, peta mode ilmiah, rata-rata per subDAS | E, E, E, G, G | b setelah a; c, d, e bebas | Engine yang bisa dijalankan per langkah; kalibrasi jauh lebih cepat (dipakai MPhil); kedalaman dan kecepatan per saluran; RustGIS membaca data ukur ber-Z; peta hujan waktu nyata Indonesia |
+| **F2** | (a) **E2 simpan dan muat keadaan**; (b) H0 `lu_change` dan `scen_lu.dtl`, diverifikasi terhadap SWAT+; (c) H1 kurva rating dari penampang survei; (d) T1.1 datum tinggi, mosaik DEMNAS; (e) T1.3 permukaan dari data ukur (CSV, shapefile/GeoPackage ber-Z, LandXML, DXF dengan label elevasi) dipadukan dengan DEM | E, E, E, G, G | F1a → a; F1c → c; F1d → d, e | *Hot start* dan *spin-up*; simulasi perubahan lahan; lengkung debit hidrolis di pos AWLR; DEM terkoreksi survei. **Naskah:** pemaduan data ukur dan DEM |
+| **F3** | (a) **E3 titik kopling**, dengan uji kopling "lewat"; (b) **E5 koreksi sub-harian** di `--fix-swat`; (c) H2 aliran tunak 1D; (d) alat penampang di layar dan penyunting terain; (e) T1.4–T1.5 batimetri berparameter, garis patah, bukaan struktur | E, E, E, G, G | F1a → a; F2c, F2e → c, e | Engine siap dikopling; muka air banjir rencana Q25–Q100, tinggi jagaan tanggul; pembandingan dengan HEC-RAS *steady* |
+| **F4** | (a) H3 Saint-Venant Preissmann, bangunan, kopling satu arah lewat E3, kondisi awal dari SWAT+; (b) V1 kamera isometrik dan animasi waktu (hasil 1D dan neraca air SWAT+) | E, G | F3a, F3b, F3c; fondasi 3D RustGIS | Hidrograf dan air balik di titik tinjau; animasi neraca air dan muka air 1D. **Naskah:** kopling SWAT+ dengan hidrolika 1D |
+| **F5** | (a) T1.2 DSM→DTM dan T1.9 subgrid; (b) H4 inersia lokal paralel, kondisi awal dari keadaan SWAT+ (E2), *spin-up*, tracer asal air, neraca massa per sumber, peta jujur, keluaran ala RAS Mapper; (c) keluaran engine: volume saluran pada tanggal mulai dan perubahan dasar alur SWAT-DEG; (d) V1 permukaan air 3D, partikel kecepatan, ekspor GeoTIFF dan video | G, E, E, G | F3e, F4a, F4b, F2a | Peta genangan, waktu tiba, lama dan bahaya; uji *benchmark* Environment Agency. **Naskah:** genangan 2D dengan pelacak asal air |
 | **F6** | (a) T1.6 model 3D desain (SketchUp/KMZ, IFC), T1.7 skenario terain berversi, T1.8 perubahan dasar dari SWAT-DEG dan ensembel terain; (b) H4 persamaan air dangkal penuh, GPU opsional; (c) V1 hujan realistis, jalur kamera, tampilan web WASM | G, E, G | F5 | Perbandingan desain (kolam retensi, tanggul) dengan genangan dan volume pekerjaan tanah; peta peluang genangan |
-| **F7** | H6: langkah waktu per jam, data waktu nyata, asimilasi, ensembel hujan, *hindcast* banjir historis | E, G | F1b, F1d, F2a, F4a, F5b, F6a | Prakiraan berpeluang dengan waktu tenggang terukur per DAS. **Naskah:** *hindcast* |
-| **F8** | H5 kopling dua arah (riset) | E | F5b | Air balik dan genangan memengaruhi SWAT+ |
+| **F7** | (a) **E4 masukan dari memori**; (b) H6: langkah waktu per jam, data waktu nyata, asimilasi, ensembel hujan, *hindcast* banjir historis | E, E+G | F1b, F1e, F2a, F2b, F3b, F5b, F6a | Prakiraan berpeluang dengan waktu tenggang terukur per DAS. **Naskah:** *hindcast* |
+| **F8** | H5 kopling dua arah (riset), lewat E3 | E | F5b | Air balik dan genangan memengaruhi SWAT+ |
 | **F9** | Uji coba bersama instansi di satu DAS | — | F7 | Alat pendukung keputusan, bukan peringatan resmi |
 
 **Catatan urutan:**
 
+- **E1 (API langkah) dikerjakan pertama di engine.** Ia membuka mode paralel, simpan-muat keadaan,
+  kopling dan prakiraan, dan paling aman dikerjakan sekarang, selagi validasi menjaga setiap nilai.
+  Mode paralel dibangun di atasnya agar dua refaktor besar tidak bertabrakan di `run.rs`.
 - **F1 dan F2 melayani riset MPhil lebih dulu** (paralel, `channel_hyd`, kurva rating dari survei,
   `lu_change`), sehingga riset tidak menunggu hidrolika.
-- **Jalur RustGIS (T1, V1) dan jalur engine (H) berjalan bersamaan.** Titik temunya F3 (penampang
-  untuk H2), F5 (terain untuk H4) dan F7.
-- **T1.0 (geometri Z/M) adalah prasyarat terkecil yang membuka paling banyak**, jadi dikerjakan
-  paling awal di RustGIS. RustGIS sudah membaca DXF dengan teks dan elevasi per objek
-  (`crates/data/src/dxf.rs`), sehingga label elevasi tinggal dipasangkan.
-- **Setiap butir menjadi PR kecil sendiri** dengan ujinya, seperti selama port SWAT+. Fase dianggap
-  selesai bila semua ujinya lulus di CI, bukan bila fiturnya terlihat jalan.
+- **Semua butir E harus identik di mode asli**, dan masing-masing punya uji kesetaraannya sendiri
+  (run per langkah, run yang disimpan lalu dilanjutkan, kopling "lewat", masukan dari memori),
+  di samping validasi 37 skenario yang sudah ada.
+- **Jalur RustGIS (T1, V1) dan jalur engine (H, E) berjalan bersamaan.** Titik temunya F3
+  (penampang untuk H2), F5 (terain dan keadaan awal untuk H4) dan F7.
+- **T1.0 (geometri Z/M) adalah prasyarat terkecil yang membuka paling banyak** di RustGIS. RustGIS
+  sudah membaca DXF dengan teks dan elevasi per objek (`crates/data/src/dxf.rs`), sehingga label
+  elevasi tinggal dipasangkan.
+- **Setiap butir menjadi PR kecil sendiri** dengan ujinya. Fase dianggap selesai bila semua ujinya
+  lulus di CI, bukan bila fiturnya terlihat jalan.
 - Hujan GSMaP di F1 hanya mode ilmiah. Hujan realistis menunggu permukaan air 3D (F5) agar
   digambar sekali di atas kamera dan terain yang sama.
 
