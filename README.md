@@ -1,5 +1,7 @@
 # swatplus-rust
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23721043.svg)](https://doi.org/10.5281/zenodo.23721043)
+
 SWAT+ (Soil and Water Assessment Tool Plus) translated from Fortran into Rust, to run natively
 and in the browser (WebAssembly), and to be run by [RustGIS](https://github.com/andriyanto/rustgis).
 
@@ -65,6 +67,12 @@ results then differ from SWAT+'s. They are listed in [`docs/swat-fixes.md`](docs
 Batanghari and Pessel match SWAT+ bit for bit (phases 3d and 3e, [`docs/phase3.md`](docs/phase3.md)), and so does Osu_1hru, SWAT+'s rice paddy example: weir, ponding irrigation, puddling, manure and calibration, on every table over 14 years (phase 4). For a project the port can't
 simulate (a feature it refuses), `run` says why and passes that part's water on, or fails with
 `--strict`.
+
+## Citing
+
+Yanto, A. (2026). *swatplus-rust: SWAT+ translated from Fortran into Rust, verified bit for bit* (Version 1.0.1) [Computer software]. Zenodo. https://doi.org/10.5281/zenodo.23721044
+
+The DOI [10.5281/zenodo.23721043](https://doi.org/10.5281/zenodo.23721043) cites all versions (it resolves to the latest). The files on Zenodo are shared on request; `CITATION.cff` has the metadata.
 
 ## License
 

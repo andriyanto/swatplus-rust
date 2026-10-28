@@ -3,6 +3,14 @@ message: "If you use swatplus-rust, please cite it as below."
 title: "swatplus-rust: SWAT+ translated from Fortran into Rust, verified bit for bit"
 version: 1.0.1
 date-released: 2026-10-28
+doi: 10.5281/zenodo.23721043
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.23721043
+    description: "All versions (resolves to the latest)"
+  - type: doi
+    value: 10.5281/zenodo.23721044
+    description: "Version 1.0.1"
 license: LGPL-2.1-only
 repository-code: "https://github.com/andriyanto/swatplus-rust"
 authors:
