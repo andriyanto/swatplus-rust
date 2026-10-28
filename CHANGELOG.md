@@ -5,6 +5,8 @@
 - **The source checks out on Windows**: `crates/swat-io/src/con.rs` (CON is a reserved name
   there) is now `connect.rs`, the module still `con`. Release 1.0.1 built nothing for that
   reason. CI checks the file names; the release builds each platform even when another fails.
+- **Programs for ARM64**: Windows on ARM (Snapdragon laptops) and Linux on ARM (and WSL there),
+  besides Linux and Windows on x86-64 and macOS (Apple silicon and Intel).
 
 ## 1.0.1
 
