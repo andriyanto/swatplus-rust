@@ -469,6 +469,65 @@ Peringatan banjir resmi adalah kewenangan instansi pemerintah: BMKG (cuaca), BWS
 SDA (sungai), BNPB/BPBD (penanggulangan bencana). Sistem ini dirancang sebagai **alat pendukung
 keputusan** bagi mereka, bukan sumber peringatan mandiri.
 
+## Fase pengerjaan
+
+Tahap H, T dan V di atas disusun menurut isinya. Bagian ini menyusunnya menurut **urutan kerja**:
+apa yang harus ada lebih dulu, apa yang bisa dikerjakan bersamaan, dan apa yang bisa diterbitkan di
+akhir setiap fase. Repo: **E** = `swatplus-rust` (engine), **G** = RustGIS.
+
+```mermaid
+flowchart TD
+  F1a[F1 H1 keluaran hidrolika SWAT-DEG] --> F2b[F2 H1 kurva rating dari penampang survei]
+  F1b[F1 H0 paralel --fix-swat] --> F7[F7 H6 prakiraan]
+  F1c[F1 T1.0 geometri Z/M] --> F2c[F2 T1.1 datum, mosaik]
+  F1c --> F2d[F2 T1.3 permukaan dari data ukur + DEM]
+  F1d[F1 hujan GSMaP, mode ilmiah] --> F7
+  F2a[F2 H0 lu_change] --> F7
+  F2c --> F2d
+  F2b --> F3a[F3 H2 aliran tunak 1D]
+  F2d --> F3a
+  F3b[F3 penampang di layar, penyunting terain] --> F3c[F3 T1.4–T1.5 batimetri, garis, struktur]
+  F2d --> F3c
+  F3a --> F4a[F4 H3 tak tunak 1D + kopling]
+  F4b[F4 V1 kamera isometrik, animasi waktu] --> F5c[F5 V1 muka air 3D]
+  F3c --> F5a[F5 T1.2, T1.9 DSM→DTM, subgrid]
+  F4a --> F5b[F5 H4 genangan 2D, kondisi awal, tracer]
+  F5a --> F5b
+  F5b --> F5c
+  F5b --> F6a[F6 T1.6–T1.8 model 3D, skenario, ensembel terain]
+  F5c --> F6b[F6 V1 hujan realistis, video, web]
+  F6a --> F7
+  F5b --> F8[F8 H5 kopling dua arah]
+  F7 --> F9[F9 uji coba bersama instansi]
+```
+
+| Fase | Isi | Repo | Bergantung pada | Hasil yang bisa dipakai atau diterbitkan |
+| --- | --- | --- | --- | --- |
+| **F0** | Merge PR #4 (optimasi) dan #5 (roadmap); rilis 1.0.4 | E | — | Engine ±10% lebih cepat, identik |
+| **F1** | (a) H1 tabel `channel_hyd_*`; (b) H0 mode paralel `--fix-swat`; (c) T1.0 geometri ber-Z dan M; (d) hujan GSMaP: pembaca, peta mode ilmiah, rata-rata per subDAS | E, E, G, G | — (empat jalur bebas, bisa bersamaan) | Kedalaman dan kecepatan per saluran; kalibrasi jauh lebih cepat (dipakai MPhil); RustGIS membaca data ukur ber-Z; peta hujan waktu nyata Indonesia |
+| **F2** | (a) H0 `lu_change` dan `scen_lu.dtl`, diverifikasi terhadap SWAT+; (b) H1 kurva rating dari penampang survei; (c) T1.1 datum tinggi, mosaik DEMNAS; (d) T1.3 permukaan dari data ukur (CSV, shapefile/GeoPackage ber-Z, LandXML, DXF dengan label elevasi) dipadukan dengan DEM | E, E, G, G | F1a → b; F1c → c, d | Simulasi perubahan lahan; lengkung debit hidrolis di pos AWLR; DEM terkoreksi survei. **Naskah:** pemaduan data ukur dan DEM |
+| **F3** | (a) H2 aliran tunak 1D; (b) alat penampang di layar dan penyunting terain (dipakai V1 dan T1); (c) T1.4–T1.5 batimetri berparameter, garis patah, bukaan struktur | E, G, G | F2b, F2d | Muka air banjir rencana Q25–Q100, tinggi jagaan tanggul; pembandingan dengan HEC-RAS *steady* |
+| **F4** | (a) H3 Saint-Venant Preissmann, bangunan, kopling satu arah dengan SWAT+, kondisi awal dari SWAT+; (b) V1 kamera isometrik dan animasi waktu (untuk hasil 1D dan neraca air SWAT+) | E, G | F3a; fondasi 3D RustGIS | Hidrograf dan air balik di titik tinjau; animasi neraca air dan muka air 1D. **Naskah:** kopling SWAT+ dengan hidrolika 1D |
+| **F5** | (a) T1.2 DSM→DTM dan T1.9 subgrid; (b) H4 inersia lokal paralel, kondisi awal tersambung, *spin-up*, tracer asal air, neraca massa per sumber, peta jujur, keluaran ala RAS Mapper; (c) V1 permukaan air 3D, partikel kecepatan, ekspor GeoTIFF dan video | G, E, G | F3c, F4a, F4b | Peta genangan, waktu tiba, lama dan bahaya; uji *benchmark* Environment Agency. **Naskah:** genangan 2D dengan pelacak asal air |
+| **F6** | (a) T1.6 model 3D desain (SketchUp/KMZ, IFC), T1.7 skenario terain berversi, T1.8 perubahan dasar dari SWAT-DEG dan ensembel terain; (b) H4 persamaan air dangkal penuh, GPU opsional; (c) V1 hujan realistis, jalur kamera, tampilan web WASM | G, E, G | F5 | Perbandingan desain (kolam retensi, tanggul) dengan genangan dan volume pekerjaan tanah; peta peluang genangan |
+| **F7** | H6: langkah waktu per jam, data waktu nyata, asimilasi, ensembel hujan, *hindcast* banjir historis | E, G | F1b, F1d, F2a, F4a, F5b, F6a | Prakiraan berpeluang dengan waktu tenggang terukur per DAS. **Naskah:** *hindcast* |
+| **F8** | H5 kopling dua arah (riset) | E | F5b | Air balik dan genangan memengaruhi SWAT+ |
+| **F9** | Uji coba bersama instansi di satu DAS | — | F7 | Alat pendukung keputusan, bukan peringatan resmi |
+
+**Catatan urutan:**
+
+- **F1 dan F2 melayani riset MPhil lebih dulu** (paralel, `channel_hyd`, kurva rating dari survei,
+  `lu_change`), sehingga riset tidak menunggu hidrolika.
+- **Jalur RustGIS (T1, V1) dan jalur engine (H) berjalan bersamaan.** Titik temunya F3 (penampang
+  untuk H2), F5 (terain untuk H4) dan F7.
+- **T1.0 (geometri Z/M) adalah prasyarat terkecil yang membuka paling banyak**, jadi dikerjakan
+  paling awal di RustGIS. RustGIS sudah membaca DXF dengan teks dan elevasi per objek
+  (`crates/data/src/dxf.rs`), sehingga label elevasi tinggal dipasangkan.
+- **Setiap butir menjadi PR kecil sendiri** dengan ujinya, seperti selama port SWAT+. Fase dianggap
+  selesai bila semua ujinya lulus di CI, bukan bila fiturnya terlihat jalan.
+- Hujan GSMaP di F1 hanya mode ilmiah. Hujan realistis menunggu permukaan air 3D (F5) agar
+  digambar sekali di atas kamera dan terain yang sama.
+
 ## Data yang dibutuhkan, per tahap
 
 | Data | H1 | H2 | H3 | H4 | H6 |
