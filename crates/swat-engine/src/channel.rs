@@ -278,6 +278,10 @@ pub struct Channels {
     /// `ch_rtmusk`'s inflow of a step (`inflo` has the save attribute): kept from the last step
     /// computed, of any channel, when a channel has no inflow.
     inflo: f32,
+    /// `ch_temp`'s lagged air temperatures (surface, lateral, groundwater, snow) for the day, by
+    /// temperature gage (its address): they depend on the gage and the day only, so they are
+    /// summed once per gage instead of once per channel, in the same order (same results).
+    air_lags: Vec<(usize, i32, i32, [f32; 4])>,
 }
 
 impl Channels {
@@ -497,7 +501,18 @@ impl Channels {
             .collect();
         let ru_elem_is_hru = project.ru_elements.iter().map(|e| e.obtyp == "hru").collect();
         let step = project.time.step.max(1) as usize;
-        Ok(Channels { chs, b, gra: 0.0, wtemp: 0.0, ru_hrus, ru_elem_is_hru, step, dtm: 1440.0 / step as f32, inflo: 0.0 })
+        Ok(Channels {
+            chs,
+            b,
+            gra: 0.0,
+            wtemp: 0.0,
+            ru_hrus,
+            ru_elem_is_hru,
+            step,
+            dtm: 1440.0 / step as f32,
+            inflo: 0.0,
+            air_lags: Vec::new(),
+        })
     }
 
     /// `rcurv_interp_flo` on channel `ich`'s rating curve.
@@ -1013,42 +1028,19 @@ impl Channels {
         let tw_local = match cx.tgage {
             None => tw_def,
             Some(g) => {
-                let jday = cx.jday as f32;
-                let yrs_to_start = cx.yrs - g.yrs_start;
-                let avg = |lag0: f32| -> f32 {
-                    let lag = if cx.yrs == 1 { jday.min(lag0) } else { lag0 };
-                    let (mx, mn) = if jday <= lag && yrs_to_start > 1 {
-                        let a = (jday + 365.0 - lag + 1.0) as i32;
-                        let s = |f: &dyn Fn(i32, i32) -> f32| {
-                            let mut s1 = 0.0_f32;
-                            for d in 1..=cx.jday {
-                                s1 += f(d, yrs_to_start);
-                            }
-                            let mut s2 = 0.0_f32;
-                            for d in a..=365 {
-                                s2 += f(d, yrs_to_start - 1);
-                            }
-                            (s1 + s2) / lag
-                        };
-                        (s(&|d, y| g.value(d, y)), s(&|d, y| g.value2(d, y)))
-                    } else {
-                        let lo = 1.max((jday - lag + 1.0) as i32);
-                        let hi = jday as i32;
-                        let s = |f: &dyn Fn(i32, i32) -> f32| {
-                            let mut s1 = 0.0_f32;
-                            for d in lo..=hi {
-                                s1 += f(d, yrs_to_start);
-                            }
-                            s1 / lag
-                        };
-                        (s(&|d, y| g.value(d, y)), s(&|d, y| g.value2(d, y)))
-                    };
-                    (mx + mn) / 2.0
+                let key = std::ptr::from_ref(g) as usize;
+                let lags = match self.air_lags.iter().find(|c| c.0 == key && c.1 == cx.yrs && c.2 == cx.jday) {
+                    Some(c) => c.3,
+                    None => {
+                        if self.air_lags.first().is_some_and(|c| c.1 != cx.yrs || c.2 != cx.jday) {
+                            self.air_lags.clear();
+                        }
+                        let l = air_lags(g, cx, [surf_lag0, lat_lag0, gw_lag0, sno_lag0]);
+                        self.air_lags.push((key, cx.yrs, cx.jday, l));
+                        l
+                    }
                 };
-                let t_surf = avg(surf_lag0).max(0.01);
-                let t_lat = avg(lat_lag0).max(0.01);
-                let t_gw = avg(gw_lag0).max(0.01);
-                let t_sno = avg(sno_lag0).max(0.01).min(2.5);
+                let [t_surf, t_lat, t_gw, t_sno] = lags;
                 let sno_contr = sno_coef * (surf_lag_coef * t_sno) * q_ru_sno;
                 let gw_contr = gw_coef * (gw_lag_coef * t_gw) * q_gw;
                 let lat_contr = sur_lat_coef * (lat_lag_coef * t_lat) * q_ru_lat;
@@ -1105,4 +1097,43 @@ impl Channels {
         self.chs[ich].wtemp = if self.b.fixes { tw_final } else { self.wtemp };
         tw_final
     }
+}
+
+/// `ch_temp`'s air temperatures averaged over each lag (surface, lateral, groundwater and snow
+/// lag times, days) before today, from the temperature gage, bounded as SWAT+ does.
+fn air_lags(g: &crate::climate::Gage, cx: &ChanCtx, lag0s: [f32; 4]) -> [f32; 4] {
+    let jday = cx.jday as f32;
+    let yrs_to_start = cx.yrs - g.yrs_start;
+    let avg = |lag0: f32| -> f32 {
+        let lag = if cx.yrs == 1 { jday.min(lag0) } else { lag0 };
+        let (mx, mn) = if jday <= lag && yrs_to_start > 1 {
+            let a = (jday + 365.0 - lag + 1.0) as i32;
+            let s = |f: &dyn Fn(i32, i32) -> f32| {
+                let mut s1 = 0.0_f32;
+                for d in 1..=cx.jday {
+                    s1 += f(d, yrs_to_start);
+                }
+                let mut s2 = 0.0_f32;
+                for d in a..=365 {
+                    s2 += f(d, yrs_to_start - 1);
+                }
+                (s1 + s2) / lag
+            };
+            (s(&|d, y| g.value(d, y)), s(&|d, y| g.value2(d, y)))
+        } else {
+            let lo = 1.max((jday - lag + 1.0) as i32);
+            let hi = jday as i32;
+            let s = |f: &dyn Fn(i32, i32) -> f32| {
+                let mut s1 = 0.0_f32;
+                for d in lo..=hi {
+                    s1 += f(d, yrs_to_start);
+                }
+                s1 / lag
+            };
+            (s(&|d, y| g.value(d, y)), s(&|d, y| g.value2(d, y)))
+        };
+        (mx + mn) / 2.0
+    };
+    let [surf, lat, gw, sno] = lag0s;
+    [avg(surf).max(0.01), avg(lat).max(0.01), avg(gw).max(0.01), avg(sno).max(0.01).min(2.5)]
 }
