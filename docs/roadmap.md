@@ -69,7 +69,7 @@ flowchart LR
 | **H1** | Keluaran hidrolika SWAT-DEG; kurva rating dari penampang survei | — | Berikutnya |
 | **H2** | Aliran tunak 1D: profil muka air dari penampang melintang | HEC-RAS *steady* | Direncanakan |
 | **H3** | Aliran tak tunak 1D dengan bangunan, kopling satu arah dengan SWAT+ | HEC-RAS *unsteady* 1D | Direncanakan |
-| **T1** | Rekayasa terain di RustGIS: DEM siap-hidrolika, skenario terain berversi, ketidakpastian | RAS Mapper *terrain modification*, dan lebih | Direncanakan; syarat H4, membantu H2–H3 |
+| **T1** | Rekayasa terain di RustGIS: permukaan dari data ukur (penampang, profil memanjang, titik situasi) dipadukan dengan DEM; DEM siap-hidrolika, skenario terain berversi, ketidakpastian | RAS Mapper *terrain modification*, dan lebih | Direncanakan; syarat H4, membantu H2–H3 |
 | **H4** | Genangan 2D di atas DEM, paralel, dengan keluaran peta ala RAS Mapper | HEC-RAS 2D | Direncanakan |
 | **H5** | Kopling dua arah: air balik dan genangan kembali ke SWAT+ | — | Riset |
 | **H6** | Sistem prakiraan banjir: data waktu nyata, prakiraan hujan, asimilasi, ensembel | — | Tujuan jangka panjang |
@@ -153,7 +153,8 @@ skenario yang bisa dihitung.
 RAS Mapper menyediakan modifikasi terain dasar: alur (*channel*) dari penampang, garis (tanggul atau
 jalan dengan elevasi tertentu) dan poligon (elevasi ditetapkan atau digeser). Itu berguna, tetapi
 terbatas: setiap modifikasi dibuat tangan satu per satu, tidak berparameter, tidak memuat
-ketidakpastian, dan tidak terhubung dengan proses di DAS. T1 ditulis asli dalam Rust di RustGIS,
+ketidakpastian, tidak bisa membangun permukaan langsung dari data ukur topografi, dan tidak
+terhubung dengan proses di DAS. T1 ditulis asli dalam Rust di RustGIS,
 dan setiap operasinya berupa **resep yang tercatat** (bukan suntingan piksel yang hilang jejaknya),
 sehingga terain akhir bisa dibangun ulang, dibandingkan, dan diuji.
 
@@ -171,9 +172,46 @@ sehingga terain akhir bisa dibangun ulang, dibandingkan, dan diuji.
 - Untuk daerah perkotaan, bangunan bisa dipilih: dihapus (aliran lewat), dipertahankan sebagai
   penghalang, atau diberi porositas.
 
-**3. Alur sungai dan batimetri.**
-- Alur dari penampang survei, diinterpolasi sepanjang garis sungai dengan sistem koordinat alur
-  (stasiun dan jarak dari as), bukan interpolasi biasa yang merusak bentuk alur di tikungan.
+**3. Permukaan dari data ukur, dipadukan dengan DEM.**
+
+Ini inti T1. Data topografi hasil survei langsung menjadi permukaan, lalu dipadukan dengan DEM yang
+ada. RAS Mapper hanya bisa membuat terain dari penampang yang sudah dimasukkan ke geometri 1D dan
+menggabungkan terain menurut prioritas lapisan; data ukur mentah dan profil memanjang tidak bisa
+dipakai langsung, dan sambungannya dengan DEM berupa tepi tajam.
+
+- **Masukan data ukur yang umum di lapangan:**
+  - penampang melintang (stasiun–elevasi, atau X, Y, Z per titik) dari CSV, Excel, atau format
+    keluaran alat ukur;
+  - profil memanjang dasar sungai, puncak tanggul dan muka air saat pengukuran;
+  - titik detail situasi dari *total station* atau GNSS RTK, dan titik pemeruman (*echo sounder*);
+  - gambar CAD (DXF) dan LandXML hasil olahan perangkat lunak survei, termasuk garis kontur dan
+    garis patah;
+  - metadata: datum tinggi, BM acuan, tanggal ukur, dan alat.
+- **Pemeriksaan sebelum dipakai:** penampang yang terbalik arah kiri–kanan, stasiun yang tidak
+  urut, BM yang berbeda antar-lembar, loncatan elevasi, dan penampang yang tidak memotong garis
+  sungai.
+- **Pembuatan permukaan:**
+  - interpolasi dalam **koordinat alur** (stasiun sepanjang sungai, jarak dari as), sehingga dasar
+    sungai di antara dua penampang mengikuti alur di tikungan;
+  - profil memanjang sebagai kendala: elevasi dasar di antara penampang mengikuti profil ukur, bukan
+    garis lurus antar-penampang;
+  - TIN dengan garis patah untuk titik situasi (tanggul, tebing, saluran), lalu dirasterkan;
+  - *kriging* sebagai pilihan, yang sekaligus memberi peta ketidakpastian, dipakai untuk ensembel
+    terain (bagian 7).
+- **Pemaduan dengan DEM:**
+  - selisih datum antara survei dan DEM dihitung di daerah yang tumpang tindih dan dikoreksi lebih
+    dulu;
+  - urutan prioritas per sumber (survei terbaru > survei lama > DTM terkoreksi > DEM global) dengan
+    batas cakupan yang jelas;
+  - **zona transisi**: elevasi berangsur dari survei ke DEM dalam lebar yang diatur, sehingga tidak
+    ada tebing atau parit palsu di tepi area survei;
+  - setiap sel menyimpan sumbernya, sehingga peta asal-data dan peta selisih survei terhadap DEM
+    bisa ditampilkan.
+- **Uji:** validasi silang (satu penampang disisihkan, lalu diprediksi dari yang lain); penampang
+  yang dipotong dari permukaan hasil dibandingkan dengan penampang ukur; dan tidak ada loncatan
+  elevasi di zona transisi.
+
+**4. Alur sungai dan batimetri tanpa survei lengkap.**
 - **Bentuk alur berparameter** bila penampang jarang atau tidak ada: trapesium, parabola, atau
   bentuk dari lebar muka air citra dan kedalaman dari geometri hidraulik (lebar, kedalaman dan debit
   saling terkait), sehingga semua ruas punya dasar yang masuk akal.
@@ -181,7 +219,7 @@ sehingga terain akhir bisa dibangun ulang, dibandingkan, dan diuji.
   untuk bendung dan ambang.
 - Tikungan, pulau, cabang dan muara.
 
-**4. Garis dan struktur.**
+**5. Garis dan struktur.**
 - Garis patah (*breakline*) untuk tanggul, jalan, rel, pematang sawah besar dan saluran irigasi:
   elevasi puncak dari survei, dari DEM yang dihaluskan, atau ditetapkan; lebar dan kemiringan talud
   diatur.
@@ -192,7 +230,7 @@ sehingga terain akhir bisa dibangun ulang, dibandingkan, dan diuji.
 - Perataan badan air (*hydro-flattening*) untuk danau, waduk dan rawa, dengan elevasi dari data
   atau dari tepi.
 
-**5. Terain sebagai skenario.**
+**6. Terain sebagai skenario.**
 - Terain rencana: tanggul baru atau ditinggikan, normalisasi alur, galian kolam retensi, sudetan,
   tanggul jebol (lebar dan elevasi jebolan sebagai parameter), timbunan perumahan atau jalan baru.
 - Setiap skenario adalah lapisan resep di atas terain dasar, **berversi**, dengan peta selisih
@@ -200,7 +238,7 @@ sehingga terain akhir bisa dibangun ulang, dibandingkan, dan diuji.
 - Satu masukan ke H4 untuk membandingkan skenario: luas, kedalaman dan lama genangan sebelum dan
   sesudah, dan volume pekerjaan tanah per skenario.
 
-**6. Terain yang berubah dan terain yang tidak pasti.**
+**7. Terain yang berubah dan terain yang tidak pasti.**
 - **Perubahan dasar sungai dari sedimen:** degradasi dan agradasi alur yang dihitung SWAT-DEG
   diterjemahkan menjadi perubahan elevasi dasar per ruas, sehingga terain bisa diperbarui antar
   periode simulasi panjang.
@@ -208,13 +246,13 @@ sehingga terain akhir bisa dibangun ulang, dibandingkan, dan diuji.
   terain, lalu dijalankan di H4. Hasilnya peta peluang genangan, bukan satu garis batas yang
   terlihat pasti. Ensembel ini sejalan dengan ensembel hujan di H6.
 
-**7. Subgrid dan multi-resolusi.**
+**8. Subgrid dan multi-resolusi.**
 - Informasi DEM resolusi halus (misalnya 1–8 m) dipertahankan di dalam sel 2D yang lebih besar
   sebagai tabel elevasi–volume dan elevasi–luas per sel dan per sisi sel, seperti pendekatan
   *subgrid* HEC-RAS 2D, sehingga model cepat tanpa kehilangan alur dan tanggul kecil.
 - Resolusi halus di alur dan pemukiman, kasar di dataran luas.
 
-**8. Penyuntingan dan pemeriksaan.**
+**9. Penyuntingan dan pemeriksaan.**
 - Penyunting terain interaktif di RustGIS: profil memanjang dan melintang, sunting garis dan
   poligon, pratinjau selisih seketika.
 - **Uji mutu otomatis** sebelum terain dipakai: selisih terhadap penampang survei dan titik ikat
@@ -302,7 +340,8 @@ keputusan** bagi mereka, bukan sumber peringatan mandiri.
 | --- | :-: | :-: | :-: | :-: | :-: |
 | Model SWAT+ (TxtInOut) | ✓ | | ✓ | ✓ | ✓ |
 | Peta tata guna lahan per periode (untuk `lu_change`, kalibrasi dan skenario) | ✓ | | ✓ | ✓ | ✓ (terkini) |
-| Penampang melintang hasil survei | ✓ (di pos) | ✓ | ✓ | | |
+| Penampang melintang hasil survei | ✓ (di pos) | ✓ | ✓ | ✓ (lewat T1) | ✓ |
+| Profil memanjang, titik situasi, pemeruman, DXF/LandXML (untuk T1) | | ✓ | ✓ | ✓ | ✓ |
 | DEM (DEMNAS) dan garis sungai | | penampang dari DEM | penampang dari DEM | ✓ | ✓ |
 | Nilai *n* (dari tata guna lahan dan material dasar) | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Data bangunan (bendung, jembatan, pintu) | | | ✓ | ✓ | ✓ |
