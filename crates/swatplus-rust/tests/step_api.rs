@@ -23,7 +23,7 @@ fn tables(p: &Project, fixes: bool) -> TextTables<MemStore> {
 /// Every table `run_with` writes.
 fn whole(p: &Project, fixes: bool) -> std::collections::BTreeMap<String, Vec<u8>> {
     let mut t = tables(p, fixes);
-    run_with(p, &mut t, RunOptions { fixes }).unwrap();
+    run_with(p, &mut t, RunOptions { fixes, ..Default::default() }).unwrap();
     t.finish().unwrap().files
 }
 
@@ -33,7 +33,7 @@ fn stepped_run_is_the_same_run() {
         let p = project(name);
         for fixes in [false, true] {
             let mut t = tables(&p, fixes);
-            let mut sim = Simulation::new(&p, RunOptions { fixes }).unwrap();
+            let mut sim = Simulation::new(&p, RunOptions { fixes, ..Default::default() }).unwrap();
             let (_, total) = sim.days();
             let mut n = 0;
             while sim.step(&mut t).unwrap() {
@@ -94,7 +94,7 @@ fn a_copied_simulation_goes_on_as_the_original() {
     let p = project("Ames_sub1");
     for fixes in [false, true] {
         let mut whole = Record::default();
-        let mut sim = Simulation::new(&p, RunOptions { fixes }).unwrap();
+        let mut sim = Simulation::new(&p, RunOptions { fixes, ..Default::default() }).unwrap();
         // Past a year's end, into the second year.
         for _ in 0..400 {
             assert!(sim.step(&mut whole).unwrap());

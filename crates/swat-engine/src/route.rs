@@ -650,6 +650,51 @@ impl Network {
         &self.hru_order
     }
 
+    /// The HRUs in waves that can run at once (`--fix-swat`'s parallel HRUs): an HRU is in a
+    /// later wave than every HRU it receives water from earlier in the command order, so it reads
+    /// their water of today, and in no earlier wave than one it gives water to that runs before it
+    /// in that order, so that one still reads its water of yesterday. Each wave keeps the command
+    /// order.
+    pub fn hru_waves(&self) -> Vec<Vec<usize>> {
+        let n = self.obs.len();
+        let pos: Vec<usize> = {
+            let mut p = vec![usize::MAX; n];
+            for (k, &j) in self.hru_order.iter().enumerate() {
+                p[j] = k;
+            }
+            p
+        };
+        let mut level = vec![0usize; n];
+        let mut floor = vec![0usize; n];
+        for &j in &self.hru_order {
+            let mut l = floor[j];
+            for i in &self.obs[j].ins {
+                let s = i.from;
+                if self.obs[s].kind != ObjectKind::Hru || pos[s] == usize::MAX {
+                    continue;
+                }
+                if pos[s] < pos[j] {
+                    l = l.max(level[s] + 1);
+                }
+            }
+            level[j] = l;
+            for i in &self.obs[j].ins {
+                let s = i.from;
+                if self.obs[s].kind == ObjectKind::Hru && pos[s] != usize::MAX && pos[s] > pos[j] {
+                    floor[s] = floor[s].max(l);
+                }
+            }
+        }
+        let mut waves: Vec<Vec<usize>> = Vec::new();
+        for &j in &self.hru_order {
+            if waves.len() <= level[j] {
+                waves.resize(level[j] + 1, Vec::new());
+            }
+            waves[level[j]].push(j);
+        }
+        waves
+    }
+
     /// `command` for a receiving HRU `j`: the surface, lateral and tile flow it gets from other
     /// HRUs, per hectare (flow in mm). A total hydrograph brings the three; `None` when nothing
     /// is routed into it.

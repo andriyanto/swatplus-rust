@@ -14,6 +14,21 @@ pub fn rpow(x: f32, y: f32) -> f32 {
     x.powf(std::hint::black_box(y))
 }
 
+/// The seed `aunif` leaves after `n` draws from `seed`, without drawing them: `aunif` is the
+/// Park–Miller generator, `seed · 16807ⁿ mod (2³¹ − 1)`.
+pub fn aunif_skip(seed: i32, n: u64) -> i32 {
+    const M: u64 = 2_147_483_647;
+    let (mut base, mut e, mut r) = (16_807_u64, n, 1_u64);
+    while e > 0 {
+        if e & 1 == 1 {
+            r = r * base % M;
+        }
+        base = base * base % M;
+        e >>= 1;
+    }
+    ((u64::from(seed.unsigned_abs()) % M) * r % M) as i32
+}
+
 /// SWAT+ `aunif`: the Park–Miller minimal standard generator (Schrage's method). Advances `seed`
 /// and returns a number in (0, 1). The product is formed in double precision and rounded to single,
 /// as `x1 * 4.656612875d-10` assigned to a `real`.
@@ -113,6 +128,17 @@ pub fn search(list: &[String], find: &str) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn aunif_skip_is_aunif_drawn() {
+        for start in [1, 748_932_582, 64_298_628, 2_147_483_646] {
+            let mut seed = start;
+            for n in 0..2000_u64 {
+                assert_eq!(super::aunif_skip(start, n), seed, "{start} after {n}");
+                super::aunif(&mut seed);
+            }
+        }
+    }
+
     use super::*;
 
     #[test]

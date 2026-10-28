@@ -23,6 +23,8 @@ Each correction is guarded by the same flag, so a faithful run is unchanged.
 | `pl_fert_wet` (paddies) | Fertilizer spread on a flooded paddy goes into the water only with carbon model 2; with the original model it is lost (counted as applied, in no pool). | Into the water with either model. |
 | `mgt_newtillmix_wet` (puddling) | The pond's nutrients are added to the mixing sums, which are then zeroed: the pond's nutrients are lost and the water gets the soil's alone. | The pond's nutrients mix with the soil's. |
 
+| Module and `save` variables (`Saved`) | What one HRU leaves in variables shared by all (the nutrient demand arrays `uno3d`, `uapd`, `un2`, `up2`; `delg_p`; the sediment P fractions; the microbial carbon lost with sediment; the enrichment ratio; a septic type's operation; the decision tables' random seed) is read by the next HRU in the command order. | Each HRU has its own copy, its decision tables a random stream of their own (a million draws apart). The HRUs then don't depend on each other's order, and run in parallel (`docs/parallel.md`). |
+
 ## Routing units and aquifers
 
 | Where (SWAT+) | Bug | Corrected |
