@@ -1,0 +1,22 @@
+{
+  "title": "swatplus-rust: SWAT+ translated from Fortran into Rust, verified bit for bit",
+  "upload_type": "software",
+  "version": "1.0.1",
+  "publication_date": "2026-10-28",
+  "creators": [
+    {
+      "name": "Andriyanto",
+      "affiliation": "AFFILIATION",
+      "orcid": "ORCID"
+    }
+  ],
+  "description": "<p><strong>swatplus-rust</strong> is the SWAT+ (Soil and Water Assessment Tool Plus) hydrological model translated from Fortran into Rust: commit 6f51536 of SWAT+, with output tables identical bit for bit to SWAT+'s on two SWAT+ examples (Osu_1hru, Ames_sub1), two real catchments in West Sumatra, Indonesia (Batanghari, 1,858 HRUs; Pessel, 3,966 HRUs) and 33 variants that each exercise a feature. It runs natively and in the browser (WebAssembly), writes SWAT+'s text tables or Parquet, and has no dependencies beyond the Rust standard library and no unsafe code.</p><p>On a Snapdragon (ARM64) laptop it runs 2.6 to 2.9 times as fast as SWAT+ built as its project builds it, with half the memory on the large catchments, and the same results (docs/benchmark-results). Translating it brought out 218 behaviours of SWAT+ that the port keeps for identical results, 19 of them bugs that an option (--fix-swat) corrects (docs/swat-quirks.md, docs/swat-fixes.md). A design note in Indonesian describes every function (docs/nota-desain: Markdown, Word, PDF).</p><p><strong>Contributions.</strong> Andriyanto conceived the project and directed it: the decisions of design (a faithful, verified translation; SWAT+'s quirks kept and documented, its bugs corrected only on request; no dependencies; the engine kept apart from the RustGIS editor under its own license), the choice and preparation of the validation catchments, the validation strategy, and the review of the results. The Rust code, the tests, the validation scripts and the documentation were written with Claude, an AI model by Anthropic (Claude Code, 2026), working under his direction; every change was checked against SWAT+ Fortran by the validation in continuous integration before it was kept.</p><p>The Batanghari and Pessel scenarios are private data and are not in this archive; SWAT+'s own scenarios are. SWAT+ is developed by USDA-ARS and Texas A&amp;M AgriLife Research; this work is not affiliated with or endorsed by them.</p>",
+  "access_right": "restricted",
+  "access_conditions": "The files are shared on request for review, supervision and collaboration. The source is LGPL-2.1-only, as SWAT+.",
+  "license": "LGPL-2.1-only",
+  "keywords": ["SWAT+", "hydrological modelling", "watershed model", "Rust", "Fortran", "code translation", "verification", "reproducibility", "WebAssembly", "Indonesia"],
+  "related_identifiers": [
+    {"relation": "isDerivedFrom", "identifier": "https://github.com/swat-model/swatplus", "resource_type": "software"}
+  ],
+  "language": "eng"
+}

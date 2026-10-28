@@ -1,0 +1,29 @@
+cff-version: 1.2.0
+message: "If you use swatplus-rust, please cite it as below."
+title: "swatplus-rust: SWAT+ translated from Fortran into Rust, verified bit for bit"
+version: 1.0.1
+date-released: 2026-10-28
+license: LGPL-2.1-only
+repository-code: "https://github.com/andriyanto/swatplus-rust"
+authors:
+  - given-names: Andriyanto
+    affiliation: AFFILIATION
+    orcid: "https://orcid.org/ORCID"
+keywords:
+  - SWAT+
+  - hydrological modelling
+  - Rust
+  - code translation
+  - verification
+abstract: >-
+  The SWAT+ hydrological model translated from Fortran into Rust (SWAT+ commit 6f51536), with
+  output tables identical bit for bit to SWAT+'s on four scenarios and 33 variants; native and
+  WebAssembly, text or Parquet output, no dependencies. Written with Claude (Anthropic) under the
+  author's direction; every change validated against SWAT+ Fortran in continuous integration.
+references:
+  - type: software
+    title: "SWAT+ (Soil and Water Assessment Tool Plus)"
+    authors:
+      - name: "USDA Agricultural Research Service and Texas A&M AgriLife Research"
+    repository-code: "https://github.com/swat-model/swatplus"
+    commit: 6f515368525e7d84089ae0f9d33f4c9115de5679
