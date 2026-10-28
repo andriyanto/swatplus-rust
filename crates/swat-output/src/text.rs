@@ -35,6 +35,39 @@ fn e15_4(v: f32) -> String {
     format!("{:>15}", format!("{sign}0.{digits}E{es}{:02}", e.abs()))
 }
 
+/// A `REAL(4)` as gfortran writes it in list-directed output (`write (u, *)`): `1PG16.9E2`, nine
+/// significant digits, preceded by the blank that separates list items. Between 0.1 and 1e9 (after
+/// rounding to nine digits) it is `F12.d` followed by the four blanks of the exponent's place;
+/// otherwise `1PE16.8E2`. Zero is `0.00000000`.
+fn list_real4(v: f32) -> String {
+    if v.is_nan() {
+        return format!(" {:>16}", "NaN");
+    }
+    if v.is_infinite() {
+        return format!(" {:>16}", if v > 0.0 { "Infinity" } else { "-Infinity" });
+    }
+    let sign = if v.is_sign_negative() { "-" } else { "" };
+    // Nine significant digits, rounded from the exact value (as gfortran's printf does).
+    let s = format!("{:.8e}", f64::from(v.abs()));
+    let (m, e) = s.split_once('e').unwrap_or((&s, "0"));
+    let e: i32 = e.parse().unwrap_or(0);
+    let digits: String = m.chars().filter(|c| c.is_ascii_digit()).collect();
+    if v == 0.0 || (-1..=8).contains(&e) {
+        let num = if v == 0.0 {
+            "0.00000000".to_string()
+        } else if e < 0 {
+            format!("0.{digits}")
+        } else {
+            let (int, frac) = digits.split_at(e as usize + 1);
+            format!("{int}.{frac}")
+        };
+        format!(" {:>12}    ", format!("{sign}{num}"))
+    } else {
+        let es = if e < 0 { '-' } else { '+' };
+        format!(" {:>16}", format!("{sign}{}.{}E{es}{:02}", &digits[..1], &digits[1..], e.abs()))
+    }
+}
+
 /// What a file's buffer holds before it is written.
 const CHUNK: usize = 4 << 20;
 
@@ -313,9 +346,11 @@ impl<S: Store> TextTables<S> {
             return;
         }
         let title = self.title.clone();
+        // An object's name is 16 characters (`ob%name`), the basin's 25 (`bsn%name`).
+        let nw = if typ.is_some() { 16 } else { 25 };
         let out = self.sheet(stem, p, |o| {
             let _ = writeln!(o, "{title}");
-            let _ = write!(o, "{:>12}{:>12}{:>12}{:>12} {:<16}", "jday", "mon", "day", "yr", "name");
+            let _ = write!(o, "{:>12}{:>12}{:>12}{:>12} {:<nw$}", "jday", "mon", "day", "yr", "name");
             if typ.is_some() {
                 let _ = write!(o, "{:<8}", "type");
             }
@@ -332,12 +367,12 @@ impl<S: Store> TextTables<S> {
             }
             let _ = writeln!(o);
         });
-        let _ = write!(out, "{:>12}{:>12}{:>12}{:>12} {:<16}", d.jday, d.mon, d.day, d.yr, name);
+        let _ = write!(out, "{:>12}{:>12}{:>12}{:>12} {:<nw$}", d.jday, d.mon, d.day, d.yr, name);
         if let Some(t) = typ {
             let _ = write!(out, "{t:<8}");
         }
         for (_, v) in h.columns() {
-            let _ = write!(out, " {v:>14e}");
+            out.push_str(&list_real4(v));
         }
         out.push('\n');
     }
@@ -547,7 +582,33 @@ impl<S: Store> OutputSink for TextTables<S> {
 
 #[cfg(test)]
 mod tests {
-    use super::e15_4;
+    use super::{e15_4, list_real4};
+
+    /// Values and fields from SWAT+'s recall tables (Bh_res, gfortran 13).
+    #[test]
+    fn list_real4_as_gfortran() {
+        for (v, f) in [
+            (417.18396_f32, "417.183960"),
+            (0.08344, "8.34399983E-02"),
+            (10.4296, "10.4295998"),
+            (1.25155, "1.25154996"),
+            (0.83437, "0.834370017"),
+            (0.0, "0.00000000"),
+            (30.0, "30.0000000"),
+            (876000.0, "876000.000"),
+            (876_417.2, "876417.188"),
+            (319887840.0, "319887840."),
+            (11864.1455, "11864.1455"),
+        ] {
+            let s = list_real4(v);
+            assert_eq!(s.len(), 17, "{s:?}");
+            assert_eq!(s.trim(), f, "{v}");
+        }
+        assert_eq!(list_real4(417.18396), "   417.183960    ");
+        assert_eq!(list_real4(0.08344), "   8.34399983E-02");
+        assert_eq!(list_real4(1.0e9), "   1.00000000E+09");
+        assert_eq!(list_real4(-2.5), "  -2.50000000    ");
+    }
 
     #[test]
     fn e15_4_as_gfortran() {
