@@ -87,6 +87,15 @@ pub trait OutputSink {
     ) {
     }
 
+    /// One SWAT-DEG channel's hydraulics on a printed day (`channel_hyd_day.txt`, not a SWAT+
+    /// table): depth, width, velocity and storage read from its rating curve.
+    fn cha_hyd(&mut self, _day: Day, _ich: usize, _gis_id: i32, _name: &str, _h: &crate::channel::ChHyd) {}
+
+    /// Whether to work out the channels' hydraulics for [`OutputSink::cha_hyd`] (it costs).
+    fn wants_cha_hyd(&self) -> bool {
+        false
+    }
+
     /// One SWAT-DEG channel's day by time step (`channel_sd_subday.txt`, sub-daily runs): its
     /// outflow in each step (m3, though the table heads it m^3/s).
     fn cha_subday(&mut self, _day: Day, _ich: usize, _gis_id: i32, _name: &str, _flo: &[f32]) {}
@@ -933,12 +942,16 @@ impl<'p> Simulation<'p> {
                     basin_aqu_acc.day(&ba, &pday, |p, d| out.basin_aqu(Some(p), day, bsn_name, d));
                 }
                 let steps = n.channel_steps();
+                let hyds = if printing && out.wants_cha_hyd() { n.channel_hyds() } else { Vec::new() };
                 for (k, (ich, gis_id, name, w, st, i, o, wtemp)) in n.channels().into_iter().enumerate() {
                     if printing && let Some((_, _, _, flo)) = steps.get(k) {
                         out.cha_subday(day, ich, gis_id, name, flo);
                     }
                     if printing {
                         out.cha_day(day, ich, gis_id, name, &w, &st, &i, &o, wtemp);
+                    }
+                    if printing && let Some(h) = hyds.get(k) {
+                        out.cha_hyd(day, ich, gis_id, name, h);
                     }
                     if cha_acc.len() <= k {
                         cha_acc.resize(k + 1, Default::default());

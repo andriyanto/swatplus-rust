@@ -68,6 +68,192 @@ fn qman(x1: f32, x2: f32, x3: f32, x4: f32) -> f32 {
     x1 * rpow(x2, 0.6666) * x4.sqrt() / (x3 + 0.001)
 }
 
+/// What `sd_rating_curve` reads of a channel: top width and depth at bankfull (m), slope (m/m),
+/// length (km), Manning's n, side slope, and the flood plain's slope and n.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RcChannel {
+    pub chw: f32,
+    pub chd: f32,
+    pub chs: f32,
+    pub chl: f32,
+    pub chn: f32,
+    pub chss: f32,
+    pub fps: f32,
+    pub fpn: f32,
+}
+
+/// The wetted perimeter and area of a trapezoid of bottom width `bw` and side slope `chss` at
+/// depth `dep`. SWAT+ takes the side slope as horizontal over vertical for the widths but as
+/// vertical over horizontal for the wetted perimeter, and the area as `b d + d / z`; corrected
+/// (`fixes`), a trapezoid: `b d + z d²` and `b + 2 d √(1 + z²)`.
+fn channel_geom(bw: f32, chss: f32, dep: f32, fixes: bool) -> (f32, f32) {
+    if fixes {
+        (bw + 2.0 * dep * (1.0 + chss * chss).sqrt(), bw * dep + chss * dep * dep)
+    } else {
+        (bw + 2.0 * (dep * dep * (1.0 + 1.0 / (chss * chss))).sqrt(), bw * dep + dep / chss)
+    }
+}
+
+/// SWAT+ `sd_rating_curve`: the rating curve at a tenth of bankfull depth, bankfull, and 1.2 and
+/// 2 times bankfull (over the flood plain), with the bottom width and the side slope it used.
+pub fn rating_curve(ch: &RcChannel, fixes: bool) -> ([Rc; 4], f32, f32) {
+    let mut elev = [Rc::default(); 4];
+    let mut chss = ch.chss;
+    let mut bw = ch.chw - 2.0 * ch.chd * chss;
+    if bw <= 0.0 {
+        bw = 0.5 * ch.chw;
+        bw = bw.max(0.0);
+        chss = (ch.chw - bw) / (2.0 * ch.chd);
+    }
+    let (mut p_bf, mut a_bf, mut vol_bf) = (0.0_f32, 0.0_f32, 0.0_f32);
+    for i_dep in 0..2 {
+        let dep = if i_dep == 0 { 0.1 * ch.chd } else { ch.chd };
+        let (pp, a) = channel_geom(bw, chss, dep, fixes);
+        let rh = a / pp;
+        let e = &mut elev[i_dep];
+        e.dep = dep;
+        e.wet_perim = pp;
+        e.xsec_area = a;
+        e.top_wid = bw + 2.0 * dep * chss;
+        e.surf_area = e.top_wid * ch.chl;
+        e.vol = a * ch.chl * 1000.0;
+        e.vol_ch = e.vol;
+        e.vol_fp = 0.0;
+        e.flo_rate = qman(a, rh, ch.chn, ch.chs);
+        e.vel = qman(1.0, rh, ch.chn, ch.chs);
+        e.ttime = ch.chl / (3.6 * e.vel);
+        if i_dep == 1 {
+            p_bf = pp;
+            a_bf = a;
+            vol_bf = e.vol_ch;
+        }
+    }
+    let fps = ch.fps;
+    for i_dep in 0..2 {
+        let frac_abov = if i_dep == 0 { 0.2 } else { 1.0 };
+        let dep = frac_abov * ch.chd;
+        let pp = p_bf + 2.0 * (dep * dep * (1.0 + 1.0 / (fps * fps))).sqrt();
+        // Above bankfull the water spans the channel's top width, not its bottom.
+        let a = if fixes { a_bf + ch.chw * dep + dep * dep / fps } else { a_bf + bw * dep + dep * dep / fps };
+        let rh = a / pp;
+        let e = &mut elev[i_dep + 2];
+        e.dep = (1.0 + frac_abov) * ch.chd;
+        e.wet_perim = pp;
+        e.xsec_area = a;
+        e.top_wid = ch.chw + 2.0 * dep / fps;
+        e.surf_area = e.top_wid * ch.chl;
+        e.vol_ch = vol_bf;
+        e.vol_fp = e.top_wid * dep * ch.chl * 1000.0;
+        e.vol = vol_bf + e.vol_fp;
+        e.flo_rate = qman(a, rh, ch.fpn, ch.chs);
+        e.vel = qman(1.0, rh, ch.fpn, ch.chs);
+        e.ttime = ch.chl / (3.6 * e.vel);
+    }
+    (elev, bw, chss)
+}
+
+/// SWAT+ `rcurv_interp_flo`: the rating curve `e` at flow rate `flo_rate` (m3/s), linear between
+/// its points, in proportion below the first, and in proportion to the last above it.
+pub fn interp_flo(e: &[Rc; 4], flo_rate: f32) -> Rc {
+    for k in 0..4 {
+        if flo_rate < e[k].flo_rate {
+            if k == 0 {
+                let rto = flo_rate / e[0].flo_rate;
+                let mut r = e[0].scale(rto);
+                r.ttime = e[0].ttime;
+                return r;
+            }
+            let rto = (flo_rate - e[k - 1].flo_rate) / (e[k].flo_rate - e[k - 1].flo_rate);
+            return Rc::interp(e[k - 1], e[k], rto);
+        }
+        if k == 3 {
+            let rto = 1.0 + (flo_rate - e[3].flo_rate) / e[3].flo_rate;
+            let mut r = e[3].scale(rto);
+            r.ttime /= rto;
+            return r;
+        }
+    }
+    Rc::default()
+}
+
+/// A SWAT-DEG channel's hydraulics on a day (H1 in `docs/roadmap.md`), read from its rating
+/// curve: at the day's mean outflow and inflow, and at the peak SWAT-DEG estimates for its
+/// sediment (`pk_rto`). Recorded only; the routing doesn't read it.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ChHyd {
+    /// The curve at the day's mean outflow and inflow rate (all zero without flow).
+    pub out: Rc,
+    pub inflow: Rc,
+    /// The estimated peak inflow rate (m3/s) and the curve there (zero without inflow).
+    pub peak_flo: f32,
+    pub peak: Rc,
+    /// The day's end storage in the channel and over its flood plain (m3).
+    pub vol_ch: f32,
+    pub vol_fp: f32,
+    /// Bankfull depth and top width (m).
+    pub bankfull_dep: f32,
+    pub bankfull_wid: f32,
+    /// The day's mean outflow by Manning's formula on the trapezoid ([`manning_depth`]): depth,
+    /// velocity and top width (m, m/s, m).
+    pub manning_out: (f32, f32, f32),
+}
+
+/// The depth (m), velocity (m/s) and top width (m) at which a channel carries `flo_rate` (m3/s)
+/// by Manning's formula as SWAT+ writes it (`qman`), on the channel as a true trapezoid of bottom
+/// width `bw` and side slope `chss`. Above bankfull the section is divided (Chow, 1959): the main
+/// channel, its trapezoid up to bankfull and the top width above, with the channel's n, and the
+/// flood plain's two wedges (`sd_rating_curve`'s slope `fps`) with the flood plain's n, their
+/// flows added. Not SWAT+'s: its curve is four points and straight lines between them, below the
+/// first it scales every quantity with the flow (the width and depth too), and above bankfull it
+/// gives the whole section the flood plain's n, so its flow can fall as the depth rises. Zero
+/// without flow.
+pub fn manning_depth(ch: &RcChannel, bw: f32, chss: f32, flo_rate: f32) -> (f32, f32, f32) {
+    if flo_rate <= 0.0 || ch.chd <= 0.0 {
+        return (0.0, 0.0, 0.0);
+    }
+    let (chd, chw, bw, z) = (f64::from(ch.chd), f64::from(ch.chw), f64::from(bw), f64::from(chss));
+    let (fps, s) = (f64::from(ch.fps), f64::from(ch.chs).sqrt());
+    let (n_ch, n_fp) = (f64::from(ch.chn) + 0.001, f64::from(ch.fpn) + 0.001);
+    let man = |a: f64, p: f64, n: f64| if a > 0.0 && p > 0.0 { a * (a / p).powf(0.6666) * s / n } else { 0.0 };
+    // Flow, area and top width at depth d.
+    let at = |d: f64| -> (f64, f64, f64) {
+        if d <= chd {
+            let a = bw * d + z * d * d;
+            let p = bw + 2.0 * d * (1.0 + z * z).sqrt();
+            (man(a, p, n_ch), a, bw + 2.0 * d * z)
+        } else {
+            let dd = d - chd;
+            let a_ch = bw * chd + z * chd * chd + chw * dd;
+            let p_ch = bw + 2.0 * chd * (1.0 + z * z).sqrt();
+            let a_fp = dd * dd / fps;
+            let p_fp = 2.0 * (dd * dd * (1.0 + 1.0 / (fps * fps))).sqrt();
+            (man(a_ch, p_ch, n_ch) + man(a_fp, p_fp, n_fp), a_ch + a_fp, chw + 2.0 * dd / fps)
+        }
+    };
+    let target = f64::from(flo_rate);
+    let (mut lo, mut hi) = (0.0_f64, chd);
+    while at(hi).0 < target && hi < 1.0e4 {
+        hi *= 2.0;
+    }
+    // Halving 60 times leaves far less than an f32's precision of the depth.
+    for _ in 0..60 {
+        let mid = 0.5 * (lo + hi);
+        if at(mid).0 < target {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    let d = 0.5 * (lo + hi);
+    let (_, a, w) = at(d);
+    (d as f32, (target / a) as f32, w as f32)
+}
+
+/// The curve at a flow rate, all zero without flow.
+fn rating_at(e: &[Rc; 4], flo_rate: f32) -> Rc {
+    if flo_rate > 0.0 { interp_flo(e, flo_rate) } else { Rc::default() }
+}
+
 /// SWAT+ `theta`: a rate at 20 °C adjusted to temperature `tmp`.
 fn theta(r20: f32, thk: f32, tmp: f32) -> f32 {
     r20 * rpow(thk, tmp - 20.0)
@@ -225,6 +411,10 @@ struct SdCh {
     ch_out: Hyd,
     /// The water temperature printed for this channel (corrected mode: its own).
     wtemp: f32,
+    /// The day's estimated peak inflow rate and the curve there, kept for `ChHyd`.
+    peak: (f32, Rc),
+    /// The channel as `sd_rating_curve` used it (side slope as adjusted) and its bottom width.
+    rc_ch: (RcChannel, f32),
 }
 
 /// What a channel's day needs from outside: its station's weather, the station's generator day
@@ -365,6 +555,8 @@ impl Channels {
                 ch_in: Hyd::default(),
                 ch_out: Hyd::default(),
                 wtemp: 0.0,
+                peak: (0.0, Rc::default()),
+                rc_ch: (RcChannel { chw: 0.0, chd: 0.0, chs: 0.0, chl: 0.0, chn: 0.0, chss: 0.0, fps: 0.0, fpn: 0.0 }, 0.0),
             };
             if c.chs < 1.0e-9 {
                 c.chs = 0.000001;
@@ -386,67 +578,11 @@ impl Channels {
                 fps = 0.00001;
             }
             let fpn = r("fpn");
-            let mut chss = r("chss");
-            // sd_rating_curve
-            let mut bw = c.chw - 2.0 * c.chd * chss;
-            if bw <= 0.0 {
-                bw = 0.5 * c.chw;
-                bw = bw.max(0.0);
-                chss = (c.chw - bw) / (2.0 * c.chd);
-            }
-            let (mut p_bf, mut a_bf, mut vol_bf) = (0.0_f32, 0.0_f32, 0.0_f32);
-            // SWAT+ takes the side slope as horizontal over vertical for the widths but as
-            // vertical over horizontal for the wetted perimeter, and the area as `b d + d / z`;
-            // corrected, a trapezoid: `b d + z d²` and `b + 2 d √(1 + z²)`.
-            let geom = |dep: f32| -> (f32, f32) {
-                if fixes {
-                    (bw + 2.0 * dep * (1.0 + chss * chss).sqrt(), bw * dep + chss * dep * dep)
-                } else {
-                    (bw + 2.0 * (dep * dep * (1.0 + 1.0 / (chss * chss))).sqrt(), bw * dep + dep / chss)
-                }
-            };
-            for i_dep in 0..2 {
-                let dep = if i_dep == 0 { 0.1 * c.chd } else { c.chd };
-                let (pp, a) = geom(dep);
-                let rh = a / pp;
-                let e = &mut c.elev[i_dep];
-                e.dep = dep;
-                e.wet_perim = pp;
-                e.xsec_area = a;
-                e.top_wid = bw + 2.0 * dep * chss;
-                e.surf_area = e.top_wid * c.chl;
-                e.vol = a * c.chl * 1000.0;
-                e.vol_ch = e.vol;
-                e.vol_fp = 0.0;
-                e.flo_rate = qman(a, rh, c.chn, c.chs);
-                e.vel = qman(1.0, rh, c.chn, c.chs);
-                e.ttime = c.chl / (3.6 * e.vel);
-                if i_dep == 1 {
-                    p_bf = pp;
-                    a_bf = a;
-                    vol_bf = e.vol_ch;
-                }
-            }
-            for i_dep in 0..2 {
-                let frac_abov = if i_dep == 0 { 0.2 } else { 1.0 };
-                let dep = frac_abov * c.chd;
-                let pp = p_bf + 2.0 * (dep * dep * (1.0 + 1.0 / (fps * fps))).sqrt();
-                // Above bankfull the water spans the channel's top width, not its bottom.
-                let a = if fixes { a_bf + c.chw * dep + dep * dep / fps } else { a_bf + bw * dep + dep * dep / fps };
-                let rh = a / pp;
-                let e = &mut c.elev[i_dep + 2];
-                e.dep = (1.0 + frac_abov) * c.chd;
-                e.wet_perim = pp;
-                e.xsec_area = a;
-                e.top_wid = c.chw + 2.0 * dep / fps;
-                e.surf_area = e.top_wid * c.chl;
-                e.vol_ch = vol_bf;
-                e.vol_fp = e.top_wid * dep * c.chl * 1000.0;
-                e.vol = vol_bf + e.vol_fp;
-                e.flo_rate = qman(a, rh, fpn, c.chs);
-                e.vel = qman(1.0, rh, fpn, c.chs);
-                e.ttime = c.chl / (3.6 * e.vel);
-            }
+            let (elev, bw, chss) =
+                rating_curve(&RcChannel { chw: c.chw, chd: c.chd, chs: c.chs, chl: c.chl, chn: c.chn, chss: r("chss"), fps, fpn }, fixes);
+            c.elev = elev;
+            c.rc_ch = (RcChannel { chw: c.chw, chd: c.chd, chs: c.chs, chl: c.chl, chn: c.chn, chss, fps, fpn }, bw);
+            let geom = |dep: f32| channel_geom(bw, chss, dep, fixes);
             // Muskingum coefficients (one step a day: `msk%nsteps` 1)
             let mut stor = [0.0_f32; 2];
             for (i_dep, s) in stor.iter_mut().enumerate() {
@@ -517,26 +653,24 @@ impl Channels {
 
     /// `rcurv_interp_flo` on channel `ich`'s rating curve.
     fn interp_flo(&self, ich: usize, flo_rate: f32) -> Rc {
-        let e = &self.chs[ich].elev;
-        for k in 0..4 {
-            if flo_rate < e[k].flo_rate {
-                if k == 0 {
-                    let rto = flo_rate / e[0].flo_rate;
-                    let mut r = e[0].scale(rto);
-                    r.ttime = e[0].ttime;
-                    return r;
-                }
-                let rto = (flo_rate - e[k - 1].flo_rate) / (e[k].flo_rate - e[k - 1].flo_rate);
-                return Rc::interp(e[k - 1], e[k], rto);
-            }
-            if k == 3 {
-                let rto = 1.0 + (flo_rate - e[3].flo_rate) / e[3].flo_rate;
-                let mut r = e[3].scale(rto);
-                r.ttime /= rto;
-                return r;
-            }
+        interp_flo(&self.chs[ich].elev, flo_rate)
+    }
+
+    /// Channel `ich`'s (0-based) hydraulics on the last day routed, worked out when asked for
+    /// (only the peak is kept from the routing).
+    pub fn hyd_of(&self, ich: usize) -> ChHyd {
+        let c = &self.chs[ich];
+        ChHyd {
+            out: rating_at(&c.elev, c.ch_out.flo),
+            inflow: rating_at(&c.elev, c.ch_in.flo),
+            peak_flo: c.peak.0,
+            peak: c.peak.1,
+            vol_ch: c.ch_stor.flo,
+            vol_fp: c.fp_stor.flo,
+            bankfull_dep: c.chd,
+            bankfull_wid: c.chw,
+            manning_out: manning_depth(&c.rc_ch.0, c.rc_ch.1, c.rc_ch.0.chss, c.ch_out.flo),
         }
-        Rc::default()
     }
 
     /// The day's output of channel `ich` (0-based): storage, inflow and outflow (flow in m3/s),
@@ -579,6 +713,7 @@ impl Channels {
         let mut fp_dep = Hyd::default();
         let mut ch_dep = Hyd::default();
         let mut bank_ero = Hyd::default();
+        let mut peak = (0.0_f32, Rc::default());
         self.chs[ich].wat.precip = 0.0;
         if ht1.flo > 1.0e-6 {
             let c = &self.chs[ich];
@@ -586,6 +721,7 @@ impl Channels {
             let pk_rto = c.pk_rto * (1.0 + 2.66 * rpow(area_ha / 100.0, -0.3));
             let peakrate = pk_rto * ht1.flo / 86400.0;
             let rc = self.interp_flo(ich, peakrate);
+            peak = (peakrate, rc);
             let vel = rc.vel;
             let c = &mut self.chs[ich];
             let rttime = c.chl / (3.6 * vel);
@@ -769,6 +905,7 @@ impl Channels {
             hd1.temp = tw;
         }
         self.chs[ich].ch_out = Hyd { flo: hd1.flo / 86400.0, ..hd1 };
+        self.chs[ich].peak = peak;
         hd1
     }
 
@@ -1136,4 +1273,83 @@ fn air_lags(g: &crate::climate::Gage, cx: &ChanCtx, lag0s: [f32; 4]) -> [f32; 4]
     };
     let [surf, lat, gw, sno] = lag0s;
     [avg(surf).max(0.01), avg(lat).max(0.01), avg(gw).max(0.01), avg(sno).max(0.01).min(2.5)]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ch() -> RcChannel {
+        RcChannel { chw: 20.0, chd: 2.0, chs: 0.001, chl: 5.0, chn: 0.035, chss: 2.0, fps: 0.01, fpn: 0.08 }
+    }
+
+    fn close(a: f32, b: f32, rel: f32) -> bool {
+        (a - b).abs() <= rel * b.abs().max(1.0e-6)
+    }
+
+    #[test]
+    fn the_corrected_curve_is_a_trapezoid() {
+        let c = ch();
+        let (e, bw, z) = rating_curve(&c, true);
+        assert_eq!((bw, z), (12.0, 2.0));
+        let b = e[1];
+        assert_eq!(b.dep, 2.0);
+        assert!(close(b.xsec_area, 12.0 * 2.0 + 2.0 * 4.0, 1e-6));
+        assert!(close(b.wet_perim, 12.0 + 2.0 * 2.0 * 5.0_f32.sqrt(), 1e-6));
+        assert!(close(b.top_wid, 20.0, 1e-6));
+        let rh = b.xsec_area / b.wet_perim;
+        assert!(close(b.flo_rate, b.xsec_area * rh.powf(0.6666) * 0.001_f32.sqrt() / 0.036, 1e-5));
+        assert!(close(b.vel * b.xsec_area, b.flo_rate, 1e-5));
+        assert!(close(b.ttime, 5.0 / (3.6 * b.vel), 1e-6));
+    }
+
+    #[test]
+    fn swat_s_curve_keeps_its_area() {
+        // SWAT+ (not corrected): the area is b d + d / z.
+        let (e, bw, z) = rating_curve(&ch(), false);
+        assert!(close(e[1].xsec_area, bw * 2.0 + 2.0 / z, 1e-6));
+    }
+
+    #[test]
+    fn the_curve_at_its_points() {
+        let (e, ..) = rating_curve(&ch(), true);
+        // Up to bankfull: above it the curve may fall (the whole section with the flood plain's
+        // n), as here, and interpolating it is not one-to-one.
+        let r = interp_flo(&e, e[0].flo_rate);
+        assert!(close(r.dep, e[0].dep, 1e-5));
+        let r = interp_flo(&e, e[1].flo_rate * 0.9999);
+        assert!(close(r.dep, e[1].dep, 1e-3), "{}", r.dep);
+        // At bankfull flow itself this channel's curve is past its falling part: the search
+        // finds the segment from 1.2 to 2 times bankfull, as SWAT+'s does.
+        assert!(e[2].flo_rate < e[1].flo_rate, "this channel's curve falls past bankfull");
+        assert!(interp_flo(&e, e[1].flo_rate).dep > e[2].dep);
+        assert_eq!(rating_at(&e, 0.0), Rc::default());
+    }
+
+    #[test]
+    fn manning_depth_meets_the_curve_up_to_bankfull() {
+        let c = ch();
+        let (e, bw, z) = rating_curve(&c, true);
+        for p in [e[0], e[1]] {
+            let (d, v, w) = manning_depth(&c, bw, z, p.flo_rate);
+            assert!(close(d, p.dep, 2e-4), "depth {d} at {} m3/s, curve {}", p.flo_rate, p.dep);
+            assert!(close(w, p.top_wid, 2e-4));
+            assert!(close(v * p.xsec_area, p.flo_rate, 1e-3));
+        }
+        assert_eq!(manning_depth(&c, bw, z, 0.0), (0.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn manning_depth_rises_with_the_flow_past_bankfull() {
+        let c = ch();
+        let (e, bw, z) = rating_curve(&c, true);
+        let mut last = 0.0;
+        for k in 1..400 {
+            let q = e[1].flo_rate * k as f32 / 100.0;
+            let (d, v, _) = manning_depth(&c, bw, z, q);
+            assert!(d > last && v > 0.0, "{q} m3/s: {d} m after {last} m");
+            last = d;
+        }
+        assert!(last > c.chd, "four times bankfull flow is over the flood plain");
+    }
 }

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Channel hydraulics** (H1 in `docs/roadmap.md`): `run --channel-hyd` writes
+  `channel_hyd_day.txt`, each SWAT-DEG channel's day read from its rating curve (depth, top width,
+  area, wetted perimeter, velocity and travel time at the mean outflow, inflow and estimated peak;
+  channel and flood plain storage; bankfull; overbank), and a depth, velocity and width by
+  Manning's formula on the channel as a trapezoid with a divided flood plain section, which rise
+  with the flow where SWAT+'s four-point curve scales low flows to a sliver. Not a SWAT+ table; the
+  SWAT+ tables are unchanged with or without it. `sd_rating_curve` and `rcurv_interp_flo` are now
+  free functions (`rating_curve`, `interp_flo`) with unit tests. See `docs/channel-hydraulics.md`.
 - **A simulation runs a day at a time** (E1 in `docs/roadmap.md`): `swat_engine::run::Simulation`
   (`new`, `step`, `finish`, and `days`, `date`, `clock`, `hrus`, `network`, `report` to look at the
   state between days) is `time_control` with its year and day loops turned inside out, and
