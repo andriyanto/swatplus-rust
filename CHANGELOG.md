@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **A simulation runs a day at a time** (E1 in `docs/roadmap.md`): `swat_engine::run::Simulation`
+  (`new`, `step`, `finish`, and `days`, `date`, `clock`, `hrus`, `network`, `report` to look at the
+  state between days) is `time_control` with its year and day loops turned inside out, and
+  `run_with` is now made of its steps. A simulation can be copied mid-run (`Clone`) and both go on
+  the same way. Every table of the 37 validation scenarios, faithful and `--fix-swat`, is
+  byte-identical to before (`crates/swatplus-rust/tests/step_api.rs` tests the steps and the copy).
 - **Faster, same results**: a channel's stream temperature (`ch_temp`) sums the gage's lagged air
   temperatures once per gage and day instead of once per channel, and a plant's data is shared
   instead of copied three times a day. Pessel 2015–2025 runs about 10 % faster; every table is

@@ -205,6 +205,7 @@ pub use crate::periods::{HruRows, Period};
 /// window as `basin_print_codes_read` completes it: a first day of 0 is 1, a last day of 0 is 366,
 /// a first year of 0 is the simulation's first, a last year of 0 is one past its last
 /// (`yrc + nbyr`), an interval of 0 or less is 1, and the interval counter starts at the interval.
+#[derive(Clone)]
 struct PrintGate {
     day_print: bool,
     over: bool,
@@ -282,478 +283,352 @@ pub fn run(project: &Project, out: &mut dyn OutputSink) -> Result<RunReport, Str
     run_with(project, out, RunOptions::default())
 }
 
-/// [`run`] with options.
+/// [`run`] with options: a [`Simulation`] stepped to its end.
 pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -> Result<RunReport, String> {
-    let mut clock = Clock::new(&project.time);
-    let total_days = project.time.days().len();
-    let mut days_done = 0_usize;
-    let mut weather = Weather::new(project, &mut clock);
-    let mut report = RunReport::default();
+    let mut sim = Simulation::new(project, opts)?;
+    while sim.step(out)? {}
+    Ok(sim.finish(out))
+}
 
-    // HRUs and their stations (`ob%wst`: 1 when the name isn't found), with lapse corrections
-    // (`cli_lapse`).
-    let station_names: Vec<String> = weather.stations.iter().map(|s| s.name.clone()).collect();
-    let lapse = project.codes.lapse == 1;
-    let hrus: Vec<(usize, &swat_model::SpatialObject, f32, f32)> = project
-        .objects_of(ObjectKind::Hru)
-        .map(|o| {
-            let ist = crate::fortran::search(&station_names, &o.weather_station).unwrap_or(1);
-            let (plaps, tlaps) = lapse_rates(project, &weather, ist, o.elev);
-            (ist, o, plaps, tlaps)
-        })
-        .collect();
+/// A simulation run a day at a time (E1 in `docs/roadmap.md`): SWAT+ `time_control` with its year
+/// and day loops turned inside out, so a caller can stop between days, look at the state, and go
+/// on. [`run_with`] is made of these steps, so a stepped run is the same run.
+#[derive(Clone)]
+pub struct Simulation<'p> {
+    project: &'p Project,
+    opts: RunOptions,
+    clock: Clock,
+    weather: Weather,
+    report: RunReport,
+    total_days: usize,
+    days_done: usize,
+    lapse: bool,
+    hrus: Vec<(usize, &'p swat_model::SpatialObject, f32, f32)>,
+    land: Option<Vec<Hru>>,
+    network: Option<crate::route::Network>,
+    hru_wb: Vec<[f32; 4]>,
+    basin: HruBasin,
+    balance_started: bool,
+    saved: Saved,
+    atmo: Option<&'p swat_model::AtmoDep>,
+    atmo_of: Vec<usize>,
+    atmo_ts: i32,
+    atmo_first: bool,
+    gate: PrintGate,
+    nyskip: i32,
+    nbyr: i32,
+    prt: crate::periods::PrintYears,
+    hru_acc: Vec<crate::periods::HruAcc>,
+    ru_acc: Vec<crate::periods::RuAcc>,
+    cha_acc: Vec<crate::periods::ChaAcc>,
+    aqu_acc: Vec<crate::periods::AquAcc>,
+    basin_on: bool,
+    basin_acc: crate::periods::RegionAcc,
+    lsu_acc: Vec<crate::periods::RegionAcc>,
+    day_rows: Vec<Option<HruRows>>,
+    basin_aqu_acc: crate::periods::AquAcc,
+    basin_cha_acc: crate::periods::BasinChaAcc,
+    res_acc: Vec<crate::periods::ResAcc>,
+    basin_res_acc: crate::periods::ResAcc,
+    rec_acc: Vec<crate::periods::RecAcc>,
+    basin_rec_acc: crate::periods::RecAcc,
+    aqu_area: Vec<f32>,
+    ru_gis: Vec<i32>,
+    bsn_name: String,
+    plts_bsn: Vec<String>,
+    bsn_num: Vec<Vec<usize>>,
+    bsn_yld: Vec<(f32, f32)>,
+    bsn_yld_aa: Vec<(f32, f32)>,
+    /// Where the run is: the simulated year (`curyr`, 1-based), whether it has started, the next
+    /// day of it, and its last day (the bounds of the Fortran's day loop, set once a year).
+    curyr: i32,
+    in_year: bool,
+    next_jday: i32,
+    year_last: i32,
+}
 
-    // The HRUs' land phase, when everything they need is ported.
-    let wgn_of: Vec<usize> =
-        hrus.iter().map(|(ist, ..)| weather.stations.get(ist - 1).map(|s| s.wgn.saturating_sub(1)).unwrap_or(0)).collect();
-    let mut land: Option<Vec<Hru>> = match init_hrus(project, &wgn_of, &weather.wgn, clock.step, &clock.ndays) {
-        Ok(h) if h.len() == hrus.len() => Some(h),
-        Ok(h) => {
-            report.hru_skipped = Some(format!("{} HRUs in hru-data.hru, {} in hru.con", h.len(), hrus.len()));
-            None
+impl<'p> Simulation<'p> {
+    /// Sets the simulation up as `time_control` does before its year loop.
+    pub fn new(project: &'p Project, opts: RunOptions) -> Result<Self, String> {
+        let mut clock = Clock::new(&project.time);
+        let total_days = project.time.days().len();
+        let days_done = 0_usize;
+        let mut weather = Weather::new(project, &mut clock);
+        let mut report = RunReport::default();
+
+        // HRUs and their stations (`ob%wst`: 1 when the name isn't found), with lapse corrections
+        // (`cli_lapse`).
+        let station_names: Vec<String> = weather.stations.iter().map(|s| s.name.clone()).collect();
+        let lapse = project.codes.lapse == 1;
+        let hrus: Vec<(usize, &swat_model::SpatialObject, f32, f32)> = project
+            .objects_of(ObjectKind::Hru)
+            .map(|o| {
+                let ist = crate::fortran::search(&station_names, &o.weather_station).unwrap_or(1);
+                let (plaps, tlaps) = lapse_rates(project, &weather, ist, o.elev);
+                (ist, o, plaps, tlaps)
+            })
+            .collect();
+
+        // The HRUs' land phase, when everything they need is ported.
+        let wgn_of: Vec<usize> =
+            hrus.iter().map(|(ist, ..)| weather.stations.get(ist - 1).map(|s| s.wgn.saturating_sub(1)).unwrap_or(0)).collect();
+        let land: Option<Vec<Hru>> = match init_hrus(project, &wgn_of, &weather.wgn, clock.step, &clock.ndays) {
+            Ok(h) if h.len() == hrus.len() => Some(h),
+            Ok(h) => {
+                report.hru_skipped = Some(format!("{} HRUs in hru-data.hru, {} in hru.con", h.len(), hrus.len()));
+                None
+            }
+            Err(e) => {
+                report.hru_skipped = Some(e);
+                None
+            }
+        };
+        // The objects past the HRUs (routing units, aquifers), when the HRUs are simulated.
+        let network = match land.as_ref() {
+            Some(l) => {
+                let tconc: Vec<f32> = l.iter().map(|h| h.tconc).collect();
+                let ovn_km: Vec<(f32, f32)> = l.iter().map(|h| (h.ovn, h.km)).collect();
+                match crate::route::Network::new(project, &station_names, &tconc, &ovn_km, opts.fixes) {
+                    Ok(n) => n,
+                    Err(e) => {
+                        report.routing_skipped = Some(e);
+                        None
+                    }
+                }
+            }
+            None => None,
+        };
+        if let Some(why) = network.as_ref().and_then(|n| n.channel_skipped.clone()) {
+            report.channel_skipped = Some(why);
         }
-        Err(e) => {
-            report.hru_skipped = Some(e);
-            None
-        }
-    };
-    // The objects past the HRUs (routing units, aquifers), when the HRUs are simulated.
-    let mut network = match land.as_ref() {
-        Some(l) => {
-            let tconc: Vec<f32> = l.iter().map(|h| h.tconc).collect();
-            let ovn_km: Vec<(f32, f32)> = l.iter().map(|h| (h.ovn, h.km)).collect();
-            match crate::route::Network::new(project, &station_names, &tconc, &ovn_km, opts.fixes) {
-                Ok(n) => n,
-                Err(e) => {
-                    report.routing_skipped = Some(e);
-                    None
+        let hru_wb = vec![[0.0_f32; 4]; hrus.len()];
+        let basin = HruBasin::new(project).with_fixes(opts.fixes);
+        let balance_started = false;
+        let saved =
+            Saved { rndseed_cond: weather.rndseed_cond, septic_opt: project.septic.iter().map(|s| s.opt).collect(), ..Saved::default() };
+        // cli_read_atmodep: the deposition station of each weather station, and the time step of
+        // the first day (`atmodep_cont%ts`, `first`).
+        let atmo = project.atmodep.as_ref();
+        let atmo_names: Vec<String> = atmo.map(|a| a.stations.iter().map(|s| s.name.clone()).collect()).unwrap_or_default();
+        let atmo_of: Vec<usize> = project
+            .stations
+            .iter()
+            .map(|s| s.atmo_dep.as_deref().and_then(|n| crate::fortran::search(&atmo_names, n)).unwrap_or(0))
+            .collect();
+        let (mut atmo_ts, mut atmo_first) = (0_i32, true);
+        if let Some(a) = atmo {
+            let (yrc0, mo0) = (project.time.yrc_start, clock.mo);
+            if a.timestep == "yr"
+                && let Some(iyr) = (1..=a.num as i32).find(|&iyr| a.yr_init + iyr - 1 == yrc0)
+            {
+                atmo_ts = iyr;
+                atmo_first = false;
+            }
+            if a.timestep == "mo" {
+                let (mut iyrc, mut imo) = (a.yr_init, a.mo_init);
+                for _ in 0..a.num {
+                    if iyrc == yrc0 && imo == mo0 {
+                        atmo_ts = 12 * (yrc0 - a.yr_init) + imo;
+                        atmo_first = false;
+                        break;
+                    }
+                    imo += 1;
+                    if imo > 12 {
+                        imo = 1;
+                        iyrc += 1;
+                    }
                 }
             }
         }
-        None => None,
-    };
-    if let Some(why) = network.as_ref().and_then(|n| n.channel_skipped.clone()) {
-        report.channel_skipped = Some(why);
-    }
-    let mut hru_wb = vec![[0.0_f32; 4]; hrus.len()];
-    let basin = HruBasin::new(project).with_fixes(opts.fixes);
-    let mut balance_started = false;
-    let mut saved =
-        Saved { rndseed_cond: weather.rndseed_cond, septic_opt: project.septic.iter().map(|s| s.opt).collect(), ..Saved::default() };
-    // cli_read_atmodep: the deposition station of each weather station, and the time step of
-    // the first day (`atmodep_cont%ts`, `first`).
-    let atmo = project.atmodep.as_ref();
-    let atmo_names: Vec<String> = atmo.map(|a| a.stations.iter().map(|s| s.name.clone()).collect()).unwrap_or_default();
-    let atmo_of: Vec<usize> =
-        project.stations.iter().map(|s| s.atmo_dep.as_deref().and_then(|n| crate::fortran::search(&atmo_names, n)).unwrap_or(0)).collect();
-    let (mut atmo_ts, mut atmo_first) = (0_i32, true);
-    if let Some(a) = atmo {
-        let (yrc0, mo0) = (project.time.yrc_start, clock.mo);
-        if a.timestep == "yr"
-            && let Some(iyr) = (1..=a.num as i32).find(|&iyr| a.yr_init + iyr - 1 == yrc0)
-        {
-            atmo_ts = iyr;
-            atmo_first = false;
-        }
-        if a.timestep == "mo" {
-            let (mut iyrc, mut imo) = (a.yr_init, a.mo_init);
-            for _ in 0..a.num {
-                if iyrc == yrc0 && imo == mo0 {
-                    atmo_ts = 12 * (yrc0 - a.yr_init) + imo;
-                    atmo_first = false;
-                    break;
-                }
-                imo += 1;
-                if imo > 12 {
-                    imo = 1;
-                    iyrc += 1;
-                }
-            }
-        }
-    }
 
-    clock.before_loop();
-    weather.precip_control(0, &clock)?;
+        clock.before_loop();
+        weather.precip_control(0, &clock)?;
 
-    let mut gate = PrintGate::new(&project.print, &clock);
-    let nyskip = project.print.nyskip;
-    let nbyr = clock.nbyr;
-    let mut prt = crate::periods::PrintYears::default();
-    let mut hru_acc = vec![crate::periods::HruAcc::default(); hrus.len()];
-    let mut ru_acc: Vec<crate::periods::RuAcc> = Vec::new();
-    let mut cha_acc: Vec<crate::periods::ChaAcc> = Vec::new();
-    let mut aqu_acc: Vec<crate::periods::AquAcc> = Vec::new();
-    // basin_output needs ls_unit.ele, lsu_output ls_unit.def, basin_aquifer_output aqu_catunit.ele.
-    let basin_on = project.lsu_elems.len() > 1;
-    let mut basin_acc = crate::periods::RegionAcc::new(false);
-    let mut lsu_acc: Vec<crate::periods::RegionAcc> = project.lsu_defs.iter().map(|_| crate::periods::RegionAcc::new(true)).collect();
-    let mut day_rows: Vec<Option<HruRows>> = vec![None; hrus.len()];
-    let mut basin_aqu_acc = crate::periods::AquAcc::default();
-    let mut basin_cha_acc = crate::periods::BasinChaAcc::default();
-    let mut res_acc: Vec<crate::periods::ResAcc> = Vec::new();
-    let mut basin_res_acc = crate::periods::ResAcc::default();
-    let mut rec_acc: Vec<crate::periods::RecAcc> = Vec::new();
-    let mut basin_rec_acc = crate::periods::RecAcc::default();
-    let aqu_area: Vec<f32> = project.objects_of(swat_model::ObjectKind::Aquifer).map(|o| o.area_ha).collect();
-    let ru_gis: Vec<i32> = project.objects_of(swat_model::ObjectKind::RoutingUnit).map(|o| o.gis_id).collect();
-    let bsn_name = project.basin_name.clone();
-    // plant_all_init: the basin's plants, in the order they first appear in the HRUs'
-    // communities, and each HRU plant's place among them.
-    let mut plts_bsn: Vec<String> = Vec::new();
-    let bsn_num: Vec<Vec<usize>> = land
-        .as_ref()
-        .map(|l| {
-            l.iter()
-                .map(|h| {
-                    h.plants
-                        .iter()
-                        .map(|p| match plts_bsn.iter().position(|n| *n == p.cpnm) {
-                            Some(k) => k,
-                            None => {
-                                plts_bsn.push(p.cpnm.clone());
-                                plts_bsn.len() - 1
-                            }
-                        })
-                        .collect()
-                })
-                .collect()
+        let gate = PrintGate::new(&project.print, &clock);
+        let nyskip = project.print.nyskip;
+        let nbyr = clock.nbyr;
+        let prt = crate::periods::PrintYears::default();
+        let hru_acc = vec![crate::periods::HruAcc::default(); hrus.len()];
+        let ru_acc: Vec<crate::periods::RuAcc> = Vec::new();
+        let cha_acc: Vec<crate::periods::ChaAcc> = Vec::new();
+        let aqu_acc: Vec<crate::periods::AquAcc> = Vec::new();
+        // basin_output needs ls_unit.ele, lsu_output ls_unit.def, basin_aquifer_output aqu_catunit.ele.
+        let basin_on = project.lsu_elems.len() > 1;
+        let basin_acc = crate::periods::RegionAcc::new(false);
+        let lsu_acc: Vec<crate::periods::RegionAcc> = project.lsu_defs.iter().map(|_| crate::periods::RegionAcc::new(true)).collect();
+        let day_rows: Vec<Option<HruRows>> = vec![None; hrus.len()];
+        let basin_aqu_acc = crate::periods::AquAcc::default();
+        let basin_cha_acc = crate::periods::BasinChaAcc::default();
+        let res_acc: Vec<crate::periods::ResAcc> = Vec::new();
+        let basin_res_acc = crate::periods::ResAcc::default();
+        let rec_acc: Vec<crate::periods::RecAcc> = Vec::new();
+        let basin_rec_acc = crate::periods::RecAcc::default();
+        let aqu_area: Vec<f32> = project.objects_of(swat_model::ObjectKind::Aquifer).map(|o| o.area_ha).collect();
+        let ru_gis: Vec<i32> = project.objects_of(swat_model::ObjectKind::RoutingUnit).map(|o| o.gis_id).collect();
+        let bsn_name = project.basin_name.clone();
+        // plant_all_init: the basin's plants, in the order they first appear in the HRUs'
+        // communities, and each HRU plant's place among them.
+        let mut plts_bsn: Vec<String> = Vec::new();
+        let bsn_num: Vec<Vec<usize>> = land
+            .as_ref()
+            .map(|l| {
+                l.iter()
+                    .map(|h| {
+                        h.plants
+                            .iter()
+                            .map(|p| match plts_bsn.iter().position(|n| *n == p.cpnm) {
+                                Some(k) => k,
+                                None => {
+                                    plts_bsn.push(p.cpnm.clone());
+                                    plts_bsn.len() - 1
+                                }
+                            })
+                            .collect()
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let bsn_yld = vec![(0.0_f32, 0.0_f32); plts_bsn.len()];
+        let bsn_yld_aa = vec![(0.0_f32, 0.0_f32); plts_bsn.len()];
+        Ok(Self {
+            project,
+            opts,
+            clock,
+            weather,
+            report,
+            total_days,
+            days_done,
+            lapse,
+            hrus,
+            land,
+            network,
+            hru_wb,
+            basin,
+            balance_started,
+            saved,
+            atmo,
+            atmo_of,
+            atmo_ts,
+            atmo_first,
+            gate,
+            nyskip,
+            nbyr,
+            prt,
+            hru_acc,
+            ru_acc,
+            cha_acc,
+            aqu_acc,
+            basin_on,
+            basin_acc,
+            lsu_acc,
+            day_rows,
+            basin_aqu_acc,
+            basin_cha_acc,
+            res_acc,
+            basin_res_acc,
+            rec_acc,
+            basin_rec_acc,
+            aqu_area,
+            ru_gis,
+            bsn_name,
+            plts_bsn,
+            bsn_num,
+            bsn_yld,
+            bsn_yld_aa,
+            curyr: 1,
+            in_year: false,
+            next_jday: 0,
+            year_last: 0,
         })
-        .unwrap_or_default();
-    let mut bsn_yld = vec![(0.0_f32, 0.0_f32); plts_bsn.len()];
-    let mut bsn_yld_aa = vec![(0.0_f32, 0.0_f32); plts_bsn.len()];
-    for curyr in 1..=nbyr {
-        clock.start_year(curyr);
-        prt.start_year(clock.yrs, nyskip, nbyr, swat_model::time::is_leap(clock.yrc), clock.day_start, clock.day_end_yr);
-        if !balance_started && clock.yrs > nyskip {
-            for h in land.iter_mut().flatten() {
+    }
+
+    /// Runs the next day, with the start of its year before it and the end of its year after it
+    /// when it is the year's first or last. `Ok(false)` once the simulation has ended.
+    pub fn step(&mut self, out: &mut dyn OutputSink) -> Result<bool, String> {
+        loop {
+            if self.curyr > self.nbyr {
+                return Ok(false);
+            }
+            if !self.in_year {
+                self.start_year();
+            }
+            if self.next_jday <= self.year_last {
+                let jday = self.next_jday;
+                self.next_jday += 1;
+                self.run_day(jday, out)?;
+                if self.next_jday > self.year_last {
+                    self.end_year(out);
+                }
+                return Ok(true);
+            }
+            // A year without days still ends.
+            self.end_year(out);
+        }
+    }
+
+    /// Ends the run: the last progress report, and what the run did besides its output.
+    pub fn finish(self, out: &mut dyn OutputSink) -> RunReport {
+        let c = &self.clock;
+        out.progress(self.days_done, self.total_days, Day { jday: c.day, mon: c.mo, day: c.day_mo, yr: c.yrc });
+        self.report
+    }
+
+    /// Whether every day has run.
+    pub fn is_finished(&self) -> bool {
+        self.curyr > self.nbyr
+    }
+
+    /// The days run so far, and in all.
+    pub fn days(&self) -> (usize, usize) {
+        (self.days_done, self.total_days)
+    }
+
+    /// The last day run (before the first: the day the simulation starts on).
+    pub fn date(&self) -> Day {
+        let c = &self.clock;
+        Day { jday: c.day, mon: c.mo, day: c.day_mo, yr: c.yrc }
+    }
+
+    /// The clock (`time`).
+    pub fn clock(&self) -> &Clock {
+        &self.clock
+    }
+
+    /// The HRUs, when their land phase is simulated.
+    pub fn hrus(&self) -> Option<&[Hru]> {
+        self.land.as_deref()
+    }
+
+    /// The objects past the HRUs (routing units, aquifers, channels, reservoirs), when simulated.
+    pub fn network(&self) -> Option<&crate::route::Network> {
+        self.network.as_ref()
+    }
+
+    /// What the run has done besides its output so far.
+    pub fn report(&self) -> &RunReport {
+        &self.report
+    }
+
+    /// The start of simulated year `curyr` in `time_control`.
+    fn start_year(&mut self) {
+        let clock = &mut self.clock;
+        clock.start_year(self.curyr);
+        self.prt.start_year(clock.yrs, self.nyskip, self.nbyr, swat_model::time::is_leap(clock.yrc), clock.day_start, clock.day_end_yr);
+        if !self.balance_started && clock.yrs > self.nyskip {
+            for h in self.land.iter_mut().flatten() {
                 h.start_balance();
             }
-            balance_started = true;
+            self.balance_started = true;
         }
-        for jday in clock.day_start..=clock.day_end_yr {
-            clock.set_day(jday);
-            out.progress(days_done, total_days, Day { jday: clock.day, mon: clock.mo, day: clock.day_mo, yr: clock.yrc });
-            days_done += 1;
-            gate.update(&clock);
-            weather.climate_control(&clock)?;
+        self.next_jday = clock.day_start;
+        self.year_last = clock.day_end_yr;
+        self.in_year = true;
+    }
 
-            let output = clock.yrs > nyskip;
-            let printing = output && gate.prints();
-            let day = Day { jday: clock.day, mon: clock.mo, day: clock.day_mo, yr: clock.yrc };
-            let end_sim = clock.end_yr && clock.yrs == nbyr;
-            if end_sim {
-                prt.end_sim(nbyr);
-            }
-            let mo = clock.mo.clamp(1, 12) as usize;
-            let pday = crate::periods::PeriodDay {
-                end_mo: clock.day == clock.ndays[mo],
-                end_yr: clock.end_yr,
-                end_sim,
-                mon_days: (clock.ndays[mo] - clock.ndays[mo - 1]) as f32,
-                day_end_yr: clock.day_end_yr as f32,
-                yrs_prt: prt.yrs_prt,
-                days_prt: prt.days_prt,
-            };
-            // cli_atmodep_time_control (the day's end-of-month and -year flags are already set,
-            // so the last day of a month or year takes the next one's deposition).
-            let end_mo_today = clock.day == clock.ndays[mo];
-            if let Some(a) = atmo
-                && !a.stations.is_empty()
-            {
-                if atmo_first {
-                    if (a.timestep == "yr" && a.yr_init == clock.yrc)
-                        || (a.timestep == "mo" && a.yr_init == clock.yrc && a.mo_init == clock.mo)
-                    {
-                        atmo_ts = 1;
-                        atmo_first = false;
-                    }
-                } else if (a.timestep == "yr" && clock.end_yr) || (a.timestep == "mo" && end_mo_today) {
-                    atmo_ts += 1;
-                }
-            }
-            let atmo_day = |ist: usize| -> Option<[f32; 4]> {
-                let a = atmo?;
-                let st = a.stations.get(atmo_of.get(ist.wrapping_sub(1)).copied().unwrap_or(0).wrapping_sub(1));
-                let v = |x: Option<&Vec<f32>>, k: usize| x.and_then(|x| x.get(k)).copied().unwrap_or(0.0);
-                match a.timestep.as_str() {
-                    "aa" => {
-                        let s = st;
-                        Some([
-                            v(s.map(|s| &s.no3_rf), 0),
-                            v(s.map(|s| &s.no3_dry), 0) / 365.0,
-                            v(s.map(|s| &s.nh4_rf), 0),
-                            v(s.map(|s| &s.nh4_dry), 0) / 365.0,
-                        ])
-                    }
-                    "mo" | "yr" if atmo_ts > 0 && atmo_ts as usize <= a.num => {
-                        let k = atmo_ts as usize - 1;
-                        let c = if a.timestep == "mo" { (clock.ndays[mo] - clock.ndays[mo - 1]) as f32 } else { 365.0 };
-                        Some([
-                            v(st.map(|s| &s.no3_rf), k),
-                            v(st.map(|s| &s.no3_dry), k) / c,
-                            v(st.map(|s| &s.nh4_rf), k),
-                            v(st.map(|s| &s.nh4_dry), k) / c,
-                        ])
-                    }
-                    _ => None,
-                }
-            };
-            // The HRUs run in SWAT+'s command order (an HRU that receives another's water after
-            // it), and print in their own order.
-            let hru_order: Vec<usize> = match network.as_ref() {
-                Some(n) if n.hru_order().len() == hrus.len() => n.hru_order().to_vec(),
-                _ => (0..hrus.len()).collect(),
-            };
-            let mut hru_days: Vec<Option<HruDay>> = (0..hrus.len()).map(|_| None).collect();
-            let mut hru_ws: Vec<HruWeather> = vec![HruWeather::default(); hrus.len()];
-            for &j in &hru_order {
-                let (ist, _o, plaps, tlaps) = &hrus[j];
-                let Some(st) = weather.stations.get(ist - 1) else { continue };
-                let s = &st.weat;
-                let mut w = HruWeather {
-                    precip: s.precip,
-                    tmax: s.tmax,
-                    tmin: s.tmin,
-                    tave: s.tave,
-                    solrad: s.solrad,
-                    solradmx: s.solradmx,
-                    windsp: s.windsp,
-                    rhum: s.rhum,
-                    phubase0: s.phubase0,
-                    station_pet: s.pet,
-                    atmo: atmo_day(*ist),
-                    ts: {
-                        let mut ts = [0.0_f32; crate::hru::subdaily::MAX_STEP];
-                        for (t, v) in ts.iter_mut().zip(&s.ts) {
-                            *t = *v;
-                        }
-                        ts
-                    },
-                };
-                if lapse {
-                    w.precip = (w.precip + plaps).max(0.0);
-                    w.tmax += tlaps;
-                    w.tmin += tlaps;
-                    w.tave += tlaps;
-                }
-                let mut hd = None;
-                if let Some(h) = land.as_mut().and_then(|l| l.get_mut(j)) {
-                    // et_pot (Penman-Monteith) raises the HRU's wind to 0.01 m/s, and the HRU
-                    // prints it.
-                    if basin.pet == 1 && w.windsp < 0.01 {
-                        w.windsp = 0.01;
-                    }
-                    let g = weather.wgn.get(h.wgn);
-                    let ctx = DayCtx {
-                        day: clock.day,
-                        mo: clock.mo,
-                        day_mo: clock.day_mo,
-                        tmp_an: g.map(|g| g.tmp_an).unwrap_or(0.0),
-                        phutot: g.map(|g| g.phutot).unwrap_or(0.0),
-                        daylmn: g.map(|g| g.daylmn).unwrap_or(0.0),
-                        dormhr: g.map(|g| g.daylth).unwrap_or(0.0),
-                        station_tave: s.tave,
-                        daylength: s.daylength,
-                        precip_half_hr: s.precip_half_hr,
-                        station_precip: s.precip,
-                        day_end_yr: clock.day_end_yr,
-                        yrc: clock.yrc,
-                        end_yr: clock.day == clock.day_end_yr,
-                        runon: network.as_ref().and_then(|n| n.hru_runon(j)),
-                    };
-                    let mut d = h.day(&w, &ctx, &basin, &mut saved);
-                    for &(ipl, y) in &d.harvests {
-                        if let Some(&k) = bsn_num.get(j).and_then(|b| b.get(ipl)) {
-                            bsn_yld[k].0 += h.area_ha;
-                            bsn_yld[k].1 += y * h.area_ha / 1000.0;
-                        }
-                    }
-                    if output {
-                        h.close_day(&mut d.wb, printing);
-                    }
-                    hd = Some(d);
-                }
-                if let (Some(n), Some(d)) = (network.as_mut(), hd.as_ref()) {
-                    n.set_hru(j, &d.hd, &d.hhsurfq);
-                    hru_wb[j] = [d.wb.snomlt, d.wb.surq_gen, d.wb.latq, d.wb.wateryld];
-                }
-                hru_ws[j] = w;
-                hru_days[j] = hd;
-            }
-            for (j, (_ist, o, _plaps, _tlaps)) in hrus.iter().enumerate() {
-                let w = hru_ws[j];
-                let hd = hru_days[j].take();
-                if printing {
-                    out.hru_day(day, j + 1, o.gis_id, &o.name, &w, hd.as_ref());
-                }
-                if output && let Some(d) = hd.as_ref() {
-                    let weather = [w.tmax, w.tmin, w.tave, w.solrad, w.windsp, w.rhum];
-                    hru_acc[j].day(d, weather, &pday, |p, rows| out.hru_period(p, day, j + 1, o.gis_id, &o.name, rows, d.nutrients));
-                    day_rows[j] = Some(crate::periods::region_values(d, weather));
-                }
-                if end_sim
-                    && output
-                    && let Some(h) = land.as_ref().and_then(|l| l.get(j))
-                {
-                    for pl in &h.plants {
-                        let mut y = pl.yield_tot;
-                        if pl.harv_num > 0 {
-                            let k = pl.harv_num as f32;
-                            y = crate::hru::plant::OrgMass { m: y.m / k, c: y.c / k, n: y.n / k, p: y.p / k };
-                        }
-                        out.crop_yld_aa(day, j + 1, &pl.db.name, [y.m, y.c, y.n, y.p]);
-                    }
-                }
-            }
-            if output && land.is_some() {
-                regions(project, &day_rows, basin_on, &mut basin_acc, &mut lsu_acc, &ru_gis, &bsn_name, &pday, printing, day, out);
-            }
-            if let Some(n) = network.as_mut() {
-                let nd = crate::route::NetDay {
-                    weat: weather.stations.iter().map(|s| &s.weat).collect(),
-                    daylth: weather
-                        .stations
-                        .iter()
-                        .map(|s| weather.wgn.get(s.wgn.wrapping_sub(1)).map(|g| g.daylth).unwrap_or(0.0))
-                        .collect(),
-                    tgage: weather
-                        .stations
-                        .iter()
-                        .map(|s| match s.tmp {
-                            Source::Gage(i) => weather.tmp.get(i),
-                            Source::Sim => None,
-                        })
-                        .collect(),
-                    hru_wb: &hru_wb,
-                    yrs: clock.yrs,
-                    jday: clock.day,
-                    yrc: clock.yrc,
-                    mo: clock.mo,
-                    day_mo: clock.day_mo,
-                    print: clock.yrs > nyskip,
-                };
-                n.day(&nd);
-                if output {
-                    let mut bw = crate::channel::ChWat::default();
-                    let (mut bs, mut bi, mut bo) = (crate::hyd::Hyd::default(), crate::hyd::Hyd::default(), crate::hyd::Hyd::default());
-                    let mut any_cha = false;
-                    let mut ba = crate::route::AquDay::default();
-                    let mut any_aqu = false;
-                    for (_, _, _, w, st, i, o, _) in n.channels() {
-                        any_cha = true;
-                        bs = bs.plus(st);
-                        bi = bi.plus(i);
-                        bo = bo.plus(o);
-                        crate::periods::wat_sum(&mut bw, &w);
-                    }
-                    if any_cha {
-                        if printing {
-                            out.basin_cha(None, day, &bsn_name, &bw, &bs, &bi, &bo);
-                        }
-                        basin_cha_acc.day(&bw, &bi, &bo, &pday, |p, w, i, o| out.basin_cha(Some(p), day, &bsn_name, w, &bs, i, o));
-                    }
-                    if project.aqu_elems {
-                        for (k, (_, _, _, d)) in n.aquifers().enumerate() {
-                            any_aqu = true;
-                            let c = aqu_area.get(k).copied().unwrap_or(0.0) / project.area_tot_ha;
-                            crate::periods::aqu_sum(&mut ba, d, c);
-                        }
-                    }
-                    if any_aqu {
-                        if printing {
-                            out.basin_aqu(None, day, &bsn_name, &ba);
-                        }
-                        basin_aqu_acc.day(&ba, &pday, |p, d| out.basin_aqu(Some(p), day, &bsn_name, d));
-                    }
-                    let steps = n.channel_steps();
-                    for (k, (ich, gis_id, name, w, st, i, o, wtemp)) in n.channels().into_iter().enumerate() {
-                        if printing && let Some((_, _, _, flo)) = steps.get(k) {
-                            out.cha_subday(day, ich, gis_id, name, flo);
-                        }
-                        if printing {
-                            out.cha_day(day, ich, gis_id, name, &w, &st, &i, &o, wtemp);
-                        }
-                        if cha_acc.len() <= k {
-                            cha_acc.resize(k + 1, Default::default());
-                        }
-                        cha_acc[k].day(&w, &i, &o, &pday, |p, w, i, o| out.cha_period(p, day, ich, gis_id, name, w, &st, i, o, wtemp));
-                    }
-                    for (k, (iaq, gis_id, name, d)) in n.aquifers().enumerate() {
-                        if printing {
-                            out.aqu_day(day, iaq, gis_id, name, d);
-                        }
-                        if aqu_acc.len() <= k {
-                            aqu_acc.resize(k + 1, Default::default());
-                        }
-                        aqu_acc[k].day(d, &pday, |p, d| out.aqu_period(p, day, iaq, gis_id, name, d));
-                    }
-                    for (k, (j, gis_id, name, r)) in n.reservoir_days().enumerate() {
-                        if printing {
-                            out.res(None, day, j, gis_id, name, &r.wat, &r.water, &r.in_d, &r.out_d);
-                        }
-                        if res_acc.len() <= k {
-                            res_acc.resize(k + 1, Default::default());
-                        }
-                        res_acc[k]
-                            .day(&r.wat, &r.in_d, &r.out_d, &pday, |p, w, i, o| out.res(Some(p), day, j, gis_id, name, w, &r.water, i, o));
-                    }
-                    if !n.reservoirs.is_empty() {
-                        let mut bw = crate::channel::ChWat::default();
-                        let (mut bs, mut bi, mut bo) = (crate::hyd::Hyd::default(), crate::hyd::Hyd::default(), crate::hyd::Hyd::default());
-                        for r in &n.reservoirs {
-                            bs = bs.plus(r.water);
-                            bi = bi.plus(r.in_d);
-                            bo = bo.plus(r.out_d);
-                            crate::periods::wat_sum(&mut bw, &r.wat);
-                        }
-                        let unit = n.reservoirs.len() + 1;
-                        if printing {
-                            out.basin_res(None, day, unit, &bsn_name, &bw, &bs, &bi, &bo);
-                        }
-                        basin_res_acc.day(&bw, &bi, &bo, &pday, |p, w, i, o| out.basin_res(Some(p), day, unit, &bsn_name, w, &bs, i, o));
-                        // basin_reservoir_output zeroes the day's inflow and outflow.
-                        for r in n.reservoirs.iter_mut() {
-                            r.in_d = crate::hyd::Hyd::default();
-                            r.out_d = crate::hyd::Hyd::default();
-                        }
-                    }
-                    for (k, (_, name, h)) in n.recall_days().enumerate() {
-                        if printing {
-                            out.recall(None, day, name, h);
-                        }
-                        if rec_acc.len() <= k {
-                            rec_acc.resize(k + 1, Default::default());
-                        }
-                        rec_acc[k].day(h, &pday, |p, h| out.recall(Some(p), day, name, h));
-                    }
-                    if !n.recalls.is_empty() {
-                        let mut b = crate::hyd::Hyd::default();
-                        for r in &n.recalls {
-                            b = b.plus(r.d);
-                        }
-                        if printing {
-                            out.basin_psc(None, day, &bsn_name, &b);
-                        }
-                        basin_rec_acc.day(&b, &pday, |p, h| out.basin_psc(Some(p), day, &bsn_name, h));
-                    }
-                    for (k, (name, h)) in n.routing_units().enumerate() {
-                        if printing {
-                            out.ru_day(day, name, h);
-                        }
-                        if ru_acc.len() <= k {
-                            ru_acc.resize(k + 1, Default::default());
-                        }
-                        ru_acc[k].day(h, &pday, |p, h| out.ru_period(p, day, name, h));
-                    }
-                }
-            }
-            if clock.day == 181 {
-                for h in land.iter_mut().flatten() {
-                    h.midyear();
-                }
-            }
-        }
-        // time_control at the year's end: the basin's crop yields.
+    /// The end of the year in `time_control`: the basin's crop yields, the HRUs' year-end.
+    fn end_year(&mut self, out: &mut dyn OutputSink) {
+        let Self { clock, plts_bsn, bsn_yld, bsn_yld_aa, prt, land, basin, opts, .. } = self;
+        let (nyskip, nbyr) = (self.nyskip, self.nbyr);
         for (k, name) in plts_bsn.iter().enumerate() {
             if clock.yrs > nyskip {
                 let (area, yld) = bsn_yld[k];
@@ -772,9 +647,380 @@ pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -
             h.end_year(basin.cswat, opts.fixes);
         }
         clock.yrc += 1;
+        self.curyr += 1;
+        self.in_year = false;
     }
-    out.progress(days_done, total_days, Day { jday: clock.day, mon: clock.mo, day: clock.day_mo, yr: clock.yrc });
-    Ok(report)
+
+    /// One day of `time_control`'s day loop: day `jday` of the current year.
+    fn run_day(&mut self, jday: i32, out: &mut dyn OutputSink) -> Result<(), String> {
+        let Self {
+            project,
+            opts,
+            clock,
+            weather,
+            report,
+            total_days,
+            days_done,
+            lapse,
+            hrus,
+            land,
+            network,
+            hru_wb,
+            basin,
+            balance_started,
+            saved,
+            atmo,
+            atmo_of,
+            atmo_ts,
+            atmo_first,
+            gate,
+            nyskip,
+            nbyr,
+            prt,
+            hru_acc,
+            ru_acc,
+            cha_acc,
+            aqu_acc,
+            basin_on,
+            basin_acc,
+            lsu_acc,
+            day_rows,
+            basin_aqu_acc,
+            basin_cha_acc,
+            res_acc,
+            basin_res_acc,
+            rec_acc,
+            basin_rec_acc,
+            aqu_area,
+            ru_gis,
+            bsn_name,
+            bsn_num,
+            bsn_yld,
+            ..
+        } = self;
+        let project: &Project = project;
+        let (nyskip, nbyr, lapse, basin_on, opts) = (*nyskip, *nbyr, *lapse, *basin_on, *opts);
+        let atmo = *atmo;
+        let basin: &HruBasin = basin;
+        let _ = (&opts, &report, &balance_started);
+        clock.set_day(jday);
+        out.progress(*days_done, *total_days, Day { jday: clock.day, mon: clock.mo, day: clock.day_mo, yr: clock.yrc });
+        *days_done += 1;
+        gate.update(clock);
+        weather.climate_control(clock)?;
+
+        let output = clock.yrs > nyskip;
+        let printing = output && gate.prints();
+        let day = Day { jday: clock.day, mon: clock.mo, day: clock.day_mo, yr: clock.yrc };
+        let end_sim = clock.end_yr && clock.yrs == nbyr;
+        if end_sim {
+            prt.end_sim(nbyr);
+        }
+        let mo = clock.mo.clamp(1, 12) as usize;
+        let pday = crate::periods::PeriodDay {
+            end_mo: clock.day == clock.ndays[mo],
+            end_yr: clock.end_yr,
+            end_sim,
+            mon_days: (clock.ndays[mo] - clock.ndays[mo - 1]) as f32,
+            day_end_yr: clock.day_end_yr as f32,
+            yrs_prt: prt.yrs_prt,
+            days_prt: prt.days_prt,
+        };
+        // cli_atmodep_time_control (the day's end-of-month and -year flags are already set,
+        // so the last day of a month or year takes the next one's deposition).
+        let end_mo_today = clock.day == clock.ndays[mo];
+        if let Some(a) = atmo
+            && !a.stations.is_empty()
+        {
+            if *atmo_first {
+                if (a.timestep == "yr" && a.yr_init == clock.yrc) || (a.timestep == "mo" && a.yr_init == clock.yrc && a.mo_init == clock.mo)
+                {
+                    *atmo_ts = 1;
+                    *atmo_first = false;
+                }
+            } else if (a.timestep == "yr" && clock.end_yr) || (a.timestep == "mo" && end_mo_today) {
+                *atmo_ts += 1;
+            }
+        }
+        let atmo_day = |ist: usize| -> Option<[f32; 4]> {
+            let a = atmo?;
+            let st = a.stations.get(atmo_of.get(ist.wrapping_sub(1)).copied().unwrap_or(0).wrapping_sub(1));
+            let v = |x: Option<&Vec<f32>>, k: usize| x.and_then(|x| x.get(k)).copied().unwrap_or(0.0);
+            match a.timestep.as_str() {
+                "aa" => {
+                    let s = st;
+                    Some([
+                        v(s.map(|s| &s.no3_rf), 0),
+                        v(s.map(|s| &s.no3_dry), 0) / 365.0,
+                        v(s.map(|s| &s.nh4_rf), 0),
+                        v(s.map(|s| &s.nh4_dry), 0) / 365.0,
+                    ])
+                }
+                "mo" | "yr" if *atmo_ts > 0 && *atmo_ts as usize <= a.num => {
+                    let k = *atmo_ts as usize - 1;
+                    let c = if a.timestep == "mo" { (clock.ndays[mo] - clock.ndays[mo - 1]) as f32 } else { 365.0 };
+                    Some([
+                        v(st.map(|s| &s.no3_rf), k),
+                        v(st.map(|s| &s.no3_dry), k) / c,
+                        v(st.map(|s| &s.nh4_rf), k),
+                        v(st.map(|s| &s.nh4_dry), k) / c,
+                    ])
+                }
+                _ => None,
+            }
+        };
+        // The HRUs run in SWAT+'s command order (an HRU that receives another's water after
+        // it), and print in their own order.
+        let hru_order: Vec<usize> = match network.as_ref() {
+            Some(n) if n.hru_order().len() == hrus.len() => n.hru_order().to_vec(),
+            _ => (0..hrus.len()).collect(),
+        };
+        let mut hru_days: Vec<Option<HruDay>> = (0..hrus.len()).map(|_| None).collect();
+        let mut hru_ws: Vec<HruWeather> = vec![HruWeather::default(); hrus.len()];
+        for &j in &hru_order {
+            let (ist, _o, plaps, tlaps) = &hrus[j];
+            let Some(st) = weather.stations.get(ist - 1) else { continue };
+            let s = &st.weat;
+            let mut w = HruWeather {
+                precip: s.precip,
+                tmax: s.tmax,
+                tmin: s.tmin,
+                tave: s.tave,
+                solrad: s.solrad,
+                solradmx: s.solradmx,
+                windsp: s.windsp,
+                rhum: s.rhum,
+                phubase0: s.phubase0,
+                station_pet: s.pet,
+                atmo: atmo_day(*ist),
+                ts: {
+                    let mut ts = [0.0_f32; crate::hru::subdaily::MAX_STEP];
+                    for (t, v) in ts.iter_mut().zip(&s.ts) {
+                        *t = *v;
+                    }
+                    ts
+                },
+            };
+            if lapse {
+                w.precip = (w.precip + plaps).max(0.0);
+                w.tmax += tlaps;
+                w.tmin += tlaps;
+                w.tave += tlaps;
+            }
+            let mut hd = None;
+            if let Some(h) = land.as_mut().and_then(|l| l.get_mut(j)) {
+                // et_pot (Penman-Monteith) raises the HRU's wind to 0.01 m/s, and the HRU
+                // prints it.
+                if basin.pet == 1 && w.windsp < 0.01 {
+                    w.windsp = 0.01;
+                }
+                let g = weather.wgn.get(h.wgn);
+                let ctx = DayCtx {
+                    day: clock.day,
+                    mo: clock.mo,
+                    day_mo: clock.day_mo,
+                    tmp_an: g.map(|g| g.tmp_an).unwrap_or(0.0),
+                    phutot: g.map(|g| g.phutot).unwrap_or(0.0),
+                    daylmn: g.map(|g| g.daylmn).unwrap_or(0.0),
+                    dormhr: g.map(|g| g.daylth).unwrap_or(0.0),
+                    station_tave: s.tave,
+                    daylength: s.daylength,
+                    precip_half_hr: s.precip_half_hr,
+                    station_precip: s.precip,
+                    day_end_yr: clock.day_end_yr,
+                    yrc: clock.yrc,
+                    end_yr: clock.day == clock.day_end_yr,
+                    runon: network.as_ref().and_then(|n| n.hru_runon(j)),
+                };
+                let mut d = h.day(&w, &ctx, basin, saved);
+                for &(ipl, y) in &d.harvests {
+                    if let Some(&k) = bsn_num.get(j).and_then(|b| b.get(ipl)) {
+                        bsn_yld[k].0 += h.area_ha;
+                        bsn_yld[k].1 += y * h.area_ha / 1000.0;
+                    }
+                }
+                if output {
+                    h.close_day(&mut d.wb, printing);
+                }
+                hd = Some(d);
+            }
+            if let (Some(n), Some(d)) = (network.as_mut(), hd.as_ref()) {
+                n.set_hru(j, &d.hd, &d.hhsurfq);
+                hru_wb[j] = [d.wb.snomlt, d.wb.surq_gen, d.wb.latq, d.wb.wateryld];
+            }
+            hru_ws[j] = w;
+            hru_days[j] = hd;
+        }
+        for (j, (_ist, o, _plaps, _tlaps)) in hrus.iter().enumerate() {
+            let w = hru_ws[j];
+            let hd = hru_days[j].take();
+            if printing {
+                out.hru_day(day, j + 1, o.gis_id, &o.name, &w, hd.as_ref());
+            }
+            if output && let Some(d) = hd.as_ref() {
+                let weather = [w.tmax, w.tmin, w.tave, w.solrad, w.windsp, w.rhum];
+                hru_acc[j].day(d, weather, &pday, |p, rows| out.hru_period(p, day, j + 1, o.gis_id, &o.name, rows, d.nutrients));
+                day_rows[j] = Some(crate::periods::region_values(d, weather));
+            }
+            if end_sim
+                && output
+                && let Some(h) = land.as_ref().and_then(|l| l.get(j))
+            {
+                for pl in &h.plants {
+                    let mut y = pl.yield_tot;
+                    if pl.harv_num > 0 {
+                        let k = pl.harv_num as f32;
+                        y = crate::hru::plant::OrgMass { m: y.m / k, c: y.c / k, n: y.n / k, p: y.p / k };
+                    }
+                    out.crop_yld_aa(day, j + 1, &pl.db.name, [y.m, y.c, y.n, y.p]);
+                }
+            }
+        }
+        if output && land.is_some() {
+            regions(project, day_rows, basin_on, basin_acc, lsu_acc, ru_gis, bsn_name, &pday, printing, day, out);
+        }
+        if let Some(n) = network.as_mut() {
+            let nd = crate::route::NetDay {
+                weat: weather.stations.iter().map(|s| &s.weat).collect(),
+                daylth: weather.stations.iter().map(|s| weather.wgn.get(s.wgn.wrapping_sub(1)).map(|g| g.daylth).unwrap_or(0.0)).collect(),
+                tgage: weather
+                    .stations
+                    .iter()
+                    .map(|s| match s.tmp {
+                        Source::Gage(i) => weather.tmp.get(i),
+                        Source::Sim => None,
+                    })
+                    .collect(),
+                hru_wb,
+                yrs: clock.yrs,
+                jday: clock.day,
+                yrc: clock.yrc,
+                mo: clock.mo,
+                day_mo: clock.day_mo,
+                print: clock.yrs > nyskip,
+            };
+            n.day(&nd);
+            if output {
+                let mut bw = crate::channel::ChWat::default();
+                let (mut bs, mut bi, mut bo) = (crate::hyd::Hyd::default(), crate::hyd::Hyd::default(), crate::hyd::Hyd::default());
+                let mut any_cha = false;
+                let mut ba = crate::route::AquDay::default();
+                let mut any_aqu = false;
+                for (_, _, _, w, st, i, o, _) in n.channels() {
+                    any_cha = true;
+                    bs = bs.plus(st);
+                    bi = bi.plus(i);
+                    bo = bo.plus(o);
+                    crate::periods::wat_sum(&mut bw, &w);
+                }
+                if any_cha {
+                    if printing {
+                        out.basin_cha(None, day, bsn_name, &bw, &bs, &bi, &bo);
+                    }
+                    basin_cha_acc.day(&bw, &bi, &bo, &pday, |p, w, i, o| out.basin_cha(Some(p), day, bsn_name, w, &bs, i, o));
+                }
+                if project.aqu_elems {
+                    for (k, (_, _, _, d)) in n.aquifers().enumerate() {
+                        any_aqu = true;
+                        let c = aqu_area.get(k).copied().unwrap_or(0.0) / project.area_tot_ha;
+                        crate::periods::aqu_sum(&mut ba, d, c);
+                    }
+                }
+                if any_aqu {
+                    if printing {
+                        out.basin_aqu(None, day, bsn_name, &ba);
+                    }
+                    basin_aqu_acc.day(&ba, &pday, |p, d| out.basin_aqu(Some(p), day, bsn_name, d));
+                }
+                let steps = n.channel_steps();
+                for (k, (ich, gis_id, name, w, st, i, o, wtemp)) in n.channels().into_iter().enumerate() {
+                    if printing && let Some((_, _, _, flo)) = steps.get(k) {
+                        out.cha_subday(day, ich, gis_id, name, flo);
+                    }
+                    if printing {
+                        out.cha_day(day, ich, gis_id, name, &w, &st, &i, &o, wtemp);
+                    }
+                    if cha_acc.len() <= k {
+                        cha_acc.resize(k + 1, Default::default());
+                    }
+                    cha_acc[k].day(&w, &i, &o, &pday, |p, w, i, o| out.cha_period(p, day, ich, gis_id, name, w, &st, i, o, wtemp));
+                }
+                for (k, (iaq, gis_id, name, d)) in n.aquifers().enumerate() {
+                    if printing {
+                        out.aqu_day(day, iaq, gis_id, name, d);
+                    }
+                    if aqu_acc.len() <= k {
+                        aqu_acc.resize(k + 1, Default::default());
+                    }
+                    aqu_acc[k].day(d, &pday, |p, d| out.aqu_period(p, day, iaq, gis_id, name, d));
+                }
+                for (k, (j, gis_id, name, r)) in n.reservoir_days().enumerate() {
+                    if printing {
+                        out.res(None, day, j, gis_id, name, &r.wat, &r.water, &r.in_d, &r.out_d);
+                    }
+                    if res_acc.len() <= k {
+                        res_acc.resize(k + 1, Default::default());
+                    }
+                    res_acc[k]
+                        .day(&r.wat, &r.in_d, &r.out_d, &pday, |p, w, i, o| out.res(Some(p), day, j, gis_id, name, w, &r.water, i, o));
+                }
+                if !n.reservoirs.is_empty() {
+                    let mut bw = crate::channel::ChWat::default();
+                    let (mut bs, mut bi, mut bo) = (crate::hyd::Hyd::default(), crate::hyd::Hyd::default(), crate::hyd::Hyd::default());
+                    for r in &n.reservoirs {
+                        bs = bs.plus(r.water);
+                        bi = bi.plus(r.in_d);
+                        bo = bo.plus(r.out_d);
+                        crate::periods::wat_sum(&mut bw, &r.wat);
+                    }
+                    let unit = n.reservoirs.len() + 1;
+                    if printing {
+                        out.basin_res(None, day, unit, bsn_name, &bw, &bs, &bi, &bo);
+                    }
+                    basin_res_acc.day(&bw, &bi, &bo, &pday, |p, w, i, o| out.basin_res(Some(p), day, unit, bsn_name, w, &bs, i, o));
+                    // basin_reservoir_output zeroes the day's inflow and outflow.
+                    for r in n.reservoirs.iter_mut() {
+                        r.in_d = crate::hyd::Hyd::default();
+                        r.out_d = crate::hyd::Hyd::default();
+                    }
+                }
+                for (k, (_, name, h)) in n.recall_days().enumerate() {
+                    if printing {
+                        out.recall(None, day, name, h);
+                    }
+                    if rec_acc.len() <= k {
+                        rec_acc.resize(k + 1, Default::default());
+                    }
+                    rec_acc[k].day(h, &pday, |p, h| out.recall(Some(p), day, name, h));
+                }
+                if !n.recalls.is_empty() {
+                    let mut b = crate::hyd::Hyd::default();
+                    for r in &n.recalls {
+                        b = b.plus(r.d);
+                    }
+                    if printing {
+                        out.basin_psc(None, day, bsn_name, &b);
+                    }
+                    basin_rec_acc.day(&b, &pday, |p, h| out.basin_psc(Some(p), day, bsn_name, h));
+                }
+                for (k, (name, h)) in n.routing_units().enumerate() {
+                    if printing {
+                        out.ru_day(day, name, h);
+                    }
+                    if ru_acc.len() <= k {
+                        ru_acc.resize(k + 1, Default::default());
+                    }
+                    ru_acc[k].day(h, &pday, |p, h| out.ru_period(p, day, name, h));
+                }
+            }
+        }
+        if clock.day == 181 {
+            for h in land.iter_mut().flatten() {
+                h.midyear();
+            }
+        }
+        Ok(())
+    }
 }
 
 /// `basin_output` and `lsu_output` for a printed day: the HRUs' day weighted by their share of
