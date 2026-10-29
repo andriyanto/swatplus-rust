@@ -1,0 +1,19 @@
+ru_day.txt: 310980 rows; columns compared: 18
+  ok       flo        values  310980  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sed        values  310980  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       orgn       values  310980  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sedp       values  310980  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       no3        values  310980  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       solp       values  310980  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       chla       values  310980  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       nh3        values  310980  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       no2        values  310980  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       cbod       values  310980  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       dox        values  310980  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       san        values  310980  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sil        values  310980  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       cla        values  310980  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sag        values  310980  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       lag        values  310980  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       grv        values  310980  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       null       values  310980  mismatches      0  max abs 0.0000  max rel 0.00e0

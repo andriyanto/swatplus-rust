@@ -1,0 +1,26 @@
+lsunit_pw_yr.txt: 852 rows; columns compared: 25
+  ok       lai        values     852  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       bioms      values     852  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       yield      values     852  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       residue    values     852  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sol_tmp    values     852  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       strsw      values     852  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       strsa      values     852  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       strstmp    values     852  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       strsn      values     852  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       strsp      values     852  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       strss      values     852  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       nplt       values     852  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       percn      values     852  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       pplnt      values     852  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       tmx        values     852  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       tmn        values     852  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       tmpav      values     852  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       solarad    values     852  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       wndspd     values     852  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       rhum       values     852  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       phubas0    values     852  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       lai_max    values     852  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       bm_max     values     852  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       bm_grow    values     852  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       c_gro      values     852  mismatches      0  max abs 0.0000  max rel 0.00e0
