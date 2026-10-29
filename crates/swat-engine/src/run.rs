@@ -285,6 +285,10 @@ pub struct RunOptions {
     /// Correct the bugs found in SWAT+ (see `docs/swat-fixes.md`) instead of reproducing them.
     /// The results then differ from SWAT+'s; off, they match it.
     pub fixes: bool,
+    /// With `fixes`, the threads the HRUs run on (0: as many as the computer has). The results
+    /// are the same for any number (`docs/parallel.md`); without `fixes` the HRUs run in order,
+    /// as SWAT+'s share state from one HRU to the next.
+    pub threads: usize,
 }
 
 /// Runs the simulation over `time.sim`, handing each printed day to `out`.
@@ -348,6 +352,10 @@ pub struct Simulation<'p> {
     bsn_num: Vec<Vec<usize>>,
     bsn_yld: Vec<(f32, f32)>,
     bsn_yld_aa: Vec<(f32, f32)>,
+    /// With `fixes`: each HRU's own copy of what SWAT+ shares between HRUs (`Saved`), and the
+    /// threads they run on.
+    hru_saved: Vec<Saved>,
+    threads: usize,
     /// Where the run is: the simulated year (`curyr`, 1-based), whether it has started, the next
     /// day of it, and its last day (the bounds of the Fortran's day loop, set once a year).
     curyr: i32,
@@ -415,6 +423,22 @@ impl<'p> Simulation<'p> {
         let balance_started = false;
         let saved =
             Saved { rndseed_cond: weather.rndseed_cond, septic_opt: project.septic.iter().map(|s| s.opt).collect(), ..Saved::default() };
+        // --fix-swat: each HRU its own copy of the state SWAT+ shares between HRUs, its decision
+        // tables' random numbers a stream of their own (a million draws apart).
+        let hru_saved: Vec<Saved> = if opts.fixes && land.is_some() {
+            (0..hrus.len())
+                .map(|j| Saved { rndseed_cond: crate::fortran::aunif_skip(saved.rndseed_cond, j as u64 * 1_000_000), ..saved.clone() })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        let threads = match opts.threads {
+            0 => std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1),
+            n => n,
+        };
+        #[cfg(target_arch = "wasm32")]
+        let threads = 1;
         // cli_read_atmodep: the deposition station of each weather station, and the time step of
         // the first day (`atmodep_cont%ts`, `first`).
         let atmo = project.atmodep.as_ref();
@@ -544,6 +568,8 @@ impl<'p> Simulation<'p> {
             bsn_num,
             bsn_yld,
             bsn_yld_aa,
+            hru_saved,
+            threads,
             curyr: 1,
             in_year: false,
             next_jday: 0,
@@ -705,6 +731,8 @@ impl<'p> Simulation<'p> {
             bsn_name,
             bsn_num,
             bsn_yld,
+            hru_saved,
+            threads,
             ..
         } = self;
         let project: &Project = project;
@@ -786,79 +814,161 @@ impl<'p> Simulation<'p> {
         };
         let mut hru_days: Vec<Option<HruDay>> = (0..hrus.len()).map(|_| None).collect();
         let mut hru_ws: Vec<HruWeather> = vec![HruWeather::default(); hrus.len()];
-        for &j in &hru_order {
-            let (ist, _o, plaps, tlaps) = &hrus[j];
-            let Some(st) = weather.stations.get(ist - 1) else { continue };
-            let s = &st.weat;
-            let mut w = HruWeather {
-                precip: s.precip,
-                tmax: s.tmax,
-                tmin: s.tmin,
-                tave: s.tave,
-                solrad: s.solrad,
-                solradmx: s.solradmx,
-                windsp: s.windsp,
-                rhum: s.rhum,
-                phubase0: s.phubase0,
-                station_pet: s.pet,
-                atmo: atmo_day(*ist),
-                ts: {
-                    let mut ts = [0.0_f32; crate::hru::subdaily::MAX_STEP];
-                    for (t, v) in ts.iter_mut().zip(&s.ts) {
-                        *t = *v;
-                    }
-                    ts
-                },
-            };
-            if lapse {
-                w.precip = (w.precip + plaps).max(0.0);
-                w.tmax += tlaps;
-                w.tmin += tlaps;
-                w.tave += tlaps;
-            }
-            let mut hd = None;
-            if let Some(h) = land.as_mut().and_then(|l| l.get_mut(j)) {
-                // et_pot (Penman-Monteith) raises the HRU's wind to 0.01 m/s, and the HRU
-                // prints it.
-                if basin.pet == 1 && w.windsp < 0.01 {
-                    w.windsp = 0.01;
-                }
-                let g = weather.wgn.get(h.wgn);
-                let ctx = DayCtx {
-                    day: clock.day,
-                    mo: clock.mo,
-                    day_mo: clock.day_mo,
-                    tmp_an: g.map(|g| g.tmp_an).unwrap_or(0.0),
-                    phutot: g.map(|g| g.phutot).unwrap_or(0.0),
-                    daylmn: g.map(|g| g.daylmn).unwrap_or(0.0),
-                    dormhr: g.map(|g| g.daylth).unwrap_or(0.0),
-                    station_tave: s.tave,
-                    daylength: s.daylength,
-                    precip_half_hr: s.precip_half_hr,
-                    station_precip: s.precip,
-                    day_end_yr: clock.day_end_yr,
-                    yrc: clock.yrc,
-                    end_yr: clock.day == clock.day_end_yr,
-                    runon: network.as_ref().and_then(|n| n.hru_runon(j)),
+        if hru_saved.is_empty() {
+            for &j in &hru_order {
+                let (ist, _o, plaps, tlaps) = &hrus[j];
+                let Some(st) = weather.stations.get(ist - 1) else { continue };
+                let s = &st.weat;
+                let mut w = HruWeather {
+                    precip: s.precip,
+                    tmax: s.tmax,
+                    tmin: s.tmin,
+                    tave: s.tave,
+                    solrad: s.solrad,
+                    solradmx: s.solradmx,
+                    windsp: s.windsp,
+                    rhum: s.rhum,
+                    phubase0: s.phubase0,
+                    station_pet: s.pet,
+                    atmo: atmo_day(*ist),
+                    ts: {
+                        let mut ts = [0.0_f32; crate::hru::subdaily::MAX_STEP];
+                        for (t, v) in ts.iter_mut().zip(&s.ts) {
+                            *t = *v;
+                        }
+                        ts
+                    },
                 };
-                let mut d = h.day(&w, &ctx, basin, saved);
-                for &(ipl, y) in &d.harvests {
-                    if let Some(&k) = bsn_num.get(j).and_then(|b| b.get(ipl)) {
-                        bsn_yld[k].0 += h.area_ha;
-                        bsn_yld[k].1 += y * h.area_ha / 1000.0;
+                if lapse {
+                    w.precip = (w.precip + plaps).max(0.0);
+                    w.tmax += tlaps;
+                    w.tmin += tlaps;
+                    w.tave += tlaps;
+                }
+                let mut hd = None;
+                if let Some(h) = land.as_mut().and_then(|l| l.get_mut(j)) {
+                    // et_pot (Penman-Monteith) raises the HRU's wind to 0.01 m/s, and the HRU
+                    // prints it.
+                    if basin.pet == 1 && w.windsp < 0.01 {
+                        w.windsp = 0.01;
                     }
+                    let g = weather.wgn.get(h.wgn);
+                    let ctx = DayCtx {
+                        day: clock.day,
+                        mo: clock.mo,
+                        day_mo: clock.day_mo,
+                        tmp_an: g.map(|g| g.tmp_an).unwrap_or(0.0),
+                        phutot: g.map(|g| g.phutot).unwrap_or(0.0),
+                        daylmn: g.map(|g| g.daylmn).unwrap_or(0.0),
+                        dormhr: g.map(|g| g.daylth).unwrap_or(0.0),
+                        station_tave: s.tave,
+                        daylength: s.daylength,
+                        precip_half_hr: s.precip_half_hr,
+                        station_precip: s.precip,
+                        day_end_yr: clock.day_end_yr,
+                        yrc: clock.yrc,
+                        end_yr: clock.day == clock.day_end_yr,
+                        runon: network.as_ref().and_then(|n| n.hru_runon(j)),
+                    };
+                    let mut d = h.day(&w, &ctx, basin, saved);
+                    for &(ipl, y) in &d.harvests {
+                        if let Some(&k) = bsn_num.get(j).and_then(|b| b.get(ipl)) {
+                            bsn_yld[k].0 += h.area_ha;
+                            bsn_yld[k].1 += y * h.area_ha / 1000.0;
+                        }
+                    }
+                    if output {
+                        h.close_day(&mut d.wb, printing);
+                    }
+                    hd = Some(d);
                 }
-                if output {
-                    h.close_day(&mut d.wb, printing);
+                if let (Some(n), Some(d)) = (network.as_mut(), hd.as_ref()) {
+                    n.set_hru(j, &d.hd, &d.hhsurfq);
+                    hru_wb[j] = [d.wb.snomlt, d.wb.surq_gen, d.wb.latq, d.wb.wateryld];
                 }
-                hd = Some(d);
+                hru_ws[j] = w;
+                hru_days[j] = hd;
             }
-            if let (Some(n), Some(d)) = (network.as_mut(), hd.as_ref()) {
-                n.set_hru(j, &d.hd, &d.hhsurfq);
-                hru_wb[j] = [d.wb.snomlt, d.wb.surq_gen, d.wb.latq, d.wb.wateryld];
+        } else if let Some(l) = land.as_mut() {
+            // --fix-swat: the HRUs in waves (`Network::hru_waves`), each wave's on `threads`, each
+            // HRU with its own `Saved`; then, in the wave's order, what the sequential loop does
+            // after an HRU's day. The same for any number of threads.
+            let waves = match network.as_ref() {
+                Some(n) if n.hru_order().len() == hrus.len() => n.hru_waves(),
+                _ => vec![(0..hrus.len()).collect()],
+            };
+            for wave in &waves {
+                let mut jobs: Vec<(usize, HruWeather, DayCtx)> = Vec::with_capacity(wave.len());
+                for &j in wave {
+                    let (ist, _o, plaps, tlaps) = &hrus[j];
+                    let Some(st) = weather.stations.get(ist - 1) else { continue };
+                    let s = &st.weat;
+                    let mut w = HruWeather {
+                        precip: s.precip,
+                        tmax: s.tmax,
+                        tmin: s.tmin,
+                        tave: s.tave,
+                        solrad: s.solrad,
+                        solradmx: s.solradmx,
+                        windsp: s.windsp,
+                        rhum: s.rhum,
+                        phubase0: s.phubase0,
+                        station_pet: s.pet,
+                        atmo: atmo_day(*ist),
+                        ts: {
+                            let mut ts = [0.0_f32; crate::hru::subdaily::MAX_STEP];
+                            for (t, v) in ts.iter_mut().zip(&s.ts) {
+                                *t = *v;
+                            }
+                            ts
+                        },
+                    };
+                    if lapse {
+                        w.precip = (w.precip + plaps).max(0.0);
+                        w.tmax += tlaps;
+                        w.tmin += tlaps;
+                        w.tave += tlaps;
+                    }
+                    if basin.pet == 1 && w.windsp < 0.01 {
+                        w.windsp = 0.01;
+                    }
+                    let g = l.get(j).and_then(|h| weather.wgn.get(h.wgn));
+                    let ctx = DayCtx {
+                        day: clock.day,
+                        mo: clock.mo,
+                        day_mo: clock.day_mo,
+                        tmp_an: g.map(|g| g.tmp_an).unwrap_or(0.0),
+                        phutot: g.map(|g| g.phutot).unwrap_or(0.0),
+                        daylmn: g.map(|g| g.daylmn).unwrap_or(0.0),
+                        dormhr: g.map(|g| g.daylth).unwrap_or(0.0),
+                        station_tave: s.tave,
+                        daylength: s.daylength,
+                        precip_half_hr: s.precip_half_hr,
+                        station_precip: s.precip,
+                        day_end_yr: clock.day_end_yr,
+                        yrc: clock.yrc,
+                        end_yr: clock.day == clock.day_end_yr,
+                        runon: network.as_ref().and_then(|n| n.hru_runon(j)),
+                    };
+                    jobs.push((j, w, ctx));
+                }
+                hru_wave(l, hru_saved, &mut hru_days, &jobs, basin, output, printing, *threads);
+                for (j, w, _) in jobs {
+                    let Some(d) = hru_days[j].as_ref() else { continue };
+                    let area = l[j].area_ha;
+                    for &(ipl, y) in &d.harvests {
+                        if let Some(&k) = bsn_num.get(j).and_then(|b| b.get(ipl)) {
+                            bsn_yld[k].0 += area;
+                            bsn_yld[k].1 += y * area / 1000.0;
+                        }
+                    }
+                    if let Some(n) = network.as_mut() {
+                        n.set_hru(j, &d.hd, &d.hhsurfq);
+                        hru_wb[j] = [d.wb.snomlt, d.wb.surq_gen, d.wb.latq, d.wb.wateryld];
+                    }
+                    hru_ws[j] = w;
+                }
             }
-            hru_ws[j] = w;
-            hru_days[j] = hd;
         }
         for (j, (_ist, o, _plaps, _tlaps)) in hrus.iter().enumerate() {
             let w = hru_ws[j];
@@ -1034,6 +1144,54 @@ impl<'p> Simulation<'p> {
         }
         Ok(())
     }
+}
+
+/// One wave of `--fix-swat`'s HRUs (`jobs`: HRU, weather, day): each HRU's day with its own
+/// `Saved`, on up to `threads` threads, into `days`.
+#[allow(clippy::too_many_arguments)]
+fn hru_wave(
+    land: &mut [Hru],
+    saved: &mut [Saved],
+    days: &mut [Option<HruDay>],
+    jobs: &[(usize, HruWeather, DayCtx)],
+    basin: &HruBasin,
+    output: bool,
+    printing: bool,
+    threads: usize,
+) {
+    type Slot<'a> = (&'a mut Hru, &'a mut Saved, &'a mut Option<HruDay>);
+    let mut slots: Vec<Option<Slot>> =
+        land.iter_mut().zip(saved.iter_mut()).zip(days.iter_mut()).map(|((h, s), d)| Some((h, s, d))).collect();
+    let mut work: Vec<(Slot, &HruWeather, &DayCtx)> = Vec::with_capacity(jobs.len());
+    for (j, w, ctx) in jobs {
+        if let Some(slot) = slots.get_mut(*j).and_then(Option::take) {
+            work.push((slot, w, ctx));
+        }
+    }
+    let one = |((h, s, out), w, ctx): (Slot, &HruWeather, &DayCtx)| {
+        let mut d = h.day(w, ctx, basin, s);
+        if output {
+            h.close_day(&mut d.wb, printing);
+        }
+        *out = Some(d);
+    };
+    // A thread is worth its start for a few HRUs at least.
+    let n = threads.min(work.len() / 4).max(1);
+    if n == 1 {
+        work.into_iter().for_each(one);
+        return;
+    }
+    let per = work.len().div_ceil(n);
+    let mut it = work.into_iter();
+    std::thread::scope(|sc| {
+        loop {
+            let c: Vec<_> = it.by_ref().take(per).collect();
+            if c.is_empty() {
+                break;
+            }
+            sc.spawn(move || c.into_iter().for_each(one));
+        }
+    });
 }
 
 /// `basin_output` and `lsu_output` for a printed day: the HRUs' day weighted by their share of

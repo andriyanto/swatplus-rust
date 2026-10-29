@@ -22,7 +22,7 @@ fn the_table_changes_nothing_else() {
             let mut t = TextTables::new("hyd", MemStore::new(), &p.print);
             t.fixes = fixes;
             t.channel_hyd = on;
-            run_with(&p, &mut t, RunOptions { fixes }).unwrap();
+            run_with(&p, &mut t, RunOptions { fixes, ..Default::default() }).unwrap();
             t.finish().unwrap().files
         };
         let (off, mut on) = (tables(false), tables(true));
@@ -63,7 +63,7 @@ fn the_hydraulics_read_the_channel_s_flow() {
     let p = osu();
     for fixes in [false, true] {
         let mut b = Both::default();
-        run_with(&p, &mut b, RunOptions { fixes }).unwrap();
+        run_with(&p, &mut b, RunOptions { fixes, ..Default::default() }).unwrap();
         assert!(!b.0.is_empty());
         let mut wet = 0;
         for (flo, h) in &b.0 {

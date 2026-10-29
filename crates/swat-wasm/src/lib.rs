@@ -76,7 +76,7 @@ fn run_inner(
         };
         progress(num("done"), num("days"));
     })));
-    let report = swat_engine::run::run_with(&project, &mut tables, swat_engine::run::RunOptions { fixes: opts.fixes })?;
+    let report = swat_engine::run::run_with(&project, &mut tables, swat_engine::run::RunOptions { fixes: opts.fixes, threads: 1 })?;
     if let Some(why) = report.hru_skipped {
         notes.push(format!("HRU water balance not simulated ({why})"));
     }

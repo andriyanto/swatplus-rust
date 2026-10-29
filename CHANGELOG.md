@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Parallel HRUs with `--fix-swat`** (F1b in `docs/roadmap.md`): `run --fix-swat --threads N`
+  (in code, `RunOptions::threads`; 0, the default, uses every core) runs the HRUs on N threads in
+  waves that follow HRU-to-HRU routing. The results are the same for any number of threads (all
+  37 scenarios, 1 and 3 threads). For that, each HRU now has its own copy of the state SWAT+
+  shares between HRUs, a new correction in `docs/swat-fixes.md`, which changes 4 of the 37
+  scenarios' `--fix-swat` tables by up to about 1 %. Faithful runs are unchanged and stay on one
+  thread. See `docs/parallel.md`.
 - **Channel hydraulics** (H1 in `docs/roadmap.md`): `run --channel-hyd` writes
   `channel_hyd_day.txt`, each SWAT-DEG channel's day read from its rating curve (depth, top width,
   area, wetted perimeter, velocity and travel time at the mean outflow, inflow and estimated peak;
