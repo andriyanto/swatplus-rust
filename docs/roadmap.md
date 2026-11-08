@@ -455,7 +455,7 @@ akun ChatGPT, Gemini, OpenRouter, Ollama), skill dalam format Agent Skills, serv
 RustGIS**: setiap aksi satu langkah *undo*, dan aksi yang menyentuh berkas atau jaringan menunggu
 persetujuan pengguna. Jadi menambah kemampuannya berarti menambah **perintah** dan **skill**.
 
-Fork `andriyanto/rustgis` sudah punya model proyek SWAT+ (`crates/swat-model`: menyunting satu nilai
+Repo `andriyanto/RustGIS-SwatPlus` (dulu fork `andriyanto/rustgis`) sudah punya model proyek SWAT+ (`crates/swat-model`: menyunting satu nilai
 tanpa mengubah byte lain) dan pembaca TxtInOut (`crates/swat-txtinout`), tetapi belum dipasang
 sebagai perintah. Kedua crate itu tidak ada di repo asli `opengeos/RustGIS`.
 
