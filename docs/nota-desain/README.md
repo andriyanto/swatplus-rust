@@ -24,5 +24,6 @@ Nota desain engine swatplus-rust 1.0.1, fungsi demi fungsi, dalam Bahasa Indones
 | Bab 17  Validasi bit-for-bit dan katalog kebiasaan SWAT+ | [17-bab-17-validasi-bit-for-bit-dan-katalog-kebiasaan-swat.md](17-bab-17-validasi-bit-for-bit-dan-katalog-kebiasaan-swat.md) |
 | Glosarium | [18-glosarium.md](18-glosarium.md) |
 | Daftar Pustaka | [19-daftar-pustaka.md](19-daftar-pustaka.md) |
+| Lampiran A  Data hujan satelit GSMaP: alasan, akses, dan rencana | [20-lampiran-a-data-hujan-satelit-gsmap.md](20-lampiran-a-data-hujan-satelit-gsmap.md) |
 
 Satu berkas: [nota-desain.md](nota-desain.md), [nota-desain.docx](nota-desain.docx), [nota-desain.pdf](nota-desain.pdf).
