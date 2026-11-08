@@ -3,7 +3,7 @@
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23721043.svg)](https://doi.org/10.5281/zenodo.23721043)
 
 SWAT+ (Soil and Water Assessment Tool Plus) translated from Fortran into Rust, to run natively
-and in the browser (WebAssembly), and to be run by [RustGIS](https://github.com/andriyanto/rustgis).
+and in the browser (WebAssembly), and to be run by [RustGIS-SwatPlus](https://github.com/andriyanto/RustGIS-SwatPlus).
 
 Status: **engine 1.0.** The port runs SWAT+ projects from the land to the outlet — HRUs (weather,
 water balance, plants, nutrients, carbon, erosion, management by date, heat units and decision
@@ -15,7 +15,7 @@ and two real projects from West Sumatra (`Batanghari`, 1,858 HRUs; `Pessel`, 3,9
 variants that exercise each feature. CI runs both engines on every push and compares every
 table. What isn't ported is refused by name (`run` says why), never guessed.
 
-The design, decisions and phases are in RustGIS: [`docs/swat/design.md`](https://github.com/andriyanto/rustgis/blob/swat-plus-design/docs/swat/design.md).
+The design, decisions and phases are in RustGIS-SwatPlus: [`docs/swat/design.md`](https://github.com/andriyanto/RustGIS-SwatPlus/blob/swat-plus-design/docs/swat/design.md).
 
 ## Goal
 
