@@ -57,6 +57,14 @@ pub struct Day {
     pub yr: i32,
 }
 
+/// An output sink that keeps nothing: for a spin-up whose tables aren't wanted.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoOutput;
+
+impl OutputSink for NoOutput {
+    fn hru_day(&mut self, _day: Day, _hru: usize, _gis_id: i32, _name: &str, _w: &HruWeather, _d: Option<&HruDay>) {}
+}
+
 /// Receives daily output, for the days SWAT+ prints.
 pub trait OutputSink {
     /// The simulation is starting day `done + 1` of `total` (`done` = `total` once it has
@@ -360,6 +368,8 @@ pub struct Simulation<'p> {
     /// day of it, and its last day (the bounds of the Fortran's day loop, set once a year).
     curyr: i32,
     in_year: bool,
+    /// The last day run (the clock's year has moved on once its year ends).
+    last_day: Option<Day>,
     next_jday: i32,
     year_last: i32,
 }
@@ -572,6 +582,7 @@ impl<'p> Simulation<'p> {
             threads,
             curyr: 1,
             in_year: false,
+            last_day: None,
             next_jday: 0,
             year_last: 0,
         })
@@ -591,6 +602,8 @@ impl<'p> Simulation<'p> {
                 let jday = self.next_jday;
                 self.next_jday += 1;
                 self.run_day(jday, out)?;
+                let c = &self.clock;
+                self.last_day = Some(Day { jday: c.day, mon: c.mo, day: c.day_mo, yr: c.yrc });
                 if self.next_jday > self.year_last {
                     self.end_year(out);
                 }
@@ -608,6 +621,33 @@ impl<'p> Simulation<'p> {
         self.report
     }
 
+    /// Runs day by day up to and including day `jday` of `year` (E2 in `docs/roadmap.md`): a
+    /// spin-up, or the state on a date to start from. `Ok(false)` when that day isn't in the
+    /// simulated period or has already run.
+    ///
+    /// With [`Simulation::checkpoint`] this is a hot start in memory: run to the date once, keep
+    /// a copy, and start each run from a copy (a forecast cycle, an ensemble member, a scenario)
+    /// instead of from the first day. Give [`NoOutput`] to skip the tables of the days run.
+    pub fn run_until(&mut self, out: &mut dyn OutputSink, year: i32, jday: i32) -> Result<bool, String> {
+        let days = self.project.time.days();
+        let Some(k) = days.iter().position(|d| d.year == year && d.jday == jday) else { return Ok(false) };
+        if self.days_done > k {
+            return Ok(false);
+        }
+        while self.days_done <= k {
+            if !self.step(out)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// A copy of the simulation as it stands, to go on from later or to run on in another way:
+    /// it goes on exactly as this one would (`tests/step_api.rs`).
+    pub fn checkpoint(&self) -> Simulation<'p> {
+        self.clone()
+    }
+
     /// Whether every day has run.
     pub fn is_finished(&self) -> bool {
         self.curyr > self.nbyr
@@ -620,8 +660,10 @@ impl<'p> Simulation<'p> {
 
     /// The last day run (before the first: the day the simulation starts on).
     pub fn date(&self) -> Day {
-        let c = &self.clock;
-        Day { jday: c.day, mon: c.mo, day: c.day_mo, yr: c.yrc }
+        self.last_day.unwrap_or_else(|| {
+            let c = &self.clock;
+            Day { jday: c.day, mon: c.mo, day: c.day_mo, yr: c.yrc }
+        })
     }
 
     /// The clock (`time`).
