@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Hot start in memory** (E2, first part, in `docs/roadmap.md`): `Simulation::run_until(out,
+  year, jday)` runs to a date (a spin-up), `Simulation::checkpoint` copies the state there, and a
+  run from a copy goes on exactly as the original would (`tests/step_api.rs`); `NoOutput` skips the
+  tables of the days run. `Simulation::date` now gives the last day run at a year's end too (it gave
+  the next year). Saving the state to a file comes later, as an optional feature. Every table of
+  the 37 scenarios is unchanged.
 - **Parallel HRUs with `--fix-swat`** (F1b in `docs/roadmap.md`): `run --fix-swat --threads N`
   (in code, `RunOptions::threads`; 0, the default, uses every core) runs the HRUs on N threads in
   waves that follow HRU-to-HRU routing. The results are the same for any number of threads (all
