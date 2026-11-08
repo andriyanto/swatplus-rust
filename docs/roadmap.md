@@ -418,6 +418,7 @@ ekstrusi berpencahayaan (bangunan), mode globe, dan *backend* GPU `wgpu` di apli
 6. **Ekspor:** gambar resolusi tinggi dan video (MP4) dari animasi, dengan jalur kamera yang bisa
    diatur (terbang menyusuri sungai), serta legenda, skala dan waktu di setiap bingkai.
 7. **Hujan waktu nyata dan hujan yang realistis di peta:**
+   - Alasan, cara akses, ketentuan dan rencana GSMaP: `docs/nota-desain/20-lampiran-a-data-hujan-satelit-gsmap.md`.
    - **Sumber utama: GSMaP_NOW (JAXA)**, grid 0,1°, diperbarui setiap 30 menit, mencakup seluruh
      Indonesia, unduhan lewat FTP setelah registrasi gratis. Cadangan: GPM IMERG *Early* (NASA,
      jeda beberapa jam, akses terbuka dengan akun Earthdata), dan radar BMKG bila akses diberikan.
