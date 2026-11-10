@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Batches of calibration runs** (M2 in `docs/roadmap.md`): `swat_engine::batch::run_batch` runs
+  one project once per calibration, one run per core, each keeping only the daily outflow (and
+  depths) of chosen channels and the basin's precipitation and ET (`Series`, `SeriesSink`);
+  `swatplus-rust batch <folder> --sets sets.csv --channels … --out …` does it from a CSV of
+  parameter sets. The series are the same whatever runs beside them. Batanghari, four runs: 69.7 s
+  one at a time, 35.7 s two at a time on two cores. `Day` is now `PartialEq`.
 - **Calibration in memory** (M1 in `docs/roadmap.md`): `Calibration` (`cal_parms.cal` and
   `calibration.cal` as data), `CalUpdate::all`, `Simulation::with_calibration` and
   `run_with_calibration` apply a list of parameter changes built in memory exactly as
