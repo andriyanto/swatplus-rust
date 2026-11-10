@@ -18,6 +18,48 @@ impl Default for CalParm {
     }
 }
 
+/// The hard calibration a run applies: the parameters that can be changed with their ranges
+/// (`cal_parms.cal`) and the changes (`calibration.cal`). A project's own come from its files
+/// ([`Calibration::of`]); a calibration program builds others in memory, one per parameter set,
+/// and hands them to the engine without writing any file. The engine applies them exactly as it
+/// applies `calibration.cal`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Calibration {
+    pub parms: Vec<CalParm>,
+    pub updates: Vec<CalUpdate>,
+}
+
+impl Calibration {
+    /// The project's own calibration, from its `cal_parms.cal` and `calibration.cal`.
+    pub fn of(project: &crate::Project) -> Calibration {
+        Calibration { parms: project.cal_parms.clone(), updates: project.cal_upd.clone() }
+    }
+
+    /// The project's parameter ranges with these changes instead of the project's.
+    pub fn with_updates(project: &crate::Project, updates: Vec<CalUpdate>) -> Calibration {
+        Calibration { parms: project.cal_parms.clone(), updates }
+    }
+
+    /// Changes that `parms` doesn't list, by name (the engine refuses them, as their kind of
+    /// object is unknown).
+    pub fn unknown(&self) -> Vec<&str> {
+        self.updates
+            .iter()
+            .filter(|u| !self.parms.iter().any(|p| crate::table::fortran_eq(&p.name, &u.name)))
+            .map(|u| u.name.as_str())
+            .collect()
+    }
+}
+
+impl CalUpdate {
+    /// A change of `name` for every object of its kind, without conditions, soil layers, years
+    /// or days: `chg_typ` is `absval` (set to `val`), `abschg` (add `val`), `pctchg` (change by
+    /// `val` percent) or `relchg` (multiply by 1 + `val`).
+    pub fn all(name: &str, chg_typ: &str, val: f32) -> CalUpdate {
+        CalUpdate { name: name.into(), chg_typ: chg_typ.into(), val, ..CalUpdate::default() }
+    }
+}
+
 /// A change of `calibration.cal` (`update_parameters`): the parameter, how it changes
 /// (`absval`, `abschg`, `pctchg`, `relchg`) and by how much, its conditions (the variable each
 /// tests), the soil layers, years and days it applies to, and the objects (1-based; empty for all
