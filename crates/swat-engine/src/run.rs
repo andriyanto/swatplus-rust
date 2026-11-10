@@ -49,7 +49,7 @@ impl Default for HruWeather {
 }
 
 /// The date and position of a printed day.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Day {
     pub jday: i32,
     pub mon: i32,

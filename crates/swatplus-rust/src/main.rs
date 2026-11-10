@@ -3,6 +3,7 @@
 //! ```text
 //! swatplus-rust inspect <TxtInOut folder>
 //! swatplus-rust run <TxtInOut folder> [--out <folder>] [--fix-swat] [--format text|parquet|both] [--progress json] [--strict] [--channel-hyd] [--threads N] [--calibration <file>] [--cal-parms <file>] [--set <name> <absval|abschg|pctchg|relchg> <value>]...
+//! swatplus-rust batch <TxtInOut folder> --sets <sets.csv> --channels <n,n,...> --out <folder> [--threads N] [--fix-swat] [--depth] [--cal-parms <file>]
 //! swatplus-rust compare <SWAT+ table> <our table> [--abs 0.001] [--rel 1e-4]
 //! ```
 //!
@@ -10,6 +11,7 @@
 //! nutrients and losses, and writes the `hru_*_day.txt` tables with the columns it computes.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::unreachable)]
 
+mod batch;
 mod compare;
 
 use std::process::ExitCode;
@@ -20,6 +22,7 @@ use swat_model::{ClimateVar, ObjectKind};
 const USAGE: &str = "usage:
   swatplus-rust inspect <TxtInOut folder>
   swatplus-rust run <TxtInOut folder> [--out <folder>] [--fix-swat] [--format text|parquet|both] [--progress json] [--strict] [--channel-hyd] [--threads N] [--calibration <file>] [--cal-parms <file>] [--set <name> <absval|abschg|pctchg|relchg> <value>]...
+  swatplus-rust batch <TxtInOut folder> --sets <sets.csv> --channels <n,n,...> --out <folder> [--threads N] [--fix-swat] [--depth] [--cal-parms <file>]
   swatplus-rust compare <SWAT+ table> <our table> [--abs 0.001] [--rel 1e-4]";
 
 fn main() -> ExitCode {
@@ -95,6 +98,48 @@ fn main() -> ExitCode {
                 }
             }
             run(dir, &o)
+        }
+        ["batch", dir, opts @ ..] => {
+            let mut a =
+                batch::BatchArgs { sets: None, channels: Vec::new(), out: None, threads: 0, fixes: false, depth: false, cal_parms: None };
+            let mut it = opts.iter();
+            while let Some(o) = it.next() {
+                match (*o, it.clone().next().copied()) {
+                    ("--sets", Some(v)) => {
+                        a.sets = Some(v);
+                        it.next();
+                    }
+                    ("--out", Some(v)) => {
+                        a.out = Some(v);
+                        it.next();
+                    }
+                    ("--cal-parms", Some(v)) => {
+                        a.cal_parms = Some(v);
+                        it.next();
+                    }
+                    ("--channels", Some(v)) => match v.split(',').map(|c| c.trim().parse::<usize>()).collect::<Result<Vec<_>, _>>() {
+                        Ok(c) => {
+                            a.channels = c;
+                            it.next();
+                        }
+                        Err(_) => {
+                            eprintln!("--channels takes channel numbers separated by commas, e.g. 12,45");
+                            return ExitCode::from(2);
+                        }
+                    },
+                    ("--threads", Some(v)) if v.parse::<usize>().is_ok() => {
+                        a.threads = v.parse().unwrap_or(0);
+                        it.next();
+                    }
+                    ("--fix-swat", _) => a.fixes = true,
+                    ("--depth", _) => a.depth = true,
+                    _ => {
+                        eprintln!("{USAGE}");
+                        return ExitCode::from(2);
+                    }
+                }
+            }
+            batch::batch(dir, &a)
         }
         ["compare", expected, actual, opts @ ..] => compare_cmd(expected, actual, opts),
         ["--version"] | ["-V"] => {

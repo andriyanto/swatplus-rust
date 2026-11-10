@@ -66,7 +66,7 @@ Where the run time goes, from a profile of Pessel, is in [`docs/performance.md`]
 
 Which output tables it writes, and how SWAT+ sums them into months, years and average annual values, is in [`docs/outputs.md`](docs/outputs.md). With `run <folder> --channel-hyd` it also writes each channel's daily depth, width, velocity and storage from SWAT-DEG's rating curve, and a depth by Manning's formula on the channel's geometry, in `channel_hyd_day.txt` (not a SWAT+ table; [`docs/channel-hydraulics.md`](docs/channel-hydraulics.md)).
 
-For calibration, parameter changes can be passed in memory instead of written to `calibration.cal`: `run <folder> --set cn2 pctchg -10`, `--calibration <file>`, or `Simulation::with_calibration` from code, applied exactly as SWAT+ applies `calibration.cal` ([`docs/calibration.md`](docs/calibration.md)).
+For calibration, parameter changes can be passed in memory instead of written to `calibration.cal`: `run <folder> --set cn2 pctchg -10`, `--calibration <file>`, or `Simulation::with_calibration` from code, applied exactly as SWAT+ applies `calibration.cal`, and `batch <folder> --sets sets.csv --channels …` runs a whole list of parameter sets, one per core, keeping only the series a calibration compares ([`docs/calibration.md`](docs/calibration.md)).
 
 The quirks that are plainly bugs can be corrected instead with `run <folder> --fix-swat`; the
 results then differ from SWAT+'s. They are listed in [`docs/swat-fixes.md`](docs/swat-fixes.md).

@@ -551,7 +551,7 @@ berbantuan AI) di F2 dikerjakan lewat jalur ini.
 | Langkah | Isi | Repo | Status |
 | --- | --- | --- | --- |
 | **M1** | Kalibrasi di memori: perubahan parameter per run tanpa menulis file, diterapkan persis seperti `calibration.cal` (`docs/calibration.md`); opsi `--set`, `--calibration`, `--cal-parms` | E | selesai |
-| **M2** | Banyak run sekaligus: satu run per inti, *spin-up* sekali lalu disalin (E2), keluaran yang dibutuhkan saja di memori | E | |
+| **M2** | Banyak run sekaligus: satu run per inti, hanya deret yang dibutuhkan (debit, kedalaman, hujan, ET) di memori; perintah `batch` (`docs/calibration.md`). *Spin-up* bersama diuji di M3, tidak diasumsikan | E | selesai |
 | **M3** | Uji sintetis: TMA buatan dari debit model dengan lengkung debit yang diketahui; fungsi tujuan (KGE pada TMA, Spearman, batas ET) | E | |
 | **M4** | Pengoptimasi pada anggaran run yang sama: SUFI-2 (pembanding), optimasi Bayesian; *surrogate* di tahap lanjutan | E atau modul Python | |
 | **M5** | Routing paralel per sub-DAS; percepatan diukur pada 1–12 inti (naskah mode paralel) | E | |
