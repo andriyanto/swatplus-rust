@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! swatplus-rust inspect <TxtInOut folder>
-//! swatplus-rust run <TxtInOut folder> [--out <folder>] [--fix-swat] [--format text|parquet|both] [--progress json] [--strict] [--channel-hyd] [--threads N]
+//! swatplus-rust run <TxtInOut folder> [--out <folder>] [--fix-swat] [--format text|parquet|both] [--progress json] [--strict] [--channel-hyd] [--threads N] [--calibration <file>] [--cal-parms <file>] [--set <name> <absval|abschg|pctchg|relchg> <value>]...
 //! swatplus-rust compare <SWAT+ table> <our table> [--abs 0.001] [--rel 1e-4]
 //! ```
 //!
@@ -19,7 +19,7 @@ use swat_model::{ClimateVar, ObjectKind};
 
 const USAGE: &str = "usage:
   swatplus-rust inspect <TxtInOut folder>
-  swatplus-rust run <TxtInOut folder> [--out <folder>] [--fix-swat] [--format text|parquet|both] [--progress json] [--strict] [--channel-hyd] [--threads N]
+  swatplus-rust run <TxtInOut folder> [--out <folder>] [--fix-swat] [--format text|parquet|both] [--progress json] [--strict] [--channel-hyd] [--threads N] [--calibration <file>] [--cal-parms <file>] [--set <name> <absval|abschg|pctchg|relchg> <value>]...
   swatplus-rust compare <SWAT+ table> <our table> [--abs 0.001] [--rel 1e-4]";
 
 fn main() -> ExitCode {
@@ -28,8 +28,19 @@ fn main() -> ExitCode {
     match rest.as_slice() {
         ["inspect", dir] => inspect(dir),
         ["run", dir, opts @ ..] => {
-            let mut o =
-                RunArgs { out: dir, fixes: false, text: true, parquet: false, json: false, strict: false, channel_hyd: false, threads: 0 };
+            let mut o = RunArgs {
+                out: dir,
+                fixes: false,
+                text: true,
+                parquet: false,
+                json: false,
+                strict: false,
+                channel_hyd: false,
+                threads: 0,
+                calibration: None,
+                cal_parms: None,
+                sets: Vec::new(),
+            };
             let mut it = opts.iter();
             while let Some(a) = it.next() {
                 match (*a, it.clone().next().copied()) {
@@ -52,6 +63,30 @@ fn main() -> ExitCode {
                     ("--threads", Some(v)) if v.parse::<usize>().is_ok() => {
                         o.threads = v.parse().unwrap_or(0);
                         it.next();
+                    }
+                    ("--calibration", Some(v)) if !v.starts_with("--") => {
+                        o.calibration = Some(v);
+                        it.next();
+                    }
+                    ("--cal-parms", Some(v)) if !v.starts_with("--") => {
+                        o.cal_parms = Some(v);
+                        it.next();
+                    }
+                    ("--set", Some(name)) => {
+                        it.next();
+                        let (Some(typ), Some(val)) = (it.next(), it.next()) else {
+                            eprintln!("--set takes a parameter, a change (absval, abschg, pctchg, relchg) and a value\n{USAGE}");
+                            return ExitCode::from(2);
+                        };
+                        let Ok(val) = val.parse::<f32>() else {
+                            eprintln!("--set {name} {typ}: {val} is not a number");
+                            return ExitCode::from(2);
+                        };
+                        if !matches!(*typ, "absval" | "abschg" | "pctchg" | "relchg") {
+                            eprintln!("--set {name}: the change is absval, abschg, pctchg or relchg, not {typ}");
+                            return ExitCode::from(2);
+                        }
+                        o.sets.push(swat_model::cal::CalUpdate::all(name, typ, val));
                     }
                     _ => {
                         eprintln!("{USAGE}");
@@ -142,6 +177,30 @@ struct RunArgs<'a> {
     channel_hyd: bool,
     /// With `--fix-swat`, the threads the HRUs run on (0: all the computer has).
     threads: usize,
+    /// A `calibration.cal` to apply instead of the project's (`docs/calibration.md`).
+    calibration: Option<&'a str>,
+    /// A `cal_parms.cal` to use instead of the project's.
+    cal_parms: Option<&'a str>,
+    /// Changes for every object of their kind, applied after the calibration's.
+    sets: Vec<swat_model::cal::CalUpdate>,
+}
+
+/// The calibration `--calibration`, `--cal-parms` and `--set` ask for: the project's own,
+/// with those files read in place of its, and the `--set` changes after the others.
+fn calibration(project: &swat_model::Project, o: &RunArgs) -> Result<swat_model::cal::Calibration, String> {
+    let read = |path: &str| std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"));
+    let mut cal = swat_model::cal::Calibration::of(project);
+    if let Some(path) = o.cal_parms {
+        cal.parms = swat_io::cal::read_cal_parms(path, &read(path)?).map_err(|e| e.to_string())?;
+    }
+    if let Some(path) = o.calibration {
+        cal.updates = swat_io::cal::read_calibration(path, &read(path)?).map_err(|e| e.to_string())?;
+    }
+    cal.updates.extend(o.sets.iter().cloned());
+    if cal.parms.is_empty() {
+        return Err("calibration: the project has no cal_parms.cal; give one with --cal-parms".into());
+    }
+    Ok(cal)
 }
 
 fn run(dir: &str, o: &RunArgs) -> ExitCode {
@@ -199,7 +258,19 @@ fn run(dir: &str, o: &RunArgs) -> ExitCode {
     }
     // With --strict, a part not simulated still gives complete tables, then exit code 3.
     let mut strict_fail: Option<String> = None;
-    match swat_engine::run::run_with(&project, &mut tables, swat_engine::run::RunOptions { fixes: o.fixes, threads: o.threads }) {
+    let opts = swat_engine::run::RunOptions { fixes: o.fixes, threads: o.threads };
+    let custom = o.calibration.is_some() || o.cal_parms.is_some() || !o.sets.is_empty();
+    let result = if custom {
+        let cal = match calibration(&project, o) {
+            Ok(c) => c,
+            Err(e) => return fail(&e),
+        };
+        note(&format!("calibration: {} change(s) applied in memory; the project's files are unchanged", cal.updates.len()));
+        swat_engine::run::run_with_calibration(&project, &mut tables, opts, &cal)
+    } else {
+        swat_engine::run::run_with(&project, &mut tables, opts)
+    };
+    match result {
         Ok(report) => {
             let skipped: Vec<&String> =
                 [&report.hru_skipped, &report.channel_skipped, &report.routing_skipped].into_iter().flatten().collect();

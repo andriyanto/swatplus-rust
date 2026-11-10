@@ -541,6 +541,24 @@ Peringatan banjir resmi adalah kewenangan instansi pemerintah: BMKG (cuaca), BWS
 SDA (sungai), BNPB/BPBD (penanggulangan bencana). Sistem ini dirancang sebagai **alat pendukung
 keputusan** bagi mereka, bukan sumber peringatan mandiri.
 
+## Jalur M: kalibrasi untuk riset MPhil (didahulukan)
+
+Cakupan MPhil yang disepakati dengan pembimbing: **engine paralel yang reprodusibel** dan **uji
+sintetis kalibrasi berbasis TMA**, lalu validasi dengan data nyata di tahap lanjutan. Butir yang
+dibutuhkan MPhil ditarik ke depan sebagai jalur M, mendahului sisa F1 dan F2. A2 (kalibrasi
+berbantuan AI) di F2 dikerjakan lewat jalur ini.
+
+| Langkah | Isi | Repo | Status |
+| --- | --- | --- | --- |
+| **M1** | Kalibrasi di memori: perubahan parameter per run tanpa menulis file, diterapkan persis seperti `calibration.cal` (`docs/calibration.md`); opsi `--set`, `--calibration`, `--cal-parms` | E | selesai |
+| **M2** | Banyak run sekaligus: satu run per inti, *spin-up* sekali lalu disalin (E2), keluaran yang dibutuhkan saja di memori | E | |
+| **M3** | Uji sintetis: TMA buatan dari debit model dengan lengkung debit yang diketahui; fungsi tujuan (KGE pada TMA, Spearman, batas ET) | E | |
+| **M4** | Pengoptimasi pada anggaran run yang sama: SUFI-2 (pembanding), optimasi Bayesian; *surrogate* di tahap lanjutan | E atau modul Python | |
+| **M5** | Routing paralel per sub-DAS; percepatan diukur pada 1–12 inti (naskah mode paralel) | E | |
+
+Sisa F1 (`swat.run` di RustGIS-SwatPlus, GSMaP ke `pcp`) dan F2 lainnya berjalan sesudah atau
+di sela jalur M.
+
 ## Fase pengerjaan
 
 Tahap H, T, V dan E di atas disusun menurut isinya. Bagian ini menyusunnya menurut **urutan kerja**:
@@ -682,8 +700,8 @@ flowchart TD
 ## Hubungan dengan riset MPhil
 
 Usulan riset MPhil (kalibrasi berbasis TMA dengan optimasi berbasis AI) memakai **H0** (kecepatan
-dan paralel) dan **H1** (kedalaman air saluran). Riset itu tidak bergantung pada H2–H5, jadi
-jadwalnya tidak ikut terhambat. Sebaliknya, lengkung debit dan penampang hasil lapangan riset
+dan paralel), **H1** (kedalaman air saluran) dan **jalur M** (kalibrasi; cakupan MPhil: engine paralel dan uji
+sintetis, data nyata di tahap lanjutan). Riset itu tidak bergantung pada H2–H5, jadi jadwalnya tidak ikut terhambat. Sebaliknya, lengkung debit dan penampang hasil lapangan riset
 menjadi bahan uji H1 dan H2.
 
 ## Rujukan awal

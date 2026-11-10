@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Calibration in memory** (M1 in `docs/roadmap.md`): `Calibration` (`cal_parms.cal` and
+  `calibration.cal` as data), `CalUpdate::all`, `Simulation::with_calibration` and
+  `run_with_calibration` apply a list of parameter changes built in memory exactly as
+  `calibration.cal` is applied, so a calibration program reads a project once and runs it with
+  any number of parameter sets without writing files. `run --set <name> <change> <value>`,
+  `--calibration <file>` and `--cal-parms <file>` do it from the command line. An in-memory run
+  is byte-identical to the run of a copy with the changes written to its files, and matches the
+  SWAT+ Fortran reference on that copy. Every table of the 37 scenarios is unchanged. See
+  `docs/calibration.md`.
 - **Hot start in memory** (E2, first part, in `docs/roadmap.md`): `Simulation::run_until(out,
   year, jday)` runs to a date (a spin-up), `Simulation::checkpoint` copies the state there, and a
   run from a copy goes on exactly as the original would (`tests/step_api.rs`); `NoOutput` skips the

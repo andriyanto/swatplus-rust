@@ -685,6 +685,7 @@ fn is_null(s: &str) -> bool {
 /// them. Returns `Err` with the reason when an input needs a part of SWAT+ not ported yet.
 pub fn init_hrus(
     project: &Project,
+    cal: &swat_model::cal::Calibration,
     wgn: &[usize],
     wgns: &[crate::climate::WgnState],
     step: i32,
@@ -764,7 +765,7 @@ pub fn init_hrus(
             w.evrsv_et = evrsv.get(row.wrapping_sub(1)).copied().flatten().unwrap_or(0.7);
         }
     }
-    cal_conditions(project, &mut out)?;
+    cal_conditions(project, cal, &mut out)?;
     for (hd, h) in project.hru_data.iter().zip(out.iter_mut()) {
         nutcarb_stage(project, hd, h, &mut psp_saved);
     }
@@ -784,8 +785,8 @@ pub(crate) fn chg_par(u: &swat_model::cal::CalUpdate, p: &swat_model::cal::CalPa
 }
 
 /// The `cal_parms.cal` row of a calibration update (defaults when it isn't there).
-pub(crate) fn cal_parm(project: &Project, u: &swat_model::cal::CalUpdate) -> swat_model::cal::CalParm {
-    project.cal_parms.iter().find(|p| swat_model::table::fortran_eq(&p.name, &u.name)).cloned().unwrap_or_default()
+pub(crate) fn cal_parm(cal: &swat_model::cal::Calibration, u: &swat_model::cal::CalUpdate) -> swat_model::cal::CalParm {
+    cal.parms.iter().find(|p| swat_model::table::fortran_eq(&p.name, &u.name)).cloned().unwrap_or_default()
 }
 
 /// Whether HRU `e` (1-based) meets the conditions of calibration update `u`
@@ -854,11 +855,11 @@ pub(crate) fn cal_elems(u: &swat_model::cal::CalUpdate, n: usize) -> Vec<usize> 
 /// conditions (the aquifers' are made where the aquifers are set up). As in SWAT+, a change
 /// made after the set-up only reaches what is computed from the parameter later: a slope's
 /// time of concentration and USLE LS keep the old slope.
-fn cal_conditions(project: &Project, hrus: &mut [Hru]) -> Result<(), String> {
+fn cal_conditions(project: &Project, cal: &swat_model::cal::Calibration, hrus: &mut [Hru]) -> Result<(), String> {
     // bsn_prm%surlag: each change starts from the last one's value.
     let mut surlag = project.params.get("surlag").unwrap_or(4.0);
-    for u in &project.cal_upd {
-        let p = cal_parm(project, u);
+    for u in &cal.updates {
+        let p = cal_parm(cal, u);
         if !matches!(p.ob_typ.as_str(), "hru" | "sol" | "bsn" | "aqu") {
             return Err(format!("calibration of {} ({} parameter)", u.name, p.ob_typ));
         }

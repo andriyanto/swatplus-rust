@@ -311,6 +311,18 @@ pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -
     Ok(sim.finish(out))
 }
 
+/// [`run_with`] with a calibration in place of the project's ([`Simulation::with_calibration`]).
+pub fn run_with_calibration(
+    project: &Project,
+    out: &mut dyn OutputSink,
+    opts: RunOptions,
+    cal: &swat_model::cal::Calibration,
+) -> Result<RunReport, String> {
+    let mut sim = Simulation::with_calibration(project, opts, cal)?;
+    while sim.step(out)? {}
+    Ok(sim.finish(out))
+}
+
 /// A simulation run a day at a time (E1 in `docs/roadmap.md`): SWAT+ `time_control` with its year
 /// and day loops turned inside out, so a caller can stop between days, look at the state, and go
 /// on. [`run_with`] is made of these steps, so a stepped run is the same run.
@@ -377,6 +389,26 @@ pub struct Simulation<'p> {
 impl<'p> Simulation<'p> {
     /// Sets the simulation up as `time_control` does before its year loop.
     pub fn new(project: &'p Project, opts: RunOptions) -> Result<Self, String> {
+        Self::set_up(project, opts, &swat_model::cal::Calibration::of(project))
+    }
+
+    /// [`Simulation::new`] with `cal` in place of the project's `cal_parms.cal` and
+    /// `calibration.cal`: the changes are applied after the set-up exactly as the project's own
+    /// would be, so a run with a calibration built in memory is the run of a copy of the project
+    /// with that calibration written to its files. A change of a parameter `cal.parms` doesn't
+    /// list is refused, rather than leaving the HRUs out as an unported project would.
+    pub fn with_calibration(project: &'p Project, opts: RunOptions, cal: &swat_model::cal::Calibration) -> Result<Self, String> {
+        if let Some(name) = cal.unknown().first() {
+            return Err(format!("calibration of {name}: not in cal_parms.cal"));
+        }
+        let sim = Self::set_up(project, opts, cal)?;
+        if let Some(e) = &sim.report.hru_skipped {
+            return Err(format!("the HRUs can't be simulated with this calibration: {e}"));
+        }
+        Ok(sim)
+    }
+
+    fn set_up(project: &'p Project, opts: RunOptions, cal: &swat_model::cal::Calibration) -> Result<Self, String> {
         let mut clock = Clock::new(&project.time);
         let total_days = project.time.days().len();
         let days_done = 0_usize;
@@ -399,7 +431,7 @@ impl<'p> Simulation<'p> {
         // The HRUs' land phase, when everything they need is ported.
         let wgn_of: Vec<usize> =
             hrus.iter().map(|(ist, ..)| weather.stations.get(ist - 1).map(|s| s.wgn.saturating_sub(1)).unwrap_or(0)).collect();
-        let land: Option<Vec<Hru>> = match init_hrus(project, &wgn_of, &weather.wgn, clock.step, &clock.ndays) {
+        let land: Option<Vec<Hru>> = match init_hrus(project, cal, &wgn_of, &weather.wgn, clock.step, &clock.ndays) {
             Ok(h) if h.len() == hrus.len() => Some(h),
             Ok(h) => {
                 report.hru_skipped = Some(format!("{} HRUs in hru-data.hru, {} in hru.con", h.len(), hrus.len()));
@@ -415,7 +447,7 @@ impl<'p> Simulation<'p> {
             Some(l) => {
                 let tconc: Vec<f32> = l.iter().map(|h| h.tconc).collect();
                 let ovn_km: Vec<(f32, f32)> = l.iter().map(|h| (h.ovn, h.km)).collect();
-                match crate::route::Network::new(project, &station_names, &tconc, &ovn_km, opts.fixes) {
+                match crate::route::Network::new(project, cal, &station_names, &tconc, &ovn_km, opts.fixes) {
                     Ok(n) => n,
                     Err(e) => {
                         report.routing_skipped = Some(e);

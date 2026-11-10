@@ -219,6 +219,7 @@ impl Network {
     /// ported.
     pub fn new(
         project: &Project,
+        cal: &swat_model::cal::Calibration,
         stations: &[String],
         tconc: &[f32],
         ovn_km: &[(f32, f32)],
@@ -403,8 +404,8 @@ impl Network {
         }
         // cal_conditions: the aquifers' calibration (after aqu_initial). A condition would be
         // tested on the HRU numbered as the aquifer.
-        for u in &project.cal_upd {
-            let p = crate::hru::cal_parm(project, u);
+        for u in &cal.updates {
+            let p = crate::hru::cal_parm(cal, u);
             if p.ob_typ != "aqu" {
                 continue;
             }
