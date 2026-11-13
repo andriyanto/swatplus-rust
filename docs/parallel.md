@@ -58,6 +58,16 @@ An object computes the same day whichever part it is in, and its inflows are sum
 order, so the tables stay the same for any number of threads. A faithful run keeps one part, in
 SWAT+'s order, with the shared values as SWAT+ has them.
 
+Checked: all 37 validation scenarios give the same 1,254 tables as before this change, faithful
+and corrected (the corrected `inflo` and `gra` change none of them), with the default threads and
+with `--threads 1`; Batanghari, Pessel and eight of their variants (channels, reservoirs, recall
+points, hourly steps, unit hydrographs) give the same tables with 5 threads as with 1.
+`route::tests` checks on a made-up network that every part has all it needs.
+
+Measuring the speed-up needs a computer with many cores (the one used here has two, shared with
+other work): `scripts/bench-threads.ps1` runs one project on 1, 2, … 12 threads a few times
+each, writes the times to a CSV file, and checks that every thread count gives the same tables.
+
 ## What changes
 
 - **A faithful run doesn't**: the 37 validation scenarios give the same tables as before, every
