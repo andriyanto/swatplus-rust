@@ -13,7 +13,7 @@ the model runs are made by `swatplus-rust batch` ([`docs/calibration.md`](../doc
 | `synthetic` | The synthetic experiment (M3) |
 | `params` | The searched space (`parameter:change` between bounds), Latin hypercube sampling |
 | `optimize` | Random search; SUFI-2 (Abbaspour et al., 2007: Latin hypercube rounds, ranges narrowed around the behavioural runs); Bayesian optimisation (a numpy Gaussian process, Matérn 5/2, expected improvement, batches by constant liar) |
-| `compare` | The optimisers on a synthetic world with the same run budget, under three states of knowledge (M4) |
+| `compare` | The optimisers on a synthetic world with the same run budget, under three states of knowledge, over several seeds (M4) |
 
 ```bash
 pip install numpy pytest
@@ -49,7 +49,7 @@ Two practical points the experiment brought out:
 
 ```bash
 python -m swatcal.compare --exe ../target/release/swatplus-rust --project <TxtInOut> --channel 1 \
-    --out cmp --years 2015-2019 --budget 80
+    --out cmp --years 2015-2019 --budget 80 --seeds 1,2,3
 ```
 
 The truth is the project run with known values of four parameters (CN2 +8 %, baseflow alpha −20 %,
@@ -58,26 +58,36 @@ knowledge: the stage record alone, with satellite ET, and with six discharge mea
 the best score, how far its parameters are from the truth, and how good its discharge really is
 (`results.csv`, `convergence.json`, `convergence.png`).
 
-First run, Batanghari's outlet, 2015–2019 (two years of warm-up), 80 runs each, **one seed**:
+Batanghari's outlet, 2015–2019 (two years of warm-up), 80 runs per search, **three seeds**
+(`--seeds 1,2,3`), medians over the seeds with the range of the best score. "Bayesian, global" is
+the Gaussian process over the whole space; "Bayesian, trust region" keeps its next runs in a box
+around the best run so far, grown after successes and shrunk after failures (Eriksson et al., 2019).
+Every rating curve is fitted smoothly in the flows (no grid jumps).
 
-| knowledge | method | best score (truth: 0.0016 / 0.0016 / 0.070) | parameter error | true flow KGE | true flow PBIAS |
+| knowledge | method | best score (truth: 0.0016 / 0.070) | parameter error | true flow KGE | true flow PBIAS |
 | --- | --- | ---: | ---: | ---: | ---: |
-| stage | random | 0.050 | 0.21 | 0.943 | −4.3 % |
-| stage | SUFI-2 | 0.023 | 0.15 | 0.974 | −1.7 % |
-| stage | Bayesian | 0.046 | 0.29 | 0.968 | −1.3 % |
-| stage + ET | random | 0.050 | 0.21 | 0.943 | −4.3 % |
-| stage + ET | SUFI-2 | 0.023 | 0.15 | 0.974 | −1.7 % |
-| stage + ET | Bayesian | 0.051 | 0.22 | 0.939 | −4.8 % |
-| stage + ET + gaugings | random | 0.081 | 0.30 | 0.964 | −1.2 % |
-| stage + ET + gaugings | SUFI-2 | 0.068 | 0.17 | 0.988 | −0.0 % |
-| stage + ET + gaugings | Bayesian | 0.083 | 0.38 | 0.969 | −0.9 % |
+| stage | random | 0.022 (0.012–0.034) | 0.26 | 0.976 | −1.6 % |
+| stage | SUFI-2 | 0.042 (0.017–0.049) | 0.22 | 0.963 | +2.1 % |
+| stage | Bayesian, global | 0.026 (0.016–0.031) | 0.30 | 0.964 | +2.6 % |
+| stage | Bayesian, trust region | 0.025 (0.015–0.041) | 0.34 | 0.948 | +4.7 % |
+| stage + ET + gaugings | random | 0.068 (0.067–0.082) | 0.27 | 0.976 | −0.9 % |
+| stage + ET + gaugings | SUFI-2 | 0.073 (0.069–0.077) | 0.25 | 0.971 | +1.5 % |
+| stage + ET + gaugings | Bayesian, global | 0.074 (0.074–0.077) | 0.22 | 0.964 | −2.3 % |
+| stage + ET + gaugings | Bayesian, trust region | 0.082 (0.074–0.082) | 0.31 | 0.966 | +0.1 % |
 
-What it suggests, to be checked over several seeds before anything is concluded:
+What the seeds show:
 
-- **Six gaugings matter most for the volume**: with them, every method's flow bias is within 1.2 %,
-  and SUFI-2 finds the deep seepage (0.152 against 0.15).
-- **Satellite ET adds nothing here**, as the parameters searched hardly change ET.
-- **80 runs is far from enough**: no method comes near the truth's own score.
-- **Bayesian optimisation stalls** after about 30 runs, where it beat random search clearly on a smooth
-  test function. The score of a real run is not smooth (a rating curve fitted on a grid, reading noise):
-  the Gaussian process' noise model, the exploration and the scale of the score are what to examine.
+- **No method wins at 80 runs.** The spread between seeds of one method (random: 0.012 to 0.034) is as
+  wide as the differences between methods, and each method is best on some seed. The first, one-seed
+  run (SUFI-2 ahead) was one draw of this spread.
+- **The trust region does not help on the real model**, though it follows a narrow valley better on a
+  test function (median 0.26 against 0.44 over six seeds, `tests/test_optimize.py`). With four
+  parameters and 80 runs, a Latin hypercube already covers the space about as densely as the
+  Gaussian process can exploit.
+- **A good score is not a good parameter set.** With gaugings, random search scores 0.068, below the
+  truth's own 0.070, while its parameters are 0.27 away: the gauge's reading noise is being fitted.
+  The flow is still good (KGE ≥ 0.96, bias within 2.5 % for every method), as different parameter
+  sets give nearly the same discharge (equifinality).
+- **What to change is the problem, not the optimiser**: more parameters (where a model of the score
+  pays off), more runs, or a score less sensitive to reading noise. Random search, being simplest and
+  using every core at once, is the reasonable default for a few parameters.

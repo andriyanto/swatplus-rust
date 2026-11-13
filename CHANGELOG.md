@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Optimisers over several seeds** (M4): `swatcal.compare --seeds`; the rating curve is fitted
+  smoothly in the flows; Bayesian optimisation keeps a trust region by default (`bayes-global` for the
+  old search). On Batanghari over three seeds no method is better at 80 runs: the spread between
+  seeds is as wide as between methods, and the best scores fit the gauge's noise
+  (`calibration/README.md`).
 - **Precipitation from GSMaP** (F1 in `docs/roadmap.md`): `scripts/gsmap-to-pcp.py` makes a copy of
   a project whose stations read GSMaP_Gauge v8 daily (mm/h × 24, the cell holding each station)
   instead of their own files, from a box cut out of JAXA's archive. Checked on Batanghari against
