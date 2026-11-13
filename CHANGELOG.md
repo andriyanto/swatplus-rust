@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Parallel routing by sub-basin** (M5 in `docs/roadmap.md`): with `--fix-swat --threads N` the
+  objects past the HRUs are cut into parts that need nothing from one another (each holding
+  everything upstream of it), routed at once, then the main channels in command order
+  (`docs/parallel.md`). Corrected mode no longer carries `ch_rtmusk`'s `inflo` and
+  `ch_watqual4`'s `gra` from one channel to the next (`docs/swat-fixes.md`); none of the 37
+  validation scenarios changes for it. The tables are the same for any number of threads; a
+  faithful run is unchanged. `scripts/bench-threads.ps1` measures the speed-up on Windows, and
+  preview builds (`preview/**` branches) package it.
+- The list-directed reader scans lines as bytes: projects load faster (reading the weather files
+  was about a tenth of a three-year Batanghari run).
 - **Precipitation from GSMaP** (F1 in `docs/roadmap.md`): `scripts/gsmap-to-pcp.py` makes a copy of
   a project whose stations read GSMaP_Gauge v8 daily (mm/h × 24, the cell holding each station)
   instead of their own files, from a box cut out of JAXA's archive. Checked on Batanghari against

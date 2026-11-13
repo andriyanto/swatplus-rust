@@ -363,7 +363,9 @@ pub struct ChWat {
 
 /// A SWAT-DEG channel (`swatdeg_channel_dynamic` and its state).
 #[derive(Clone, Debug)]
-struct SdCh {
+pub(crate) struct SdCh {
+    /// Corrected: the channel's own algal growth rate (see `Carry`).
+    gra: f32,
     chw: f32,
     chd: f32,
     chs: f32,
@@ -448,16 +450,41 @@ struct Basin {
     fixes: bool,
 }
 
-/// The SWAT-DEG channels.
-#[derive(Clone, Debug)]
-pub struct Channels {
-    chs: Vec<SdCh>,
-    b: Basin,
+/// What SWAT+ carries from one channel's day to the next channel's (local variables with the
+/// save attribute, and a module variable). Corrected (`--fix-swat`), each channel keeps its own
+/// growth rate, a channel without inflow has none, and `wtemp` isn't printed: no channel then
+/// reads another's, and the channels can be routed in any order that keeps each one after the
+/// objects it receives water from.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Carry {
     /// `ch_watqual4`'s algal growth rate, kept from the last channel when algae are too dense to
     /// grow (`gra` has the save attribute).
     gra: f32,
+    /// `ch_rtmusk`'s inflow of a step (`inflo` has the save attribute): kept from the last step
+    /// computed, of any channel, when a channel has no inflow.
+    inflo: f32,
     /// `wtemp`: one value for all channels, the last one set.
-    pub wtemp: f32,
+    wtemp: f32,
+}
+
+/// `ch_temp`'s lagged air temperatures (surface, lateral, groundwater, snow) for the day, by
+/// temperature gage (its address): they depend on the gage and the day only, so they are summed
+/// once per gage instead of once per channel, in the same order (same results).
+pub(crate) type AirLags = Vec<(usize, i32, i32, [f32; 4])>;
+
+/// The SWAT-DEG channels.
+#[derive(Clone, Debug)]
+pub struct Channels {
+    pub(crate) chs: Vec<SdCh>,
+    pub(crate) cfg: ChanCfg,
+    pub(crate) carry: Carry,
+    pub(crate) air_lags: AirLags,
+}
+
+/// The channels' settings, the same for all.
+#[derive(Clone, Debug)]
+pub(crate) struct ChanCfg {
+    b: Basin,
     /// Routing units' elements (HRU numbers, 0-based) and the global element table's types, as
     /// `ch_temp` reads them.
     ru_hrus: Vec<Vec<(usize, f32)>>,
@@ -465,13 +492,6 @@ pub struct Channels {
     /// Time steps a day and their length (minutes).
     step: usize,
     dtm: f32,
-    /// `ch_rtmusk`'s inflow of a step (`inflo` has the save attribute): kept from the last step
-    /// computed, of any channel, when a channel has no inflow.
-    inflo: f32,
-    /// `ch_temp`'s lagged air temperatures (surface, lateral, groundwater, snow) for the day, by
-    /// temperature gage (its address): they depend on the gage and the day only, so they are
-    /// summed once per gage instead of once per channel, in the same order (same results).
-    air_lags: Vec<(usize, i32, i32, [f32; 4])>,
 }
 
 impl Channels {
@@ -512,6 +532,7 @@ impl Channels {
                 return Err(format!("channel {}: initial water {om_name}", dat.name));
             }
             let mut c = SdCh {
+                gra: 0.0,
                 chw: r("chw"),
                 chd: r("chd"),
                 chs: r("chs"),
@@ -639,21 +660,10 @@ impl Channels {
         let step = project.time.step.max(1) as usize;
         Ok(Channels {
             chs,
-            b,
-            gra: 0.0,
-            wtemp: 0.0,
-            ru_hrus,
-            ru_elem_is_hru,
-            step,
-            dtm: 1440.0 / step as f32,
-            inflo: 0.0,
+            cfg: ChanCfg { b, ru_hrus, ru_elem_is_hru, step, dtm: 1440.0 / step as f32 },
+            carry: Carry::default(),
             air_lags: Vec::new(),
         })
-    }
-
-    /// `rcurv_interp_flo` on channel `ich`'s rating curve.
-    fn interp_flo(&self, ich: usize, flo_rate: f32) -> Rc {
-        interp_flo(&self.chs[ich].elev, flo_rate)
     }
 
     /// Channel `ich`'s (0-based) hydraulics on the last day routed, worked out when asked for
@@ -683,13 +693,11 @@ impl Channels {
     /// The water temperature printed for channel `ich`: SWAT+ prints one value for all channels,
     /// the last one set (`wtemp`); corrected, the channel's own stream temperature.
     pub fn wtemp_of(&self, ich: usize) -> f32 {
-        if self.b.fixes { self.chs[ich].wtemp } else { self.wtemp }
+        if self.cfg.b.fixes { self.chs[ich].wtemp } else { self.carry.wtemp }
     }
 
-    /// `sd_channel_control3` for channel `ich` (0-based) with inflow `hin`, its drainage area
-    /// (ha) and inflows; returns the outflow hydrograph (`ob%hd(1)`).
-    /// `tsin` is the inflow by time step (sub-daily runs); the outflow by step is left in
-    /// `hyd_flo`.
+    /// `sd_channel_control3` for channel `ich` (0-based), in SWAT+'s command order: see
+    /// [`ChanCfg::control`].
     #[allow(clippy::too_many_arguments)]
     pub fn control(
         &mut self,
@@ -701,29 +709,57 @@ impl Channels {
         tsin_in: &[f32],
         hyd_flo: &mut Vec<f32>,
     ) -> Hyd {
+        let Channels { chs, cfg, carry, air_lags } = self;
+        let shared = if cfg.b.fixes { None } else { Some(carry) };
+        cfg.control(&mut chs[ich], shared, air_lags, hin, area_ha, ins, cx, tsin_in, hyd_flo)
+    }
+}
+
+impl ChanCfg {
+    /// `sd_channel_control3` for channel `ich` (0-based) with inflow `hin`, its drainage area
+    /// (ha) and inflows; returns the outflow hydrograph (`ob%hd(1)`).
+    /// `tsin` is the inflow by time step (sub-daily runs); the outflow by step is left in
+    /// `hyd_flo`.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn control(
+        &self,
+        c: &mut SdCh,
+        shared: Option<&mut Carry>,
+        lags: &mut AirLags,
+        hin: Hyd,
+        area_ha: f32,
+        ins: &ChanInflows,
+        cx: &ChanCtx,
+        tsin_in: &[f32],
+        hyd_flo: &mut Vec<f32>,
+    ) -> Hyd {
+        // What SWAT+ keeps from one channel to the next (`shared`), or, corrected, the channel's
+        // own growth rate (see `Carry`).
+        let mut cr = match shared.as_deref() {
+            Some(s) => *s,
+            None => Carry { gra: c.gra, ..Carry::default() },
+        };
         let w = cx.weat;
         let mut ht1 = hin;
         ht1.temp = 5.0 + 0.75 * w.tave;
-        self.wtemp = 5.0 + 0.75 * w.tave;
+        cr.wtemp = 5.0 + 0.75 * w.tave;
         let step = self.step;
         let mut tsin: Vec<f32> = if step == 1 { vec![ht1.flo] } else { tsin_in.to_vec() };
-        self.chs[ich].ch_in = Hyd { flo: ht1.flo / 86400.0, ..ht1 };
+        c.ch_in = Hyd { flo: ht1.flo / 86400.0, ..ht1 };
 
         // sd_channel_sediment3
         let mut fp_dep = Hyd::default();
         let mut ch_dep = Hyd::default();
         let mut bank_ero = Hyd::default();
         let mut peak = (0.0_f32, Rc::default());
-        self.chs[ich].wat.precip = 0.0;
+        c.wat.precip = 0.0;
         if ht1.flo > 1.0e-6 {
-            let c = &self.chs[ich];
             let (bankfull_flo, fp_inun_days, d50, bed_exp) = (1.5_f32, 1.0_f32, 1.0_f32, 1.0_f32);
             let pk_rto = c.pk_rto * (1.0 + 2.66 * rpow(area_ha / 100.0, -0.3));
             let peakrate = pk_rto * ht1.flo / 86400.0;
-            let rc = self.interp_flo(ich, peakrate);
+            let rc = interp_flo(&c.elev, peakrate);
             peak = (peakrate, rc);
             let vel = rc.vel;
-            let c = &mut self.chs[ich];
             let rttime = c.chl / (3.6 * vel);
             c.vel = vel;
             c.rttime = rttime;
@@ -791,9 +827,9 @@ impl Channels {
         hyd_flo.clear();
         hyd_flo.resize(step, 0.0);
         {
-            self.chs[ich].wat.evap = 0.0;
-            self.chs[ich].wat.seep = 0.0;
-            let (substeps, nsteps) = if step == 1 { (1, 1) } else { (self.chs[ich].substeps, self.chs[ich].nsteps) };
+            c.wat.evap = 0.0;
+            c.wat.seep = 0.0;
+            let (substeps, nsteps) = if step == 1 { (1, 1) } else { (c.substeps, c.nsteps) };
             let dts = self.dtm / substeps as f32 * 60.0;
             let dthr = dts / 3600.0;
             let mut irtstep = 1usize;
@@ -805,24 +841,25 @@ impl Channels {
                     isubstep = 1;
                 }
                 if ht1.flo > 1.0e-6 {
-                    self.inflo = tsin.get(irtstep - 1).copied().unwrap_or(0.0) / substeps as f32;
-                    let mut rto = self.inflo / ht1.flo;
+                    cr.inflo = tsin.get(irtstep - 1).copied().unwrap_or(0.0) / substeps as f32;
+                    let mut rto = cr.inflo / ht1.flo;
                     rto = rto.max(0.0);
                     rto = rto.min(1.0);
-                    let c = &mut self.chs[ich];
                     c.tot_stor = c.tot_stor.plus(Hyd::scale(rto, ht1));
+                } else if self.b.fixes {
+                    // A channel without inflow gets none (SWAT+ keeps the last inflow computed,
+                    // of any channel).
+                    cr.inflo = 0.0;
                 }
-                let inflo = self.inflo;
-                let in2 = self.interp_flo(ich, inflo / 86400.0);
-                self.chs[ich].in2 = in2;
-                if self.chs[ich].tot_stor.flo < 1.0e-6 {
-                    let c = &mut self.chs[ich];
+                let inflo = cr.inflo;
+                let in2 = interp_flo(&c.elev, inflo / 86400.0);
+                c.in2 = in2;
+                if c.tot_stor.flo < 1.0e-6 {
                     c.in1 = Rc::default();
                     c.out1 = Rc::default();
                     c.in1_vol = 0.0;
                     c.out1_vol = 0.0;
                 } else {
-                    let c = &mut self.chs[ich];
                     let mut outflo = if self.b.rte == 1 {
                         let o = c.msk_c[0] * inflo + c.msk_c[1] * c.in1_vol + c.msk_c[2] * c.out1_vol;
                         let o = o.min(c.tot_stor.flo).max(0.0);
@@ -837,8 +874,7 @@ impl Channels {
                     if !outflo.is_finite() {
                         outflo = 0.0;
                     }
-                    let out2 = self.interp_flo(ich, outflo / dts);
-                    let c = &mut self.chs[ich];
+                    let out2 = interp_flo(&c.elev, outflo / dts);
                     c.out2 = out2;
                     let mut rto = outflo / c.tot_stor.flo;
                     rto = rto.min(1.0);
@@ -858,7 +894,6 @@ impl Channels {
                     c.tot_stor = c.ch_stor.plus(c.fp_stor);
                 }
             }
-            let c = &mut self.chs[ich];
             if c.ch_stor.flo > 1.0e-6 {
                 trans_loss = c.chk * c.chl * c.chw * 24.0;
                 trans_loss = trans_loss.min(c.ch_stor.flo);
@@ -880,11 +915,10 @@ impl Channels {
         if ht1.flo > 1.0e-6 {
             // The maximum flow depth uses `ht3%flo`, never set: the curve at no flow. Corrected,
             // the inflow's rate.
-            let rc_ht3 = self.interp_flo(ich, if self.b.fixes { ht1.flo / 86400.0 } else { 0.0 });
-            self.ch_watqual4(ich, &ht1, &mut ht2, rc_ht3, cx);
+            let rc_ht3 = interp_flo(&c.elev, if self.b.fixes { ht1.flo / 86400.0 } else { 0.0 });
+            self.ch_watqual4(c, &mut cr, &ht1, &mut ht2, rc_ht3, cx);
             if self.b.qual2e == 1 {
-                let rc = self.interp_flo(ich, ht1.flo / 86400.0);
-                let c = &self.chs[ich];
+                let rc = interp_flo(&c.elev, ht1.flo / 86400.0);
                 let conc_chng = 1.0 - (-c.n_sol_part * rc.ttime).exp();
                 let mut orgn = conc_chng * ht1.orgn;
                 orgn = ht1.no3.min(orgn);
@@ -898,20 +932,24 @@ impl Channels {
             }
         }
         let mut hd1 = ht2;
-        let tw = self.ch_temp(ich, hd1, ht2, ins, cx);
+        let tw = self.ch_temp(c, &mut cr, lags, hd1, ht2, ins, cx);
         // SWAT+ sets the outflow before computing the stream temperature, so only the storage
         // gets it; corrected, the outflow carries it.
         if self.b.fixes {
             hd1.temp = tw;
         }
-        self.chs[ich].ch_out = Hyd { flo: hd1.flo / 86400.0, ..hd1 };
-        self.chs[ich].peak = peak;
+        c.ch_out = Hyd { flo: hd1.flo / 86400.0, ..hd1 };
+        c.peak = peak;
+        match shared {
+            Some(s) => *s = cr,
+            None => c.gra = cr.gra,
+        }
         hd1
     }
 
     /// SWAT+ `ch_watqual4`: QUAL2E transformations of the inflow's concentrations, giving the
     /// outflow's nutrients, algae, CBOD and oxygen (as masses of the inflow's water).
-    fn ch_watqual4(&mut self, ich: usize, ht1: &Hyd, ht2: &mut Hyd, rc_prev: Rc, cx: &ChanCtx) {
+    fn ch_watqual4(&self, c: &mut SdCh, cr: &mut Carry, ht1: &Hyd, ht2: &mut Hyd, rc_prev: Rc, cx: &ChanCtx) {
         let (thgra, thrho, thrs1, thrs2, thrs3, thrs4, thrs5) =
             (1.047_f32, 1.047_f32, 1.024_f32, 1.074_f32, 1.074_f32, 1.024_f32, 1.024_f32);
         let (_thbc1, thbc2, thbc3, thbc4) = (1.083_f32, 1.047_f32, 1.047_f32, 1.047_f32);
@@ -938,15 +976,13 @@ impl Channels {
             wtmp = 0.1;
         }
         ht2.temp = wtmp;
-        let c = &self.chs[ich];
         let n = &c.nut;
         let ben_area = c.chw * c.chl;
         let rs2_s = theta(n.rs2, thrs2, wtmp) * ben_area;
         let rs3_s = theta(n.rs3, thrs3, wtmp) * ben_area;
         let rk4_s = theta(n.rk4, thrk4, wtmp) * ben_area;
-        let rc = self.interp_flo(ich, ht1.flo / 86400.0);
+        let rc = interp_flo(&c.elev, ht1.flo / 86400.0);
         let rchdep = rc.dep;
-        let c = &self.chs[ich];
         let n = &c.nut;
         if ht1.flo > 0.0 && rchdep > 0.0 {
             let mut disoxin = h3.dox - rk4_s / (ht1.flo * 1000.0);
@@ -987,7 +1023,7 @@ impl Channels {
             let fl_1 = (1.0 / (lambda * rchdep)) * ((n.k_l + algi) / (n.k_l + algi * (-lambda * rchdep).exp())).ln();
             let fll = 0.92 * (cx.daylth / 24.0) * fl_1;
             if algcon < 5000.0 {
-                self.gra = match n.igropt {
+                cr.gra = match n.igropt {
                     1 => n.mumax * fll * fnn * fpp,
                     2 => n.mumax * fll * fnn.min(fpp),
                     3 => {
@@ -997,10 +1033,10 @@ impl Channels {
                             0.0
                         }
                     }
-                    _ => self.gra,
+                    _ => cr.gra,
                 };
             }
-            let gra = self.gra;
+            let gra = cr.gra;
             let mut factk = theta(gra, thgra, wtmp) - theta(n.rhoq, thrho, wtmp);
             algcon = 1000.0 * h3.chla / n.ai0;
             let alg_m1 = wq_semianalyt(tday, rt_delt, 0.0, factk, algcon, algin);
@@ -1100,13 +1136,14 @@ impl Channels {
             ht2.dox = h3.dox * ht1.flo / 1000.0;
         } else {
             *ht2 = Hyd::default();
-            self.chs[ich].ch_stor = Hyd::default();
+            c.ch_stor = Hyd::default();
         }
     }
 
     /// SWAT+ `ch_temp`: the stream temperature, which ends up only in the channel's storage
     /// (`ch_stor%temp`). `hd1` is the outflow (`ob%hd(1)`), `ht2` the routed outflow.
-    fn ch_temp(&mut self, ich: usize, hd1: Hyd, ht2: Hyd, ins: &ChanInflows, cx: &ChanCtx) -> f32 {
+    #[allow(clippy::too_many_arguments)]
+    fn ch_temp(&self, c: &mut SdCh, cr: &mut Carry, lags: &mut AirLags, hd1: Hyd, ht2: Hyd, ins: &ChanInflows, cx: &ChanCtx) -> f32 {
         let w = cx.weat;
         let tw_def = 5.0 + 0.75 * w.tave;
         let mut ht1 = hd1;
@@ -1161,19 +1198,19 @@ impl Channels {
             q_ru_wyld = 1.0e-6;
         }
         let q_gw = 0.0_f32;
-        let tw_local_prev = self.chs[ich].ch_out.temp;
+        let tw_local_prev = c.ch_out.temp;
         let tw_local = match cx.tgage {
             None => tw_def,
             Some(g) => {
                 let key = std::ptr::from_ref(g) as usize;
-                let lags = match self.air_lags.iter().find(|c| c.0 == key && c.1 == cx.yrs && c.2 == cx.jday) {
+                let lags = match lags.iter().find(|c| c.0 == key && c.1 == cx.yrs && c.2 == cx.jday) {
                     Some(c) => c.3,
                     None => {
-                        if self.air_lags.first().is_some_and(|c| c.1 != cx.yrs || c.2 != cx.jday) {
-                            self.air_lags.clear();
+                        if lags.first().is_some_and(|c| c.1 != cx.yrs || c.2 != cx.jday) {
+                            lags.clear();
                         }
                         let l = air_lags(g, cx, [surf_lag0, lat_lag0, gw_lag0, sno_lag0]);
-                        self.air_lags.push((key, cx.yrs, cx.jday, l));
+                        lags.push((key, cx.yrs, cx.jday, l));
                         l
                     }
                 };
@@ -1210,7 +1247,6 @@ impl Channels {
         let h_atm = 0.96 * e_atm * 5.67e-8 * ((tk * tk) * (tk * tk));
         let numerator = h_atm - 305.5 - 4.48 * tdx;
         let t_equil = tdx + h_sr / k_e + numerator / k_e;
-        let c = &self.chs[ich];
         let vc = c.vel.max(0.01);
         let mut wid_chan = c.db_chw;
         let dep_chan = c.db_chd;
@@ -1229,9 +1265,9 @@ impl Channels {
         if tw_final < 0.001 {
             tw_final = 0.001;
         }
-        self.chs[ich].ch_stor.temp = tw_final;
-        self.wtemp = 5.0 + 0.75 * w.tave;
-        self.chs[ich].wtemp = if self.b.fixes { tw_final } else { self.wtemp };
+        c.ch_stor.temp = tw_final;
+        cr.wtemp = 5.0 + 0.75 * w.tave;
+        c.wtemp = if self.b.fixes { tw_final } else { cr.wtemp };
         tw_final
     }
 }
