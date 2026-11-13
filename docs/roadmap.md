@@ -553,7 +553,7 @@ berbantuan AI) di F2 dikerjakan lewat jalur ini.
 | **M1** | Kalibrasi di memori: perubahan parameter per run tanpa menulis file, diterapkan persis seperti `calibration.cal` (`docs/calibration.md`); opsi `--set`, `--calibration`, `--cal-parms` | E | selesai |
 | **M2** | Banyak run sekaligus: satu run per inti, hanya deret yang dibutuhkan (debit, kedalaman, hujan, ET) di memori; perintah `batch` (`docs/calibration.md`). *Spin-up* bersama diuji di M3, tidak diasumsikan | E | selesai |
 | **M3** | Uji sintetis: TMA buatan dari debit model dengan lengkung debit yang diketahui; fungsi tujuan (KGE pada TMA, Spearman, batas ET, pengukuran debit); paket Python `calibration/swatcal` | Python | selesai |
-| **M4** | Pengoptimasi pada anggaran run yang sama: SUFI-2 (pembanding), optimasi Bayesian; *surrogate* di tahap lanjutan | E atau modul Python | |
+| **M4** | Pengoptimasi pada anggaran run yang sama: pencarian acak, SUFI-2 (pembanding), optimasi Bayesian (`swatcal.optimize`, `swatcal.compare`); *surrogate* di tahap lanjutan | Python | alat selesai; perbandingan awal (1 *seed*) di `calibration/README.md`, ulangan dan penyetelan Bayesian berikutnya |
 | **M5** | Routing paralel per sub-DAS; percepatan diukur pada 1–12 inti (naskah mode paralel) | E | |
 
 Sisa F1 (`swat.run` di RustGIS-SwatPlus, GSMaP ke `pcp`) dan F2 lainnya berjalan sesudah atau
