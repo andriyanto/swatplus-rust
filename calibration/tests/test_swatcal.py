@@ -127,3 +127,15 @@ def test_runs_through_batch(tmp_path):
     assert len(runs["base"].flo[1]) == len(runs["base"].dates) > 0
     assert not np.array_equal(runs["lo"].flo[1], runs["hi"].flo[1])
     assert isinstance(runs["bad"], str) and "no_such" in runs["bad"]
+
+
+def test_fit_rating_is_smooth_in_the_flows():
+    # Scaling the flows a little changes the fitted error a little: no steps from a grid, which
+    # stall an optimiser that reads the score (M4).
+    rng = np.random.default_rng(3)
+    q = np.exp(rng.normal(3.0, 1.0, 400))
+    h = Rating(4.0, 1.8, 0.7).stage(q) + rng.normal(0.0, 0.02, q.shape)
+    errs = np.array([fit_rating(q * (1.0 + k * 1e-3), h).rmse for k in range(-10, 11)])
+    jumps = np.abs(np.diff(errs))
+    assert jumps.max() < 5e-5
+    assert np.all(np.abs(np.diff(jumps)) < 2e-5)

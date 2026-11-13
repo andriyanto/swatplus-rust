@@ -79,3 +79,19 @@ def test_failed_runs_are_ignored():
 
     h = bayes_opt(sometimes, SPACE, 20, np.random.default_rng(0))
     assert h.n == 20 and np.isfinite(h.best()[1])
+
+
+def valley(xs):
+    """A narrow curved valley (Rosenbrock's, in the unit square of the first two parameters; the
+    third doesn't count): a Gaussian process over the whole space smooths over it."""
+    u = SPACE.to_unit(xs)
+    a, b = 4.0 * u[..., 0] - 2.0, 4.0 * u[..., 1] - 1.0
+    return (1.0 - a) ** 2 + 100.0 * (b - a * a) ** 2 + 1e-3
+
+
+def test_the_trust_region_follows_a_narrow_valley():
+    tr, gl = [], []
+    for seed in range(6):
+        tr.append(bayes_opt(valley, SPACE, 60, np.random.default_rng(seed), trust_region=True).best()[1])
+        gl.append(bayes_opt(valley, SPACE, 60, np.random.default_rng(seed), trust_region=False).best()[1])
+    assert np.median(tr) < np.median(gl)
