@@ -46,6 +46,23 @@ jobs:
           cargo run -q -p swatplus-rust -- inspect testdata/Osu_1hru
           cargo run -q -p swatplus-rust -- inspect testdata/Ames_sub1
 
+  calibration:
+    name: Calibration tools (Python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the program the tools run
+        run: cargo build --release -p swatplus-rust
+      - name: Test
+        working-directory: calibration
+        run: |
+          python -m pip install numpy pytest
+          python -m pytest -q tests
+
   wasm:
     name: WebAssembly build
     runs-on: ubuntu-latest
