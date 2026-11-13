@@ -167,15 +167,25 @@ def _expected_improvement(mu, sd, best, xi=0.01):
 
 
 def bayes_opt(f, space: Space, budget: int, rng: np.random.Generator, n_init: int | None = None,
-              batch: int = 2, log_y: bool = True) -> History:
+              batch: int = 2, log_y: bool = True, trust_region: bool = True) -> History:
     """Bayesian optimisation: `n_init` Latin hypercube runs (default 2 per parameter + 2), then
     batches of `batch` runs where a Gaussian process (Matérn 5/2, one length scale per parameter,
     fitted by marginal likelihood) expects the most improvement. The points of a batch after its
     first are chosen as if the ones before had scored the best score so far (constant liar). The
-    process models log(score) when `log_y` (scores are distances, positive and skewed)."""
+    process models log(score) when `log_y` (scores are distances, positive and skewed).
+
+    With `trust_region` (TuRBO, Eriksson et al., 2019, for one region), the candidates are drawn in
+    a box around the best point so far, its side scaled by each parameter's length scale: the box
+    doubles after 3 batches in a row that improve on the best, halves after `ceil(dim / batch)`
+    batches that don't, and starts again from a fresh Latin hypercube once it is smaller than
+    1/128 of the space. A process fitted over the whole space smooths over a narrow valley; the box
+    lets it follow one."""
     hist = History()
     n_init = n_init or min(budget, 2 * space.dim + 2)
     _eval(f, lhs(n_init, space.lo, space.hi, rng), hist)
+    length, succ, fail = 0.8, 0, 0
+    fail_tol = max(1, math.ceil(space.dim / max(1, batch)))
+    restart_from = 0  # the runs before a restart don't count as the region's best
     while hist.n < budget:
         q = min(batch, budget - hist.n)
         u = space.to_unit(np.array(hist.x))
@@ -185,10 +195,23 @@ def bayes_opt(f, space: Space, budget: int, rng: np.random.Generator, n_init: in
         y = np.log(np.maximum(y, 1e-12)) if log_y else y
         gp = _Gp.fit(u, y, rng)
         top = u[np.argsort(y)[:5]]
+        y_region = np.array(hist.y[restart_from:])
+        best_before = float(np.min(y_region[np.isfinite(y_region)])) if np.isfinite(y_region).any() else np.inf
         picks = []
         for _ in range(q):
-            cand = np.vstack([rng.random((3000, space.dim)),
-                              np.clip(np.repeat(top, 300, 0) + rng.normal(0, 0.08, (len(top) * 300, space.dim)), 0, 1)])
+            if trust_region:
+                centre = space.to_unit(hist.x[restart_from + int(np.argmin(y_region))])
+                w = gp.ls / np.exp(np.mean(np.log(gp.ls)))
+                half = np.clip(length * w / 2.0, 1e-4, 0.5)
+                lo_, hi_ = np.clip(centre - half, 0, 1), np.clip(centre + half, 0, 1)
+                cand = lo_ + rng.random((4000, space.dim)) * (hi_ - lo_)
+                # Perturb only some coordinates of the centre in most candidates (as TuRBO does).
+                mask = rng.random(cand.shape) < min(1.0, 20.0 / space.dim)
+                mask[np.arange(len(cand)), rng.integers(0, space.dim, len(cand))] = True
+                cand = np.where(mask, cand, centre)
+            else:
+                cand = np.vstack([rng.random((3000, space.dim)),
+                                  np.clip(np.repeat(top, 300, 0) + rng.normal(0, 0.08, (len(top) * 300, space.dim)), 0, 1)])
             mu, sd = gp.predict(cand)
             ei = _expected_improvement(mu, sd, float(y.min()))
             pick = cand[int(np.argmax(ei))]
@@ -198,7 +221,21 @@ def bayes_opt(f, space: Space, budget: int, rng: np.random.Generator, n_init: in
             u = np.vstack([u, pick])
             y = np.append(y, y.min())
             gp = _refit(gp, u, y)
-        _eval(f, space.from_unit(np.array(picks)), hist)
+        ys = _eval(f, space.from_unit(np.array(picks)), hist)
+        if trust_region:
+            if np.min(ys) < best_before - 1e-3 * abs(best_before):
+                succ, fail = succ + 1, 0
+            else:
+                succ, fail = 0, fail + 1
+            if succ >= 3:
+                length, succ = min(2.0 * length, 1.6), 0
+            elif fail >= fail_tol:
+                length, fail = length / 2.0, 0
+            if length < 1.0 / 128 and hist.n < budget:
+                n = min(n_init, budget - hist.n)
+                restart_from = hist.n
+                _eval(f, lhs(n, space.lo, space.hi, rng), hist)
+                length, succ, fail = 0.8, 0, 0
     return hist
 
 
