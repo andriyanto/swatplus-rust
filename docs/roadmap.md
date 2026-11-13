@@ -556,7 +556,7 @@ berbantuan AI) di F2 dikerjakan lewat jalur ini.
 | **M4** | Pengoptimasi pada anggaran run yang sama: pencarian acak, SUFI-2 (pembanding), optimasi Bayesian (`swatcal.optimize`, `swatcal.compare`); *surrogate* di tahap lanjutan | Python | alat selesai; perbandingan awal (1 *seed*) di `calibration/README.md`, ulangan dan penyetelan Bayesian berikutnya |
 | **M5** | Routing paralel per sub-DAS; percepatan diukur pada 1–12 inti (naskah mode paralel) | E | |
 
-Sisa F1 (`swat.run` di RustGIS-SwatPlus, GSMaP ke `pcp`) dan F2 lainnya berjalan sesudah atau
+Sisa F1 (`swat.run` di RustGIS-SwatPlus; GSMaP ke `pcp` sudah ada sebagai `scripts/gsmap-to-pcp.py`) dan F2 lainnya berjalan sesudah atau
 di sela jalur M.
 
 ## Fase pengerjaan

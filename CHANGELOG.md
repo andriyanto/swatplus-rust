@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Precipitation from GSMaP** (F1 in `docs/roadmap.md`): `scripts/gsmap-to-pcp.py` makes a copy of
+  a project whose stations read GSMaP_Gauge v8 daily (mm/h × 24, the cell holding each station)
+  instead of their own files, from a box cut out of JAXA's archive. Checked on Batanghari against
+  CHIRPS v3: same days line up (daily correlation highest at lag 0), GSMaP is 5 % wetter over the
+  basin and the outlet's mean flow 11 % higher. GSMaP data stay out of the repository (JAXA's terms).
 - **Optimisers compared** (M4 in `docs/roadmap.md`): `swatcal.params` (search space, Latin
   hypercube), `swatcal.optimize` (random search, SUFI-2 with Abbaspour's range update, Bayesian
   optimisation with a numpy Gaussian process and constant-liar batches) and `swatcal.compare` (the
