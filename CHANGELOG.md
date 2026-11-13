@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Optimisers compared** (M4 in `docs/roadmap.md`): `swatcal.params` (search space, Latin
+  hypercube), `swatcal.optimize` (random search, SUFI-2 with Abbaspour's range update, Bayesian
+  optimisation with a numpy Gaussian process and constant-liar batches) and `swatcal.compare` (the
+  optimisers on a synthetic world with the same run budget, under stage only, stage + ET and
+  stage + ET + gaugings). First results in `calibration/README.md`.
 - **Stage-based calibration tools** (M3 in `docs/roadmap.md`): `calibration/swatcal`, a Python
   package (numpy only): rating curves both ways, synthetic gauge records, a rating curve fitted to
   each run, NSE/KGE/PBIAS/RSR/Spearman, the score of a run against stage, ET and gaugings,
