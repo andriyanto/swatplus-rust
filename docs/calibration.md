@@ -99,6 +99,18 @@ same model: the soil water, aquifers and plants at the end of the warm-up depend
 parameters. Whether a shared spin-up followed by a short one of each run's own is good enough is
 for the synthetic tests (M3) to measure, not to assume.
 
+## Stage-based calibration tools (M3)
+
+The Python package in [`calibration/`](../calibration/README.md) (`swatcal`, numpy only) turns these
+runs into a stage-based calibration: rating curves, a synthetic gauge record made from a run's
+discharge, a rating curve fitted to each run, NSE/KGE/PBIAS/RSR/Spearman, and the score of a run
+against a stage record and the water balance. `python -m swatcal.synthetic` runs the synthetic
+experiment: the project as it is plays the truth, a gauge record is made from it with a known curve,
+and each parameter is moved alone to see whether the score points back. The first runs on Batanghari
+show the problem the research is about: a run losing 14 % of its flow to the deep aquifer still
+scores a stage KGE of 0.94, through a curve whose `a` is 0.41 of the true one, and its ET is
+unchanged; six discharge measurements do see it.
+
 ## Checked
 
 - `crates/swatplus-rust/tests/calibration.rs`: Ames_sub1 with three changes in memory gives the

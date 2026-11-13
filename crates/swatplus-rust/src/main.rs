@@ -371,7 +371,7 @@ fn run(dir: &str, o: &RunArgs) -> ExitCode {
         }
     }
     if let Some(why) = strict_fail {
-        fail(&why);
+        let _ = fail(&why);
         return ExitCode::from(3);
     }
     if json {

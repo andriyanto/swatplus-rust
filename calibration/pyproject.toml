@@ -1,0 +1,17 @@
+[project]
+name = "swatcal"
+version = "0.1.0"
+description = "Stage-based calibration of SWAT+ with swatplus-rust: rating curves, goodness of fit, synthetic tests"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24"]
+license = { text = "LGPL-2.1-only" }
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["swatcal"]

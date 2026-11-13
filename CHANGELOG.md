@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Stage-based calibration tools** (M3 in `docs/roadmap.md`): `calibration/swatcal`, a Python
+  package (numpy only): rating curves both ways, synthetic gauge records, a rating curve fitted to
+  each run, NSE/KGE/PBIAS/RSR/Spearman, the score of a run against stage, ET and gaugings,
+  parameter sets run through `swatplus-rust batch`, and the synthetic experiment
+  (`python -m swatcal.synthetic`). Tested in CI (`calibration` job).
 - **Batches of calibration runs** (M2 in `docs/roadmap.md`): `swat_engine::batch::run_batch` runs
   one project once per calibration, one run per core, each keeping only the daily outflow (and
   depths) of chosen channels and the basin's precipitation and ET (`Series`, `SeriesSink`);

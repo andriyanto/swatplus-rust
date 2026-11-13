@@ -4,3 +4,6 @@ __pycache__/
 # Private data, in andriyanto/swatplus-testdata (see testdata/PRIVATE.md).
 /testdata/Batanghari/
 /testdata/Pessel/
+__pycache__/
+*.pyc
+.pytest_cache/
