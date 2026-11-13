@@ -1,0 +1,18 @@
+aquifer_aa.txt: 43 rows; columns compared: 17
+  ok       flo        values      43  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       dep_wt     values      43  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       stor       values      43  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       rchrg      values      43  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       seep       values      43  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       revap      values      43  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       no3_st     values      43  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       minp       values      43  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       orgn       values      43  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       orgp       values      43  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       no3_rchg   values      43  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       no3_loss   values      43  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       no3_lat    values      43  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       no3_seep   values      43  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       flo_cha    values      43  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       flo_res    values      43  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       flo_ls     values      43  mismatches      0  max abs 0.0000  max rel 0.00e0

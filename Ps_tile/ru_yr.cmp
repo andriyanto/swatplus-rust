@@ -1,0 +1,19 @@
+ru_yr.txt: 222 rows; columns compared: 18
+  ok       flo        values     222  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sed        values     222  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       orgn       values     222  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sedp       values     222  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       no3        values     222  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       solp       values     222  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       chla       values     222  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       nh3        values     222  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       no2        values     222  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       cbod       values     222  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       dox        values     222  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       san        values     222  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sil        values     222  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       cla        values     222  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sag        values     222  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       lag        values     222  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       grv        values     222  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       null       values     222  mismatches      0  max abs 0.0000  max rel 0.00e0

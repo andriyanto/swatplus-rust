@@ -1,0 +1,26 @@
+lsunit_pw_day.txt: 81104 rows; columns compared: 25
+  ok       lai        values   81104  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       bioms      values   81104  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       yield      values   81104  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       residue    values   81104  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sol_tmp    values   81104  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       strsw      values   81104  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       strsa      values   81104  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       strstmp    values   81104  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       strsn      values   81104  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       strsp      values   81104  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       strss      values   81104  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       nplt       values   81104  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       percn      values   81104  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       pplnt      values   81104  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       tmx        values   81104  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       tmn        values   81104  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       tmpav      values   81104  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       solarad    values   81104  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       wndspd     values   81104  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       rhum       values   81104  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       phubas0    values   81104  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       lai_max    values   81104  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       bm_max     values   81104  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       bm_grow    values   81104  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       c_gro      values   81104  mismatches      0  max abs 0.0000  max rel 0.00e0

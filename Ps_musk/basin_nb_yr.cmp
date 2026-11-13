@@ -1,0 +1,16 @@
+basin_nb_yr.txt: 3 rows; columns compared: 15
+  ok       lab_min_p  values       3  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       act_sta_p  values       3  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       fertn      values       3  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       fertp      values       3  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       fixn       values       3  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       denit      values       3  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       act_nit_n  values       3  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       act_sta_n  values       3  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       org_lab_p  values       3  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       rsd_nitorg_n values       3  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       rsd_laborg_p values       3  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       no3atmo    values       3  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       nh4atmo    values       3  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       nuptake    values       3  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       puptake    values       3  mismatches      0  max abs 0.0000  max rel 0.00e0

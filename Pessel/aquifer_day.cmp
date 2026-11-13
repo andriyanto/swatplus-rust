@@ -1,0 +1,18 @@
+aquifer_day.txt: 92710 rows; columns compared: 17
+  ok       flo        values   92710  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       dep_wt     values   92710  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       stor       values   92710  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       rchrg      values   92710  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       seep       values   92710  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       revap      values   92710  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       no3_st     values   92710  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       minp       values   92710  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       orgn       values   92710  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       orgp       values   92710  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       no3_rchg   values   92710  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       no3_loss   values   92710  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       no3_lat    values   92710  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       no3_seep   values   92710  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       flo_cha    values   92710  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       flo_res    values   92710  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       flo_ls     values   92710  mismatches      0  max abs 0.0000  max rel 0.00e0

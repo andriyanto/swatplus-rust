@@ -1,0 +1,14 @@
+hru_ls_mon.txt: 6624 rows; columns compared: 13
+  ok       sedyld     values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sedorgn    values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sedorgp    values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       surqno3    values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       lat3no3    values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       surqsolp   values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       usle       values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       sedminp    values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       tileno3    values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       lchlabp    values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       tilelabp   values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       satexn     values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
+  ok       percn      values    6624  mismatches      0  max abs 0.0000  max rel 0.00e0
