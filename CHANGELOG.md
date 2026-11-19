@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Optimisers over several seeds** (M4): `swatcal.compare --seeds`; the rating curve is fitted
+  smoothly in the flows; Bayesian optimisation keeps a trust region by default (`bayes-global` for the
+  old search). On Batanghari over three seeds no method is better at 80 runs: the spread between
+  seeds is as wide as between methods, and the best scores fit the gauge's noise
+  (`calibration/README.md`).
 - **Parallel routing by sub-basin** (M5 in `docs/roadmap.md`): with `--fix-swat --threads N` the
   objects past the HRUs are cut into parts that need nothing from one another (each holding
   everything upstream of it), routed at once, then the main channels in command order

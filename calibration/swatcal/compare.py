@@ -120,9 +120,10 @@ def main(argv=None):
     p.add_argument("--budget", type=int, default=80)
     p.add_argument("--batch", type=int, default=2, help="runs per batch of Bayesian optimisation")
     p.add_argument("--threads", type=int, default=0)
-    p.add_argument("--seed", type=int, default=1)
+    p.add_argument("--seed", type=int, default=1, help="seed of the synthetic record")
+    p.add_argument("--seeds", default="1", help="seeds of the searches, e.g. 1,2,3: each method runs once per seed")
     p.add_argument("--truth", default=",".join(map(str, TRUTH)))
-    p.add_argument("--methods", default="random,sufi2,bayes")
+    p.add_argument("--methods", default="random,sufi2,bayes", help="random, sufi2, bayes (with trust region), bayes-global")
     p.add_argument("--scenarios", default=",".join(SCENARIOS))
     a = p.parse_args(argv)
     a.truth = [float(v) for v in a.truth.split(",")]
@@ -132,28 +133,35 @@ def main(argv=None):
     world = World(a)
     truth_u = SPACE.to_unit(a.truth)
     rows, curves = [], {}
-    for scenario in a.scenarios.split(","):
-        f = world.objective(scenario)
-        for method in a.methods.split(","):
-            rng = np.random.default_rng(a.seed)
-            if method == "random":
-                h = random_search(f, SPACE, a.budget, rng)
-            elif method == "sufi2":
-                h = sufi2(f, SPACE, a.budget, rng)
-            else:
-                h = bayes_opt(f, SPACE, a.budget, rng, batch=a.batch)
-            x, y = h.best()
-            r = world.run(np.array([x]))[0]
-            q = r.flo[a.channel]
-            rows.append({
-                "scenario": scenario, "method": method, "runs": h.n, "best_score": y,
-                "param_error": float(np.linalg.norm(SPACE.to_unit(x) - truth_u) / np.sqrt(SPACE.dim)),
-                **{k.key: float(v) for k, v in zip(SPACE.params, x)},
-                "true_flow_kge": metrics.kge(q, world.q_true).kge, "true_flow_pbias": metrics.pbias(q, world.q_true),
-            })
-            curves[f"{scenario}/{method}"] = h.best_so_far().tolist()
-            print(f"{scenario:<18} {method:<7} best {y:.4f}  flow KGE {rows[-1]['true_flow_kge']:.3f}  "
-                  f"PBIAS {rows[-1]['true_flow_pbias']:+.1f} %  ({len(world.cache)} distinct runs so far)", flush=True)
+    for seed in (int(v) for v in a.seeds.split(",")):
+        for scenario in a.scenarios.split(","):
+            f = world.objective(scenario)
+            for method in a.methods.split(","):
+                rng = np.random.default_rng(1000 + seed)
+                if method == "random":
+                    h = random_search(f, SPACE, a.budget, rng)
+                elif method == "sufi2":
+                    h = sufi2(f, SPACE, a.budget, rng)
+                elif method == "bayes-global":
+                    h = bayes_opt(f, SPACE, a.budget, rng, batch=a.batch, trust_region=False)
+                else:
+                    h = bayes_opt(f, SPACE, a.budget, rng, batch=a.batch)
+                x, y = h.best()
+                r = world.run(np.array([x]))[0]
+                q = r.flo[a.channel]
+                rows.append({
+                    "seed": seed, "scenario": scenario, "method": method, "runs": h.n, "best_score": y,
+                    "param_error": float(np.linalg.norm(SPACE.to_unit(x) - truth_u) / np.sqrt(SPACE.dim)),
+                    **{k.key: float(v) for k, v in zip(SPACE.params, x)},
+                    "true_flow_kge": metrics.kge(q, world.q_true).kge, "true_flow_pbias": metrics.pbias(q, world.q_true),
+                })
+                curves[f"{seed}/{scenario}/{method}"] = h.best_so_far().tolist()
+                with open(os.path.join(a.out, "results.csv"), "w", newline="") as fh:
+                    w = csv.DictWriter(fh, fieldnames=list(rows[0]))
+                    w.writeheader()
+                    w.writerows(rows)
+                print(f"seed {seed} {scenario:<18} {method:<12} best {y:.4f}  flow KGE {rows[-1]['true_flow_kge']:.3f}  "
+                      f"PBIAS {rows[-1]['true_flow_pbias']:+.1f} %  ({len(world.cache)} distinct runs so far)", flush=True)
     with open(os.path.join(a.out, "results.csv"), "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=list(rows[0]))
         w.writeheader()
@@ -168,6 +176,12 @@ def main(argv=None):
 
 
 def plot(out, curves):
+    # One line per method and scenario: the median over seeds of the best score so far.
+    grouped = {}
+    for k, c in curves.items():
+        _, scen, meth = k.split("/")
+        grouped.setdefault(f"{scen}/{meth}", []).append(c)
+    curves = {k: np.median(np.array(v), axis=0).tolist() for k, v in grouped.items()}
     try:
         import matplotlib
 
