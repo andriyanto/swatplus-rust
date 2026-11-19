@@ -220,7 +220,7 @@ struct RunArgs<'a> {
     strict: bool,
     /// Also write `channel_hyd_day.txt` (`docs/channel-hydraulics.md`).
     channel_hyd: bool,
-    /// With `--fix-swat`, the threads the HRUs run on (0: all the computer has).
+    /// With `--fix-swat`, the threads the HRUs and the routing run on (0: all the computer has).
     threads: usize,
     /// A `calibration.cal` to apply instead of the project's (`docs/calibration.md`).
     calibration: Option<&'a str>,

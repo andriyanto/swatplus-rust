@@ -150,22 +150,24 @@ enum Stop {
 }
 
 /// Appends up to `want` values of `line` to `out`; tells whether a slash or a full read stopped it.
+/// Every separator and quote is ASCII, so the line is scanned as bytes and cut at them (always
+/// at a character boundary).
 fn tokenize(line: &str, want: usize, out: &mut Vec<Item>) -> Option<Stop> {
     let target = out.len() + want;
-    let chars: Vec<char> = line.chars().collect();
+    let bytes = line.as_bytes();
     let mut i = 0;
     // A value or a comma was the last thing seen: decides whether a comma is a null value.
     let mut after_value = false;
-    while i < chars.len() {
+    while i < bytes.len() {
         if out.len() >= target {
             return Some(Stop::Full);
         }
-        let Some(&c) = chars.get(i) else { break };
-        if c == ' ' || c == '\t' {
+        let c = bytes[i];
+        if c == b' ' || c == b'\t' {
             i += 1;
             continue;
         }
-        if c == ',' {
+        if c == b',' {
             if !after_value {
                 out.push(None);
             }
@@ -173,25 +175,22 @@ fn tokenize(line: &str, want: usize, out: &mut Vec<Item>) -> Option<Stop> {
             i += 1;
             continue;
         }
-        if c == '/' {
+        if c == b'/' {
             return Some(Stop::Slash);
         }
-        if c == '\'' || c == '"' {
-            let (text, next) = quoted(&chars, i, c);
+        if c == b'\'' || c == b'"' {
+            let (text, next) = quoted(line, i, c);
             out.push(Some(text));
             i = next;
             after_value = true;
             continue;
         }
         let begin = i;
-        while let Some(&ch) = chars.get(i) {
-            if ch == ' ' || ch == '\t' || ch == ',' || ch == '/' {
-                break;
-            }
+        while i < bytes.len() && !matches!(bytes[i], b' ' | b'\t' | b',' | b'/') {
             i += 1;
         }
-        let token: String = chars.get(begin..i).map(|s| s.iter().collect()).unwrap_or_default();
-        match repeat(&token) {
+        let token = &line[begin..i];
+        match repeat(token) {
             Some((count, value)) => {
                 for _ in 0..count {
                     if out.len() >= target {
@@ -200,29 +199,34 @@ fn tokenize(line: &str, want: usize, out: &mut Vec<Item>) -> Option<Stop> {
                     out.push(value.clone());
                 }
             }
-            None => out.push(Some(token)),
+            None => out.push(Some(token.to_string())),
         }
         after_value = true;
     }
     (out.len() >= target).then_some(Stop::Full)
 }
 
-/// A quoted string starting at `start`; returns its text and the index after the closing quote.
-fn quoted(chars: &[char], start: usize, quote: char) -> (String, usize) {
+/// A quoted string starting at byte `start`; returns its text and the index after the closing
+/// quote.
+fn quoted(line: &str, start: usize, quote: u8) -> (String, usize) {
+    let bytes = line.as_bytes();
     let mut text = String::new();
     let mut i = start + 1;
-    while let Some(&c) = chars.get(i) {
-        if c == quote {
-            if chars.get(i + 1) == Some(&quote) {
-                text.push(quote);
+    let mut from = i;
+    while i < bytes.len() {
+        if bytes[i] == quote {
+            text.push_str(&line[from..i]);
+            if bytes.get(i + 1) == Some(&quote) {
+                text.push(quote as char);
                 i += 2;
+                from = i;
                 continue;
             }
             return (text, i + 1);
         }
-        text.push(c);
         i += 1;
     }
+    text.push_str(&line[from..]);
     (text, i)
 }
 

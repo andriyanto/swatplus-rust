@@ -293,9 +293,9 @@ pub struct RunOptions {
     /// Correct the bugs found in SWAT+ (see `docs/swat-fixes.md`) instead of reproducing them.
     /// The results then differ from SWAT+'s; off, they match it.
     pub fixes: bool,
-    /// With `fixes`, the threads the HRUs run on (0: as many as the computer has). The results
-    /// are the same for any number (`docs/parallel.md`); without `fixes` the HRUs run in order,
-    /// as SWAT+'s share state from one HRU to the next.
+    /// With `fixes`, the threads the HRUs and the routing run on (0: as many as the computer
+    /// has). The results are the same for any number (`docs/parallel.md`); without `fixes` the
+    /// HRUs and the channels run in order, as SWAT+'s share state from one to the next.
     pub threads: usize,
 }
 
@@ -1092,7 +1092,7 @@ impl<'p> Simulation<'p> {
                 day_mo: clock.day_mo,
                 print: clock.yrs > nyskip,
             };
-            n.day(&nd);
+            n.day(&nd, *threads);
             if output {
                 let mut bw = crate::channel::ChWat::default();
                 let (mut bs, mut bi, mut bo) = (crate::hyd::Hyd::default(), crate::hyd::Hyd::default(), crate::hyd::Hyd::default());

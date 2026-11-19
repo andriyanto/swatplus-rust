@@ -1,0 +1,38 @@
+name: Preview build
+
+# A build of a branch for trying it out, without a release (so nothing is published or archived
+# on Zenodo): push to a preview/* branch, or run it by hand, and download the archives from the
+# run's Artifacts.
+on:
+  push:
+    branches: ["preview/**"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, exe: swatplus-rust.exe }
+          - { os: windows-latest, target: aarch64-pc-windows-msvc, exe: swatplus-rust.exe }
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, exe: swatplus-rust }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: cargo build --release --locked -p swatplus-rust --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        run: |
+          name=swatplus-rust-preview-${{ matrix.target }}
+          mkdir "$name"
+          cp target/${{ matrix.target }}/release/${{ matrix.exe }} LICENSE NOTICE "$name"/
+          cp -r testdata/Ames_sub1 testdata/Osu_1hru "$name"/
+          cp scripts/bench-threads.ps1 "$name"/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: swatplus-rust-preview-${{ matrix.target }}
+          path: swatplus-rust-preview-${{ matrix.target }}

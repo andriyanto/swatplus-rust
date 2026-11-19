@@ -43,6 +43,8 @@ Each correction is guarded by the same flag, so a faithful run is unchanged.
 | `sd_channel_control3` / `ch_temp` | The outflow hydrograph is copied before the stream temperature is computed, so it leaves with the inflow's temperature. | The outflow carries the computed temperature. |
 | `ch_temp` | Upstream water temperature is taken from the last inflow and the one before it, whatever they are. | Flow-weighted mean of all upstream channels' water. |
 | `channel_sd_day` `water_temp` | One module variable printed for every channel: the last channel's air-based estimate. | Each channel's own stream temperature. |
+| `ch_rtmusk` (`inflo`, a `save` variable) | A channel without inflow on a day routes the inflow of the last step computed, of whichever channel ran before it: water that isn't there. | No inflow. |
+| `ch_watqual4` (`gra`, a `save` variable) | Where algae are too dense to grow (`algcon` of 5,000 or more), the growth rate is the one left by the channel before in the command order. | The channel's own rate of its last day. |
 
 ## Effect on Bh_land (2015–2016)
 
