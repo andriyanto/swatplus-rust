@@ -29,6 +29,14 @@ $ErrorActionPreference = "Stop"
 $Exe = (Resolve-Path $Exe).Path
 $Project = (Resolve-Path $Project).Path
 
+function Invoke-Run([string] $out, [int] $threads) {
+    # Windows PowerShell 5.1 turns a native program's stderr (the --fix-swat note) into an error,
+    # which "Stop" would throw; the run's exit code is what says whether it worked.
+    $ErrorActionPreference = "Continue"
+    & $Exe run $Project --out $out --fix-swat --threads $threads *> $null
+    if ($LASTEXITCODE -ne 0) { throw "the run with $threads threads failed (exit $LASTEXITCODE)" }
+}
+
 function Get-Fingerprint([string] $dir) {
     # SHA-256 of every table's SHA-256 with its name, in name order.
     $lines = Get-ChildItem -Path $dir -File -Recurse | Sort-Object FullName | ForEach-Object {
@@ -50,7 +58,7 @@ Write-Host ""
 $rows = @()
 # A first run warms the disk cache; its time isn't kept.
 $tmp = Join-Path $env:TEMP ("swatbench-" + [guid]::NewGuid())
-& $Exe run $Project --out $tmp --fix-swat --threads 1 *> $null
+Invoke-Run $tmp 1
 Remove-Item -Recurse -Force $tmp
 
 foreach ($r in 1..$Repeats) {
@@ -58,9 +66,8 @@ foreach ($r in 1..$Repeats) {
     foreach ($t in $Threads) {
         $tmp = Join-Path $env:TEMP ("swatbench-" + [guid]::NewGuid())
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
-        & $Exe run $Project --out $tmp --fix-swat --threads $t *> $null
+        Invoke-Run $tmp $t
         $sw.Stop()
-        if ($LASTEXITCODE -ne 0) { throw "the run with $t threads failed (exit $LASTEXITCODE)" }
         $fp = Get-Fingerprint $tmp
         Remove-Item -Recurse -Force $tmp
         $s = [math]::Round($sw.Elapsed.TotalSeconds, 3)
