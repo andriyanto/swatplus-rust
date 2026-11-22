@@ -22,4 +22,6 @@ Dependencies
   Every dependency offers a license compatible with LGPL-2.1-only (MIT, BSD, Boost, Unlicense or
   Unicode), and is used under that license when it is dual-licensed with Apache-2.0. Dependencies
   licensed only under Apache-2.0 are not used, because the Free Software Foundation considers
-  Apache-2.0 incompatible with LGPL-2.1-only. For now there are no external dependencies at all.
+  Apache-2.0 incompatible with LGPL-2.1-only. The dependencies, all under MIT OR Apache-2.0 and
+  used under MIT: rayon and rayon-core (the threads of --fix-swat --threads N), crossbeam-deque,
+  crossbeam-epoch, crossbeam-utils and either (used by rayon).

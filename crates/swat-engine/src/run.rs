@@ -359,6 +359,9 @@ pub struct Simulation<'p> {
     basin_acc: crate::periods::RegionAcc,
     lsu_acc: Vec<crate::periods::RegionAcc>,
     day_rows: Vec<Option<HruRows>>,
+    /// --fix-swat: each HRU's period rows of the day (`HruAcc::day`), accumulated beside its day
+    /// on the HRU threads and printed afterwards in the HRUs' order.
+    hru_emit: Vec<Vec<(crate::periods::Period, HruRows)>>,
     basin_aqu_acc: crate::periods::AquAcc,
     basin_cha_acc: crate::periods::BasinChaAcc,
     res_acc: Vec<crate::periods::ResAcc>,
@@ -376,6 +379,9 @@ pub struct Simulation<'p> {
     /// threads they run on.
     hru_saved: Vec<Saved>,
     threads: usize,
+    /// --fix-swat with more than one thread: the threads, started once for the whole run (starting
+    /// threads every day costs more than the HRUs of a small project, Windows above all).
+    pool: Option<std::sync::Arc<rayon::ThreadPool>>,
     /// Where the run is: the simulated year (`curyr`, 1-based), whether it has started, the next
     /// day of it, and its last day (the bounds of the Fortran's day loop, set once a year).
     curyr: i32,
@@ -481,6 +487,11 @@ impl<'p> Simulation<'p> {
         };
         #[cfg(target_arch = "wasm32")]
         let threads = 1;
+        let pool = if opts.fixes && threads > 1 {
+            rayon::ThreadPoolBuilder::new().num_threads(threads).build().ok().map(std::sync::Arc::new)
+        } else {
+            None
+        };
         // cli_read_atmodep: the deposition station of each weather station, and the time step of
         // the first day (`atmodep_cont%ts`, `first`).
         let atmo = project.atmodep.as_ref();
@@ -532,6 +543,7 @@ impl<'p> Simulation<'p> {
         let basin_acc = crate::periods::RegionAcc::new(false);
         let lsu_acc: Vec<crate::periods::RegionAcc> = project.lsu_defs.iter().map(|_| crate::periods::RegionAcc::new(true)).collect();
         let day_rows: Vec<Option<HruRows>> = vec![None; hrus.len()];
+        let hru_emit = vec![Vec::new(); hrus.len()];
         let basin_aqu_acc = crate::periods::AquAcc::default();
         let basin_cha_acc = crate::periods::BasinChaAcc::default();
         let res_acc: Vec<crate::periods::ResAcc> = Vec::new();
@@ -597,6 +609,7 @@ impl<'p> Simulation<'p> {
             basin_acc,
             lsu_acc,
             day_rows,
+            hru_emit,
             basin_aqu_acc,
             basin_cha_acc,
             res_acc,
@@ -612,6 +625,7 @@ impl<'p> Simulation<'p> {
             bsn_yld_aa,
             hru_saved,
             threads,
+            pool,
             curyr: 1,
             in_year: false,
             last_day: None,
@@ -794,6 +808,7 @@ impl<'p> Simulation<'p> {
             basin_acc,
             lsu_acc,
             day_rows,
+            hru_emit,
             basin_aqu_acc,
             basin_cha_acc,
             res_acc,
@@ -807,6 +822,7 @@ impl<'p> Simulation<'p> {
             bsn_yld,
             hru_saved,
             threads,
+            pool,
             ..
         } = self;
         let project: &Project = project;
@@ -1026,7 +1042,9 @@ impl<'p> Simulation<'p> {
                     };
                     jobs.push((j, w, ctx));
                 }
-                hru_wave(l, hru_saved, &mut hru_days, &jobs, basin, output, printing, *threads);
+                let acc =
+                    output.then_some(WaveAcc { acc: &mut hru_acc[..], rows: &mut day_rows[..], emit: &mut hru_emit[..], pday: &pday });
+                hru_wave(l, hru_saved, &mut hru_days, &jobs, basin, output, printing, pool.as_deref(), acc);
                 for (j, w, _) in jobs {
                     let Some(d) = hru_days[j].as_ref() else { continue };
                     let area = l[j].area_ha;
@@ -1051,9 +1069,16 @@ impl<'p> Simulation<'p> {
                 out.hru_day(day, j + 1, o.gis_id, &o.name, &w, hd.as_ref());
             }
             if output && let Some(d) = hd.as_ref() {
-                let weather = [w.tmax, w.tmin, w.tave, w.solrad, w.windsp, w.rhum];
-                hru_acc[j].day(d, weather, &pday, |p, rows| out.hru_period(p, day, j + 1, o.gis_id, &o.name, rows, d.nutrients));
-                day_rows[j] = Some(crate::periods::region_values(d, weather));
+                if hru_saved.is_empty() {
+                    let weather = [w.tmax, w.tmin, w.tave, w.solrad, w.windsp, w.rhum];
+                    hru_acc[j].day(d, weather, &pday, |p, rows| out.hru_period(p, day, j + 1, o.gis_id, &o.name, rows, d.nutrients));
+                    day_rows[j] = Some(crate::periods::region_values(d, weather));
+                } else {
+                    // Accumulated on the HRU threads (`hru_wave`).
+                    for (p, rows) in hru_emit[j].drain(..) {
+                        out.hru_period(p, day, j + 1, o.gis_id, &o.name, &rows, d.nutrients);
+                    }
+                }
             }
             if end_sim
                 && output
@@ -1092,7 +1117,7 @@ impl<'p> Simulation<'p> {
                 day_mo: clock.day_mo,
                 print: clock.yrs > nyskip,
             };
-            n.day(&nd, *threads);
+            n.day(&nd, *threads, pool.as_deref());
             if output {
                 let mut bw = crate::channel::ChWat::default();
                 let (mut bs, mut bi, mut bo) = (crate::hyd::Hyd::default(), crate::hyd::Hyd::default(), crate::hyd::Hyd::default());
@@ -1220,6 +1245,14 @@ impl<'p> Simulation<'p> {
     }
 }
 
+/// The output side of a wave of HRUs: their period sums and their rows for the regions.
+struct WaveAcc<'a> {
+    acc: &'a mut [crate::periods::HruAcc],
+    rows: &'a mut [Option<HruRows>],
+    emit: &'a mut [Vec<(crate::periods::Period, HruRows)>],
+    pday: &'a crate::periods::PeriodDay,
+}
+
 /// One wave of `--fix-swat`'s HRUs (`jobs`: HRU, weather, day): each HRU's day with its own
 /// `Saved`, on up to `threads` threads, into `days`.
 #[allow(clippy::too_many_arguments)]
@@ -1231,41 +1264,51 @@ fn hru_wave(
     basin: &HruBasin,
     output: bool,
     printing: bool,
-    threads: usize,
+    pool: Option<&rayon::ThreadPool>,
+    acc: Option<WaveAcc>,
 ) {
-    type Slot<'a> = (&'a mut Hru, &'a mut Saved, &'a mut Option<HruDay>);
-    let mut slots: Vec<Option<Slot>> =
-        land.iter_mut().zip(saved.iter_mut()).zip(days.iter_mut()).map(|((h, s), d)| Some((h, s, d))).collect();
+    type Acc<'a> = (&'a mut crate::periods::HruAcc, &'a mut Option<HruRows>, &'a mut Vec<(crate::periods::Period, HruRows)>);
+    type Slot<'a> = (&'a mut Hru, &'a mut Saved, &'a mut Option<HruDay>, Option<Acc<'a>>);
+    let pday = acc.as_ref().map(|a| *a.pday);
+    let mut accs: Vec<Option<Acc>> = match acc {
+        Some(a) => a.acc.iter_mut().zip(a.rows.iter_mut()).zip(a.emit.iter_mut()).map(|((a, r), e)| Some((a, r, e))).collect(),
+        None => Vec::new(),
+    };
+    let mut slots: Vec<Option<Slot>> = land
+        .iter_mut()
+        .zip(saved.iter_mut())
+        .zip(days.iter_mut())
+        .enumerate()
+        .map(|(j, ((h, s), d))| Some((h, s, d, accs.get_mut(j).and_then(Option::take))))
+        .collect();
     let mut work: Vec<(Slot, &HruWeather, &DayCtx)> = Vec::with_capacity(jobs.len());
     for (j, w, ctx) in jobs {
         if let Some(slot) = slots.get_mut(*j).and_then(Option::take) {
             work.push((slot, w, ctx));
         }
     }
-    let one = |((h, s, out), w, ctx): (Slot, &HruWeather, &DayCtx)| {
+    let one = |((h, s, out, acc), w, ctx): (Slot, &HruWeather, &DayCtx)| {
         let mut d = h.day(w, ctx, basin, s);
         if output {
             h.close_day(&mut d.wb, printing);
         }
+        // The HRU's own period sums, as the output loop would make them after the day.
+        if let (Some((a, row, emit)), Some(pday)) = (acc, pday.as_ref()) {
+            let weather = [w.tmax, w.tmin, w.tave, w.solrad, w.windsp, w.rhum];
+            emit.clear();
+            a.day(&d, weather, pday, |p, rows| emit.push((p, *rows)));
+            *row = Some(crate::periods::region_values(&d, weather));
+        }
         *out = Some(d);
     };
-    // A thread is worth its start for a few HRUs at least.
-    let n = threads.min(work.len() / 4).max(1);
-    if n == 1 {
-        work.into_iter().for_each(one);
-        return;
-    }
-    let per = work.len().div_ceil(n);
-    let mut it = work.into_iter();
-    std::thread::scope(|sc| {
-        loop {
-            let c: Vec<_> = it.by_ref().take(per).collect();
-            if c.is_empty() {
-                break;
-            }
-            sc.spawn(move || c.into_iter().for_each(one));
+    match pool {
+        // A thread is worth taking for a few HRUs at least.
+        Some(pool) if work.len() >= 8 => {
+            use rayon::prelude::*;
+            pool.install(|| work.into_par_iter().with_min_len(4).for_each(one));
         }
-    });
+        _ => work.into_iter().for_each(one),
+    }
 }
 
 /// `basin_output` and `lsu_output` for a printed day: the HRUs' day weighted by their share of

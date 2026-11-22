@@ -766,7 +766,9 @@ impl Network {
     /// cut into parts (see [`Plan`]) routed at once, then what is left in command order; each
     /// object's day is the same whatever the part it is in, so the results are the same for any
     /// number of threads.
-    pub fn day(&mut self, nd: &NetDay, threads: usize) {
+    /// One day of the network. With `pool` (--fix-swat, several threads) the parts of the plan
+    /// run on its threads; without, on threads started for the day.
+    pub fn day(&mut self, nd: &NetDay, threads: usize, pool: Option<&rayon::ThreadPool>) {
         let threads = if self.fixes { threads.max(1) } else { 1 };
         if self.plan.as_ref().is_none_or(|p| p.threads != threads) {
             self.plan = Some(self.plan(threads));
@@ -837,11 +839,18 @@ impl Network {
             let trunk_own = take(trunk_ids);
             {
                 let (cfg, seen) = (&cfg, &seen);
-                std::thread::scope(|sc| {
-                    for part in parts.iter_mut() {
-                        sc.spawn(move || run_part(cfg, part, seen, nd));
-                    }
-                });
+                match pool {
+                    Some(pool) => pool.scope(|sc| {
+                        for part in parts.iter_mut() {
+                            sc.spawn(move |_| run_part(cfg, part, seen, nd));
+                        }
+                    }),
+                    None => std::thread::scope(|sc| {
+                        for part in parts.iter_mut() {
+                            sc.spawn(move || run_part(cfg, part, seen, nd));
+                        }
+                    }),
+                }
             }
             for part in parts {
                 for ((ob, _), &i) in part.own.into_iter().zip(part.ids) {

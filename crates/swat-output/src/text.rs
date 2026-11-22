@@ -458,6 +458,10 @@ impl<S: Store> OutputSink for TextTables<S> {
     }
 
     fn hru_day(&mut self, d: Day, hru: usize, gis_id: i32, name: &str, w: &HruWeather, h: Option<&HruDay>) {
+        // Called for every HRU on every day: nothing to make when no daily HRU table is printed.
+        if !["hru_wb", "hru_nb", "hru_ls", "hru_pw"].iter().any(|t| self.wants(t, None)) {
+            return;
+        }
         let weather = [w.tmax, w.tmin, w.tave, w.solrad, w.windsp, w.rhum];
         match h {
             Some(h) => {
