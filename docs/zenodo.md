@@ -1,6 +1,6 @@
 # Publishing a release on Zenodo
 
-Published on 28 October 2026: 1.0.1 [10.5281/zenodo.23721044](https://doi.org/10.5281/zenodo.23721044), 1.0.2 [10.5281/zenodo.23728544](https://doi.org/10.5281/zenodo.23728544), 1.0.3 [10.5281/zenodo.23735240](https://doi.org/10.5281/zenodo.23735240); all versions [10.5281/zenodo.23721043](https://doi.org/10.5281/zenodo.23721043). 1.0.2's files open (Geoscientific Model Development requires the code in a public archive).
+Published on 28 October 2026: 1.0.1 [10.5281/zenodo.23721044](https://doi.org/10.5281/zenodo.23721044), 1.0.2 [10.5281/zenodo.23728544](https://doi.org/10.5281/zenodo.23728544), 1.0.3 [10.5281/zenodo.23735240](https://doi.org/10.5281/zenodo.23735240); on 23 November 2026: 1.1.0 [10.5281/zenodo.24448341](https://doi.org/10.5281/zenodo.24448341); all versions [10.5281/zenodo.23721043](https://doi.org/10.5281/zenodo.23721043). 1.0.2's files open (Geoscientific Model Development requires the code in a public archive).
 
 Up to 1.0.2 the repository was private, so releases went to Zenodo by hand; it is public from
 1.0.3, without the private scenarios (`testdata/PRIVATE.md`), and Zenodo's GitHub integration can
@@ -17,4 +17,6 @@ archive its releases. Its metadata is in `.zenodo.json` and `CITATION.cff`.
    from 1.0.2 they are open, as GMD's code policy needs.)
 5. *Publish*. The DOI goes into `CITATION.cff`, `.zenodo.json` (as `doi`) and the README.
 
-A new version later: *New version* on the record, the next tag's archive.
+A new version later: *New version* on the record, the next tag's archive (1.1.0 was made so).
+Zenodo's GitHub integration is not switched on: it would start a record of its own, with another
+concept DOI, instead of adding versions to this one.
