@@ -78,11 +78,24 @@ each, writes the times to a CSV file, and checks that every thread count gives t
 
 ## Speed
 
-On the 2-core machine used here, Bh_land (2015–2019, 1,858 HRUs) runs in 12.9 s on one thread
-and 11.9 s on two; a faithful run takes 12.2 s. The gain is small there because the HRUs are
-about a third of that run's work, and the rest (routing, channels, writing the tables) is still
-on one thread. `docs/performance.md` estimated the bound at about 2.4 times on 12 cores for
-Pessel, whose HRUs are about two thirds of the work; a run that prints little (as in
-calibration) gains the most. Parallel routing by sub-basin is the next step.
+Measured with `scripts/bench-threads.ps1` on a 12-core laptop (Snapdragon X Elite X1E80100,
+Windows 11 on ARM, the `aarch64-pc-windows-msvc` build), on a Batanghari-sized project
+(2015–2025 with two years of warm-up, 2,360 HRUs, 284 routing units and channels, 44 aquifers, 130
+weather stations, 184 MB of tables). Median of three runs, the thread counts in turn within each
+round; the tables are the same for every thread count:
+
+| threads | 1 | 2 | 3 | 4 | 6 | 8 | 10 | 12 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| seconds | 15.4 | 13.1 | 11.5 | 10.5 | 10.0 | 9.6 | 9.4 | 9.2 |
+| speed-up | 1.00 | 1.18 | 1.34 | 1.47 | 1.55 | 1.61 | 1.65 | 1.67 |
+
+The first build measured there gained at most 1.21 times (6 threads; 18.2 s on one thread): the
+threads were started twice a day, which costs more on Windows than the HRUs of a small project
+take, and every HRU's daily rows were built though no daily HRU table was printed. The threads are
+now started once per run (rayon) and the HRUs' period sums are made on their threads.
+
+What stays on the main thread bounds the gain: weather, what follows each HRU's day, the basin
+and landscape-unit sums, the main channels and the tables. A run that prints little (as in
+calibration) gains the most.
 
 In the browser (WebAssembly) the HRUs run on one thread.
