@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 swat-model.workspace = true
+rayon.workspace = true
 
 [lints]
 workspace = true

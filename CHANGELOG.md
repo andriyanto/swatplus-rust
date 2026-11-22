@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Faster on several threads** (M5): with `--fix-swat --threads N` the threads are started once
+  per run (rayon) instead of twice a day, and each HRU's monthly, yearly and average sums are made
+  on its thread beside its day. A run no longer builds the daily HRU rows when no daily HRU table
+  is printed (any mode). Batanghari, one thread: 16.8 s before, 13.7 s now. The tables are
+  unchanged. rayon is the first external dependency (MIT, `NOTICE`).
 - **Optimisers over several seeds** (M4): `swatcal.compare --seeds`; the rating curve is fitted
   smoothly in the flows; Bayesian optimisation keeps a trust region by default (`bayes-global` for the
   old search). On Batanghari over three seeds no method is better at 80 runs: the spread between
