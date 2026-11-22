@@ -34,7 +34,7 @@ relative difference of 1e-4 or one unit in the last printed decimal (decision K1
 | `swat-wasm` | The engine as a WebAssembly module for the browser: a scenario's tar archive in, its tables out. |
 | `swatplus-rust` | The command line program: `inspect`, `run`, `compare`. |
 
-No external dependencies, so the core builds anywhere, WebAssembly included.
+One external dependency, rayon, for the threads of `--fix-swat --threads N`; the core builds anywhere, WebAssembly included.
 
 ```sh
 cargo test
@@ -77,7 +77,7 @@ simulate (a feature it refuses), `run` says why and passes that part's water on,
 
 ## Citing
 
-Yanto, A. (2026). *swatplus-rust: SWAT+ translated from Fortran into Rust, verified bit for bit* (Version 1.0.3) [Computer software]. Zenodo. https://doi.org/10.5281/zenodo.23735240
+Yanto, A. (2026). *swatplus-rust: SWAT+ translated from Fortran into Rust, verified bit for bit* (Version 1.1.0) [Computer software]. Zenodo. https://doi.org/10.5281/zenodo.24448341
 
 The DOI [10.5281/zenodo.23721043](https://doi.org/10.5281/zenodo.23721043) cites all versions (it resolves to the latest). The files on Zenodo are open from version 1.0.2 (the private Batanghari and Pessel scenarios are not in them); `CITATION.cff` has the metadata.
 
