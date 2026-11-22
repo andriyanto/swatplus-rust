@@ -1,13 +1,20 @@
 # Changelog
 
-## Unreleased
+## 1.1.0
+
+A simulation runs a day at a time and can be copied mid-run; calibrations run in memory and in
+batches; with `--fix-swat` the HRUs and the routing run on several threads, with the same tables
+for any number of threads. Faithful runs are unchanged: every table of the 37 validation
+scenarios is the same as 1.0.3's. Tools for stage-based calibration (`calibration/swatcal`) and
+GSMaP precipitation come with it.
 
 - **Faster on several threads** (M5): with `--fix-swat --threads N` the threads are started once
   per run (rayon) instead of twice a day, and each HRU's monthly, yearly and average sums are made
   on its thread beside its day. A run no longer builds the daily HRU rows when no daily HRU table
   is printed (any mode). Batanghari, one thread: 16.8 s before, 13.7 s now. On a 12-core
   Windows ARM laptop a Batanghari-sized run takes 15.4 s on one thread and 9.2 s on twelve
-  (1.67 times; the first build: 18.2 s, at best 1.21 times). The tables are unchanged. rayon is the first external dependency (MIT, `NOTICE`).
+  (1.67 times; the first build: 18.2 s, at best 1.21 times). The tables are unchanged. rayon is
+  the first external dependency (MIT, `NOTICE`).
 - **Optimisers over several seeds** (M4): `swatcal.compare --seeds`; the rating curve is fitted
   smoothly in the flows; Bayesian optimisation keeps a trust region by default (`bayes-global` for the
   old search). On Batanghari over three seeds no method is better at 80 runs: the spread between

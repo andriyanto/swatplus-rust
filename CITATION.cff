@@ -1,8 +1,8 @@
 cff-version: 1.2.0
 message: "If you use swatplus-rust, please cite it as below."
 title: "swatplus-rust: SWAT+ translated from Fortran into Rust, verified bit for bit"
-version: 1.0.3
-date-released: 2026-10-28
+version: 1.1.0
+date-released: 2026-11-23
 doi: 10.5281/zenodo.23721043
 identifiers:
   - type: doi
@@ -32,7 +32,7 @@ keywords:
 abstract: >-
   The SWAT+ hydrological model translated from Fortran into Rust (SWAT+ commit 6f51536), with
   output tables identical bit for bit to SWAT+'s on four scenarios and 33 variants; native and
-  WebAssembly, text or Parquet output, no dependencies. Written with Claude (Anthropic) under the
+  WebAssembly, text or Parquet output, one dependency (rayon, for threads). Written with Claude (Anthropic) under the
   author's direction; every change validated against SWAT+ Fortran in continuous integration.
 references:
   - type: software
