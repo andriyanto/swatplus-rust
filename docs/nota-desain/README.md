@@ -1,7 +1,7 @@
-# Nota Desain SWAT+ Rust Engine 1.1
+# Nota Desain SWAT+ Rust Engine 1.2
 
 
-Nota desain engine swatplus-rust 1.1, fungsi demi fungsi, dalam Bahasa Indonesia: apa tugas setiap fungsi, subrutin SWAT+ yang ditirunya, persamaannya, dan kebiasaan SWAT+ yang dipertahankan. Disusun dari dokumen Claude Docs dengan judul yang sama. Berkas Word dan PDF dibuat dari nota-desain.md dengan pandoc (xelatex untuk PDF) oleh `scripts/build-nota-desain.sh`. Bab 1–17 menjelaskan engine 1.1 (fungsi yang baru atau berubah sejak 1.0.1 diberi keterangan versinya); Lampiran B mencatat jalur M langkah demi langkah, dengan catatan kerjanya di B.8.
+Nota desain engine swatplus-rust 1.2.0, fungsi demi fungsi, dalam Bahasa Indonesia: apa tugas setiap fungsi, subrutin SWAT+ yang ditirunya, persamaannya, dan kebiasaan SWAT+ yang dipertahankan. Disusun dari dokumen Claude Docs dengan judul yang sama. Berkas Word dan PDF dibuat dari nota-desain.md dengan pandoc (xelatex untuk PDF) oleh `scripts/build-nota-desain.sh`. Bab 1–17 menjelaskan engine 1.2.0 (fungsi yang baru atau berubah sejak 1.0.1 diberi keterangan versinya); Lampiran B mencatat jalur M langkah demi langkah, dengan catatan kerjanya di B.8.
 
 | Bab | File |
 | --- | --- |

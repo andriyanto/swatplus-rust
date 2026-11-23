@@ -162,7 +162,7 @@ swatplus-rust batch <TxtInOut folder> --sets <sets.csv> --channels <n,n,...> --o
 swatplus-rust compare <SWAT+ table> <our table> [--abs 0.001] [--rel 1e-4]
 ```
 
-Selain itu `--version` atau `-V` mencetak `swatplus-rust <versi>` (pada rilis 1.1.0: `swatplus-rust 1.1.0`). Perintah `batch` dan opsi `run` sesudah `--strict` ditambahkan di 1.1.
+Selain itu `--version` atau `-V` mencetak `swatplus-rust <versi>` (pada rilis 1.2.0: `swatplus-rust 1.2.0`). Perintah `batch` dan opsi `run` sesudah `--strict` ditambahkan di 1.1; opsi `batch --shared-spinup` di 1.2.
 
 **Opsi `run`.**
 
@@ -294,7 +294,7 @@ Selain itu `--version` atau `-V` mencetak `swatplus-rust <versi>` (pada rilis 1.
 
 Sejak 1.1 (M2, Lampiran B.3). `swatplus-rust batch <proyek> --sets <sets.csv> --channels <n,n,...> --out <folder> [--threads N] [--fix-swat] [--depth] [--cal-parms <berkas>] [--shared-spinup]` menjalankan satu proyek sekali per set parameter, berdampingan di inti komputer, dan hanya menyimpan deret yang dibutuhkan kalibrasi.
 
-**Struct `BatchArgs<'a>`:** `sets`, `channels` (nomor saluran di `channel_sd`), `out`, `threads` (run sekaligus; 0 = sebanyak inti), `fixes`, `depth` (kedalaman juga), `cal_parms`, `shared_spinup`.
+**Struct `BatchArgs<'a>`:** `sets`, `channels` (nomor saluran di `channel_sd`), `out`, `threads` (run sekaligus; 0 = sebanyak inti), `fixes`, `depth` (kedalaman juga), `cal_parms`, `shared_spinup` (sejak 1.2).
 
 - **`read_sets(text: &str) -> Result<(Vec<String>, Vec<Vec<CalUpdate>>), String>`:** membaca CSV set parameter. Baris kepala berisi kolom `parameter:jenis` (`cn2:pctchg`, `esco:absval`; jenis salah satu dari empat), boleh diawali kolom `run` yang menamai setiap baris; baris kosong dan baris `#` dilewati. Setiap baris menjadi satu set `CalUpdate::all(nama, jenis, nilai)`; tanpa kolom `run` nama run `0001`, `0002`, …. Galat untuk kolom tanpa jenis, jenis tak dikenal, nilai bukan angka, atau jumlah nilai yang tidak sama dengan kolom. Uji `parameter_sets_are_read_from_csv`.
 - **`series_csv(s: &Series) -> String`:** deret satu run sebagai CSV: `date` (`yyyy-mm-dd`, dari `xmon`), `precip_mm`, `et_mm`, `flo_<n>` per saluran, dan bila ada kedalaman `dep_<n>`, `dep_mann_<n>`; nilai yang tidak ada ditulis NaN.
