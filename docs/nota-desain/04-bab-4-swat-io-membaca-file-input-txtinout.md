@@ -173,7 +173,7 @@ Hampir semua subrutin baca SWAT+ memakai pernyataan `read (unit, *) v1, v2, …`
 - **Padanan SWAT+:** pemindai leksikal masukan list-directed gfortran (pustaka *runtime*, bukan kode SWAT+).
 - **Tujuan:** menambahkan paling banyak `want` nilai dari satu baris ke `out` dan melaporkan mengapa berhenti.
 - **Cara kerja:**
-  1. `target = out.len() + want`; baris diubah menjadi larik karakter; `after_value = false` mencatat apakah hal terakhir yang dilihat adalah sebuah nilai (menentukan apakah koma berarti *null*).
+  1. `target = out.len() + want`; baris dipindai sebagai byte (sejak 1.1: semua pemisah dan tanda kutip adalah ASCII, sehingga baris selalu dipotong di batas karakter dan tidak perlu diubah menjadi larik karakter); `after_value = false` mencatat apakah hal terakhir yang dilihat adalah sebuah nilai (menentukan apakah koma berarti *null*).
   2. Untuk setiap posisi: bila `out` sudah mencapai `target`, kembalikan `Full`.
   3. Spasi atau tab: lewati.
   4. Koma: bila `after_value` salah (koma di awal atau koma kedua berturutan), dorong `None`; set `after_value = false`.
@@ -181,14 +181,14 @@ Hampir semua subrutin baca SWAT+ memakai pernyataan `read (unit, *) v1, v2, …`
   6. Kutip `'` atau `"`: panggil `quoted`, dorong teksnya, `after_value = true`.
   7. Selain itu: kumpulkan karakter sampai spasi, tab, koma, atau `/`. Bila token berbentuk pengulangan (`repeat`), dorong nilai ulang sebanyak hitungan (dibatasi `target`); bila tidak, dorong token apa adanya. `after_value = true`.
   8. Di akhir baris: `Full` bila target tercapai, `None` bila belum (pemanggil lanjut ke baris berikutnya).
-- **Kebiasaan SWAT+ / catatan port:** satu koma setelah nilai hanyalah pemisah (`a, b ,c` → tiga nilai); `,2` → *null* lalu `2`. Garis miring di tengah teks tanpa kutip memotong token: `data/pcp.pcp` dibaca sebagai `data` lalu *read* berakhir; inilah alasan `readcio_read` membaca baris folder keluaran dengan format `'(A)'`. Koma di akhir baris tidak menghasilkan *null* tambahan (yang dihitung hanya koma kedua). Uji `blanks_tabs_and_commas`, `nulls_slash_and_repeats` memverifikasi aturan ini.
+- **Kebiasaan SWAT+ / catatan port:** satu koma setelah nilai hanyalah pemisah (`a, b ,c` → tiga nilai); `,2` → *null* lalu `2`. Garis miring di tengah teks tanpa kutip memotong token: `data/pcp.pcp` dibaca sebagai `data` lalu *read* berakhir; inilah alasan `readcio_read` membaca baris folder keluaran dengan format `'(A)'`. Koma di akhir baris tidak menghasilkan *null* tambahan (yang dihitung hanya koma kedua). Uji `blanks_tabs_and_commas`, `nulls_slash_and_repeats` memverifikasi aturan ini. Versi 1.0 mengubah setiap baris menjadi `Vec<char>`; pada run tiga tahun Batanghari, membaca berkas cuaca memakan sekitar sepersepuluh waktu run, sehingga 1.1 memindai byte. Hasil pembacaannya sama (37 skenario validasi tidak berubah).
 
 #### 4.2.8  `quoted` (privat)
 
-- **Lokasi:** `list.rs`, `fn quoted(chars: &[char], start: usize, quote: char) -> (String, usize)`
+- **Lokasi:** `list.rs`, `fn quoted(line: &str, start: usize, quote: u8) -> (String, usize)` (indeks `start` dalam byte sejak 1.1)
 - **Padanan SWAT+:** konstanta karakter bertanda kutip dalam masukan list-directed.
 - **Tujuan:** membaca string bertanda kutip mulai dari `start`.
-- **Cara kerja:** mulai setelah kutip pembuka; kutip yang sama dua kali berturut (`''`) menghasilkan satu kutip literal; kutip tunggal menutup string dan fungsi mengembalikan indeks setelahnya. Bila baris habis tanpa kutip penutup, seluruh sisa baris menjadi teks.
+- **Cara kerja:** mulai setelah kutip pembuka; potongan teks di antara kutip disalin sekaligus; kutip yang sama dua kali berturut (`''`) menghasilkan satu kutip literal; kutip tunggal menutup string dan fungsi mengembalikan indeks setelahnya. Bila baris habis tanpa kutip penutup, seluruh sisa baris menjadi teks.
 - **Kebiasaan SWAT+ / catatan port:** kutip jenis lain di dalam string tidak istimewa (`"it''s"` tetap `it''s`). String kutip yang tidak ditutup tidak berlanjut ke baris berikutnya.
 
 #### 4.2.9  `repeat` (privat)

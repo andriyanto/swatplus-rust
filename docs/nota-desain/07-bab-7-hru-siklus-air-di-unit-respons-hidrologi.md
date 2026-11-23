@@ -144,10 +144,10 @@ Penyiapan dibagi menjadi tiga tahap yang meniru urutan program utama SWAT+: (a) 
 
 #### 7.2.1  `init_hrus`
 
-- **Lokasi:** `crates/swat-engine/src/hru/mod.rs`, `pub fn init_hrus(project, wgn: &[usize], wgns: &[WgnState], step: i32, ndays: &[i32; 13]) -> Result<Vec<Hru>, String>`
+- **Lokasi:** `crates/swat-engine/src/hru/mod.rs`, `pub fn init_hrus(project, cal: &Calibration, wgn: &[usize], wgns: &[WgnState], step: i32, ndays: &[i32; 13]) -> Result<Vec<Hru>, String>` (parameter `cal` sejak 1.1)
 - **Padanan SWAT+:** `proc_hru.f90` (dengan `hrudb_init`, `topohyd_init`, `soils_init`, `soil_phys_init`, `plant_init`, `cn2_init`, `hydro_init`), `time_conc_init.f90`, `cal_conditions.f90`, dan `soil_nutcarb_init`
 - **Tujuan:** Membangun seluruh vektor `Hru` dalam keadaan yang sama dengan keadaan SWAT+ sesaat sebelum hari simulasi pertama, atau menolak dengan alasan bila masukan memerlukan bagian SWAT+ yang belum di-port.
-- **Masukan dan keluaran:** proyek, indeks generator cuaca per HRU (`wgn`, berbasis-0), status generator (`wgns`), jumlah langkah waktu per hari (`step`), dan jumlah hari kumulatif per bulan (`ndays`). Keluaran vektor HRU atau `Err`.
+- **Masukan dan keluaran:** proyek, kalibrasi yang diterapkan (`cal`: milik proyek, atau dari memori; diteruskan ke `cal_conditions`), indeks generator cuaca per HRU (`wgn`, berbasis-0), status generator (`wgns`), jumlah langkah waktu per hari (`step`), dan jumlah hari kumulatif per bulan (`ndays`). Keluaran vektor HRU atau `Err`.
 - **Cara kerja:**
   1. Validasi kode: `cswat` harus 0 atau 2; Green-Ampt (`gampt` != 0) menuntut langkah sub-harian (`step` > 1); `step` maksimum 96; `pet` 0–3; `crk` (aliran retakan) dan `gwflow` harus 0. Pelanggaran menghasilkan `Err` dengan alasan.
   2. Baca `ffcb` (bawaan 0) dan `surlag` (bawaan 4) dari `parameters.bsn`.
@@ -391,9 +391,9 @@ v = \begin{cases} val & \text{absval} \\ cur + val & \text{abschg} \\ (1 + val/1
 
 #### 7.4.5  `cal_conditions`
 
-- **Lokasi:** `hru/mod.rs`, `fn cal_conditions(project, hrus: &mut [Hru]) -> Result<(), String>`
+- **Lokasi:** `hru/mod.rs`, `pub(crate) fn cal_conditions(project, cal: &Calibration, hrus: &mut [Hru]) -> Result<(), String>` (parameter `cal` dan visibilitas `pub(crate)` sejak 1.1)
 - **Padanan SWAT+:** `cal_conditions.f90` (dipanggil dari `proc_cal`)
-- **Tujuan:** Menerapkan setiap baris `calibration.cal` ke parameter HRU, tanah, dan DAS.
+- **Tujuan:** Menerapkan setiap baris `cal.updates` (isi `calibration.cal`, atau kalibrasi dari memori) ke parameter HRU, tanah, dan DAS. Dipanggil `init_hrus` saat penyiapan dan, sejak 1.1, `Simulation::calibrate` di tengah run (Bab 5.3.11); uraian lengkapnya di Bab 14.6.5.
 - **Cara kerja:**
   1. Untuk setiap pembaruan, ambil `cal_parm`. Jenis objek selain `hru`, `sol`, `bsn`, `aqu` dan jenis perubahan selain `absval`, `abschg`, `pctchg`, `relchg` ditolak.
   2. `aqu` dilewati (diterapkan saat akuifer disiapkan).

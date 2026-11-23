@@ -2,7 +2,7 @@
 
 Bab ini menjelaskan bagian engine yang membawa air dan muatannya dari HRU ke luar DAS: jaringan objek dan loop perintah (`command`), routing lanskap dari satu HRU ke HRU lain, unit routing (*routing unit*, RU) beserta *delivery ratio*-nya, hidrograf sub-harian (unit hidrograf, `tsin`), serta saluran SWAT-DEG (`sd_channel`): kurva rating, routing tampungan (Muskingum atau *variable storage coefficient*), sedimen dataran banjir dan erosi tebing, rembesan dan penguapan, kualitas air QUAL2E, dan suhu air sungai. Dua file Rust dicakup seluruhnya: `crates/swat-engine/src/route.rs` (struct `Network`) dan `crates/swat-engine/src/channel.rs` (struct `Channels`), ditambah ringkasan `docs/routing.md`. Fungsi akuifer di `route.rs` (`aqu_1d_control`, `AquDay::columns`, `AquDay::columns_as`, `Network::aquifers`, dan bagian `aqu_initial` di `Network::new`) hanya disebut di sini; uraiannya ada di Bab 14. Reservoir dan objek *recall* (point source) diimplementasikan di `res.rs`; bab ini hanya menjelaskan bagaimana loop perintah memanggil keduanya.
 
-Posisi dalam alur simulasi harian: setelah cuaca dibangkitkan, HRU dijalankan dalam urutan perintah SWAT+ (`Network::hru_order`); HRU yang menerima air HRU lain mendapat *runon* lewat `Network::hru_runon` sebelum evapotranspirasinya sendiri, lalu hidrograf HRU dicatat ke jaringan dengan `Network::set_hru`. Setelah semua HRU selesai, `Network::day` menjalankan objek-objek selebihnya (unit routing, akuifer, saluran SWAT-DEG, reservoir, recall, outlet) dalam urutan perintah, masing-masing menerima jumlah hidrograf dari objek pengirimnya. Padanan Fortran utama: `hyd_connect.f90`, `hyd_read_connect.f90`, `command.f90`, `ru_control.f90`, `dr_ru.f90`, `time_conc_init.f90`, `unit_hyd.f90`, `unit_hyd_ru_hru.f90`, `flow_hyd_ru_hru.f90`, `hru_hyds.f90`, `rls_routesurf.f90`, `rls_routesoil.f90`, `sd_hydsed_init.f90`, `sd_rating_curve.f90`, `sd_channel_control3.f90`, `sd_channel_sediment3.f90`, `ch_rtmusk.f90`, `ch_watqual4.f90`, `ch_temp.f90`, `rcurv_interp_flo.f90`, `qman.f90`, `theta.f90`, `wq_semianalyt.f90`, `wq_k2m.f90`, `ch_read_nut.f90`.
+Posisi dalam alur simulasi harian: setelah cuaca dibangkitkan, HRU dijalankan dalam urutan perintah SWAT+ (`Network::hru_order`); HRU yang menerima air HRU lain mendapat *runon* lewat `Network::hru_runon` sebelum evapotranspirasinya sendiri, lalu hidrograf HRU dicatat ke jaringan dengan `Network::set_hru`. Setelah semua HRU selesai, `Network::day` menjalankan objek-objek selebihnya (unit routing, akuifer, saluran SWAT-DEG, reservoir, recall, outlet) dalam urutan perintah, masing-masing menerima jumlah hidrograf dari objek pengirimnya. Sejak 1.1, dengan `--fix-swat` dan lebih dari satu thread, objek-objek itu dipotong menjadi bagian per sub-DAS yang dirouting bersamaan (`make_plan`, `run_part`; 12.4.5 sampai 12.4.7), dengan tabel yang sama untuk berapa pun jumlah thread. Kode saluran juga dipisah: pengaturan bersama (`ChanCfg`), nilai yang di SWAT+ terbawa dari satu saluran ke saluran berikutnya (`Carry`), dan suhu udara tertunda per pengukur (`AirLags`); kurva rating dan interpolasinya menjadi fungsi bebas (`rating_curve`, `interp_flo`), dan hidraulika harian saluran dapat dicetak ke tabel tambahan `channel_hyd_day.txt` (12.6.4 sampai 12.6.6). Padanan Fortran utama: `hyd_connect.f90`, `hyd_read_connect.f90`, `command.f90`, `ru_control.f90`, `dr_ru.f90`, `time_conc_init.f90`, `unit_hyd.f90`, `unit_hyd_ru_hru.f90`, `flow_hyd_ru_hru.f90`, `hru_hyds.f90`, `rls_routesurf.f90`, `rls_routesoil.f90`, `sd_hydsed_init.f90`, `sd_rating_curve.f90`, `sd_channel_control3.f90`, `sd_channel_sediment3.f90`, `ch_rtmusk.f90`, `ch_watqual4.f90`, `ch_temp.f90`, `rcurv_interp_flo.f90`, `qman.f90`, `theta.f90`, `wq_semianalyt.f90`, `wq_k2m.f90`, `ch_read_nut.f90`.
 
 Semua operasi hidrograf memakai tipe `Hyd` (Bab tentang `hyd.rs`): `plus` (`hydout_add`, jumlah massa; suhu dirata-rata tertimbang debit), `minus`, `scale(k, h)` (`hydout_mult_const`), `times` (`hydout_mult`, perkalian komponen demi komponen), `over` (pembagian dengan konstanta) dan `add_const`. Satuan di hidrograf objek: debit `flo` dalam m3 per hari, massa (sedimen dalam ton, nutrien dalam kg), suhu dalam °C.
 
@@ -35,13 +35,13 @@ Struct privat dan publik di `route.rs`:
 | `RuElem` | elemen RU: indeks objek, apakah HRU, fraksi `frac` dan *delivery ratio* `dr` (sebuah `Hyd` faktor pengali) |
 | `Ru` | RU: indeks objek, luas `da_km2` (km2), elemen, waktu konsentrasi `tc` (jam, `ru_tc`) |
 | `AquDay`, `Aqu` | keadaan akuifer harian (Bab 14) |
-| `Network` | seluruh jaringan: `obs`, urutan perintah `order` (tanpa HRU) dan `hru_order`, `rus`, peta `ru_of`/`aqu_of`/`chan_of`/`res_of`/`rec_of` dari indeks objek ke indeks per jenis, `ru_d` (keluaran harian RU), `fixes`, `channels: Option<Channels>`, `chan_in` (asal inflow tiap saluran untuk suhu air), `channel_skipped` (alasan saluran tidak dirouting), `reservoirs`, `recalls`, `step` (langkah per hari), `ga` (Green-Ampt), `dtm` (menit per langkah), `tconc` (waktu konsentrasi HRU, jam), `hhsurfq` (limpasan HRU per langkah, mm) |
+| `Network` | seluruh jaringan: `obs`, urutan perintah `order` (tanpa HRU) dan `hru_order`, jumlah HRU `n_hru` (HRU selalu di awal `obs`), rencana routing paralel `plan` (sejak 1.1, 12.4.6), `rus`, peta `ru_of`/`aqu_of`/`chan_of`/`res_of`/`rec_of` dari indeks objek ke indeks per jenis, `ru_d` (keluaran harian RU), `fixes`, `channels: Option<Channels>`, `chan_in` (asal inflow tiap saluran untuk suhu air), `channel_skipped` (alasan saluran tidak dirouting), `reservoirs`, `recalls`, `step` (langkah per hari), `ga` (Green-Ampt), `dtm` (menit per langkah), `tconc` (waktu konsentrasi HRU, jam), `hhsurfq` (limpasan HRU per langkah, mm) |
 | `NetDay` | masukan harian loop perintah: cuaca per stasiun `weat`, panjang hari `daylth` (jam), pengukur suhu `tgage`, neraca air HRU `hru_wb` (salju leleh, limpasan permukaan, aliran lateral, *water yield*; mm), `yrs`, `jday`, `yrc`, `mo`, `day_mo`, `print` |
 | `ChannelDay` | alias tuple untuk baris `channel_sd_day`: nomor, GIS id, nama, `ChWat`, tampungan, inflow, outflow, suhu air |
 
 #### 12.1.1  `Network::new`
 
-- **Lokasi:** `crates/swat-engine/src/route.rs`, `pub fn new(project: &Project, stations: &[String], tconc: &[f32], ovn_km: &[(f32, f32)], fixes: bool) -> Result<Option<Network>, String>`
+- **Lokasi:** `crates/swat-engine/src/route.rs`, `pub fn new(project: &Project, cal: &Calibration, stations: &[String], tconc: &[f32], ovn_km: &[(f32, f32)], fixes: bool) -> Result<Option<Network>, String>` (parameter `cal` sejak 1.1: kalibrasi akuifer yang diterapkan)
 - **Padanan SWAT+:** `hyd_connect.f90` (larik objek, keluaran/masukan, urutan perintah `cmd_next`), `hyd_read_connect.f90` (`day_max`, alokasi `hyd_flo`, `tsin`, `uh`), `ru_read_elements.f90`, `time_conc_init.f90` (waktu konsentrasi RU), `dr_ru.f90` (*delivery ratio*), `aqu_initial.f90` dan `cal_conditions.f90` untuk akuifer (Bab 14), `sd_channel_read.f90`/`sd_hydsed_init.f90` (lewat `Channels::new`), `res_read`/`res_initial`/`recall_read` (lewat `res.rs`), `unit_hyd_ru_hru.f90`.
 - **Tujuan:** membangun seluruh jaringan objek di luar HRU satu kali sebelum simulasi: siapa mengirim apa ke siapa, urutan eksekusi, parameter RU, akuifer, saluran, reservoir, recall, dan unit hidrograf.
 - **Masukan dan keluaran:** `project` (tabel input yang sudah dibaca), nama stasiun cuaca, `tconc` per HRU (jam), `ovn_km` per HRU (n Manning lahan, luas km2). Mengembalikan `Ok(None)` bila proyek hanya berisi HRU (tidak ada jaringan), `Err(teks)` yang menamai fitur yang belum diporting, atau `Ok(Some(Network))`.
@@ -70,7 +70,7 @@ DR = \min\left(1,\ \left(\frac{t_{c,HRU}}{t_{c,RU}}\right)^{0.5}\right)
 
 Rasio ini disimpan sebagai `Hyd` yang semua komponennya `DR` kecuali `flo = 1` (air tidak dikurangi, hanya muatan). Nama `full` atau `1`: semua komponen 1. Nama lain (tabel `delratio.del`) belum diporting → `Err`. Pangkat memakai `rpow` (padanan `**` Fortran).
 
-7. **Akuifer** (`aqu_initial`) dan kalibrasinya: lihat Bab 14.
+7. **Akuifer** (`aqu_initial`) dan kalibrasinya (`calibrate_aquifers(aqus, obs, cal)`): lihat Bab 14.
 8. **Urutan perintah** (`cmd_next` di `hyd_connect`). Dilakukan beberapa lintasan atas larik objek; pada setiap lintasan, objek yang belum jalan, yang seluruh pengirimnya sudah jalan (`rcv_sum == rcv_tot`) dan, untuk RU, seluruh elemennya sudah jalan (`dfn_sum == dfn_tot`), ditandai jalan; penghitung penerima dan RU-nya dinaikkan *di dalam lintasan yang sama*, sehingga objek berikutnya dalam larik bisa langsung jalan pada lintasan itu. HRU masuk ke `hru_order`, objek lain ke `order`. Lebih dari 5000 lintasan → `Err` ("infinite loop"), sama dengan batas SWAT+.
 9. **Saluran SWAT-DEG.** `Channels::new` dipanggil dengan pointer data (`props`) tiap saluran. Bila gagal, alasannya disimpan di `channel_skipped` dan saluran bertindak sebagai objek penerus (outflow = inflow). Untuk setiap saluran juga dicatat, per inflow, apakah ia berasal dari saluran SWAT-DEG dan RU mana saja yang menjadi inflow (untuk `ch_temp`).
 10. **Reservoir dan recall**: dibuat lewat `res::Reservoir::new` dan `res::Recall::new`; reservoir dengan `lapse` = 1 ditolak.
@@ -147,9 +147,9 @@ Q_{d}(k) \mathrel{+}= U_1(k)\,S_q, \qquad Q_{d+1}(k) = U_2(k)\,S_q
 - **Cara kerja:** HRU dan RU: `day_cur += 1`; jenis lain: `day_cur = 2`. Bila melebihi `day_max`, kembali ke 1.
 - **Kebiasaan SWAT+ / catatan port:** objek non-HRU/RU dengan `day_max` = 2 (saluran, outlet) selalu berada di hari 2, sedangkan saluran menulis keluarannya di slot hari 1 (`ch_rtmusk` mengosongkan seluruh hidrograf lalu mengisi hari pertama) dan pembacanya mengambil slot hari 1 juga. Port mereproduksi konvensi ini apa adanya.
 
-#### 12.2.5  `Network::sum_tsin`
+#### 12.2.5  `sum_tsin`
 
-- **Lokasi:** `route.rs`, `fn sum_tsin(&mut self, icmd: usize)`.
+- **Lokasi:** `route.rs`, `fn sum_tsin(cfg: &Cfg, part: &Part, seen: &[Option<&Ob>], k: usize) -> Vec<f32>` (sejak 1.1 fungsi bebas atas objek ke-`k` sebuah bagian, 12.4.7; sebelumnya method `Network::sum_tsin(&mut self, icmd)`).
 - **Padanan SWAT+:** bagian `tsin` di `command.f90`.
 - **Tujuan:** menjumlahkan inflow per langkah (`tsin`, m3 per langkah) objek `icmd` dari seluruh pengirimnya.
 - **Masukan dan keluaran:** `ins` objek, hidrograf dan `hyd_flo` pengirim; keluaran `obs[icmd].tsin`.
@@ -230,11 +230,11 @@ Q_{cur}(k) \mathrel{+}= \frac{hhsurfq(k)\cdot 10\,A}{dtm}\cdot 60, \qquad t_{inc
 
 #### 12.4.1  `Network::day`
 
-- **Lokasi:** `route.rs`, `pub fn day(&mut self, nd: &NetDay)`.
+- **Lokasi:** `route.rs`, `pub fn day(&mut self, nd: &NetDay, threads: usize, pool: Option<&rayon::ThreadPool>)` (parameter `threads` dan `pool` sejak 1.1).
 - **Padanan SWAT+:** `command.f90` (bagian setelah HRU), dengan panggilan ke `ru_control`, `aqu_1d_control`, `sd_channel_control3`, `res_control`, dan pembacaan recall (`recall_*` di `command`).
 - **Tujuan:** menjalankan satu hari semua objek di luar HRU dalam urutan perintah.
 - **Masukan dan keluaran:** `NetDay` (cuaca per stasiun, panjang hari, pengukur suhu, neraca air HRU, tanggal); mengubah `hd`, `hin`, `hyd_flo`, `tsin` setiap objek serta keadaan RU, akuifer, saluran, reservoir, dan recall.
-- **Cara kerja:** untuk setiap objek `icmd` di `order`:
+- **Cara kerja (sejak 1.1):** `threads` dipakai hanya bila `fixes` (selain itu 1). Rencana (`Plan`, 12.4.6) dibuat bila belum ada atau jumlah thread berubah. Setiap objek di luar HRU dipasangkan dengan keadaan jenisnya (`St`). Bila rencana memiliki lebih dari satu bagian, semua bagian kecuali yang terakhir dirouting bersamaan oleh `run_part` (di `pool.scope` bila ada kumpulan thread, selain itu `std::thread::scope`); objeknya lalu menjadi hanya-baca (`seen`), dan bagian terakhir dirouting di thread utama. Dengan satu bagian, semua objek dirouting di thread utama dalam urutan perintah. Pada run setia, nilai yang terbawa antar-saluran (`Carry`) diteruskan ke bagian itu persis seperti SWAT+. Isi loop atas satu bagian adalah langkah berikut, untuk setiap objek `icmd` dalam urutan perintah:
 
 1. Inflow harian: untuk setiap `In` dalam urutan, `ht1 = frac · hd_from(ihtyp)`; `hin = Σ ht1` dengan `Hyd::plus` (suhu tercampur tertimbang debit); setiap `ht1` disimpan di `hin_d` (padanan `ob%hin_d`).
 
@@ -253,9 +253,9 @@ H_{in} = \sum_{i \in ins} f_i \cdot H_{from_i}^{(ihtyp_i)}
 
 - **Kebiasaan SWAT+ / catatan port:** reservoir tanpa inflow tidak dijalankan sama sekali (sesuai `command`). Ketika saluran tidak diporting untuk proyek tertentu (lihat `channel_skipped`), saluran SWAT-DEG menjadi penerus murni, perilaku yang sama dengan saluran SWAT+ yang panjangnya kurang dari 1 m.
 
-#### 12.4.2  `Network::ru_control`
+#### 12.4.2  `ru_control`
 
-- **Lokasi:** `route.rs`, `fn ru_control(&mut self, iru: usize)`.
+- **Lokasi:** `route.rs`, `fn ru_control(cfg: &Cfg, part: &mut Part, seen: &[Option<&Ob>], k: usize, iru: usize)` (sejak 1.1 fungsi bebas atas objek ke-`k` sebuah bagian, 12.4.7; elemen HRU dibaca lewat `src`).
 - **Padanan SWAT+:** `ru_control.f90`.
 - **Tujuan:** menjumlahkan hidrograf elemen-elemen RU (HRU), dikalikan *delivery ratio* dan fraksi, menjadi lima hidrograf RU; menghitung `ru_d` untuk keluaran `ru_day`; dan hidrograf sub-harian RU.
 - **Masukan dan keluaran:** elemen (`frac`, `dr`), `hd` setiap HRU elemen, `hhsurfq`; keluaran `obs[ru].hd` (5 hidrograf), `ru_d[iru]`, `obs[ru].hyd_flo`.
@@ -292,7 +292,7 @@ Setelah itu hari besok dikosongkan dan hidrograf digeser dengan waktu konsentras
 | --- | --- | --- |
 | `AquDay::columns` | `route.rs` | 17 kolom `aquifer_day.txt` dengan label asli SWAT+ — Bab 14 |
 | `AquDay::columns_as` | `route.rs` | idem, label `cbn`/`orgn` terkoreksi bila `fixes` — Bab 14 |
-| `Network::aqu_1d_control` | `route.rs` | `aqu_1d_control.f90`: recharge, aliran balik resesi, rembesan, revap, nitrat — Bab 14 |
+| `aqu_1d_control` | `route.rs` | `aqu_1d_control.f90`: recharge, aliran balik resesi, rembesan, revap, nitrat — Bab 14 |
 | `Network::aquifers` | `route.rs` | iterator (nomor, GIS id, nama, `AquDay`) untuk keluaran — Bab 14 |
 
 Bagian `aqu_initial` dan kalibrasi akuifer (`cal_conditions`) di dalam `Network::new` juga diuraikan di Bab 14.
@@ -307,6 +307,45 @@ Bagian `aqu_initial` dan kalibrasi akuifer (`cal_conditions`) di dalam `Network:
 | `Network::channel_steps` | `route.rs` | untuk run sub-harian: keluaran per langkah tiap saluran (`hyd_flo(1,:)`, m3 per langkah) untuk `channel_sd_subday.txt` |
 | `Network::routing_units` | `route.rs` | iterator (nama, `ru_d`) untuk `ru_day` |
 
+#### 12.4.5  `Network::hru_waves`
+
+- **Lokasi:** `route.rs`, `pub fn hru_waves(&self) -> Vec<Vec<usize>>`. Sejak 1.1.
+- **Padanan SWAT+:** tidak ada; dasar HRU paralel `--fix-swat` (Bab 5.3.13).
+- **Tujuan:** membagi HRU (0-based) ke dalam gelombang yang dapat berjalan bersamaan tanpa mengubah apa yang dibaca setiap HRU.
+- **Cara kerja:** dengan `pos[j]` posisi HRU dalam `hru_order`, telusuri HRU dalam urutan perintah:
+  1. `level[j]` paling rendah `floor[j]`, dan paling sedikit `level[s] + 1` untuk setiap HRU pengirim `s` yang lebih awal dalam urutan (HRU `j` membaca air `s` hari ini, jadi harus sesudahnya).
+  2. Untuk setiap HRU pengirim `s` yang **lebih akhir** dalam urutan (HRU `j` membaca air `s` kemarin), `floor[s] ≥ level[j]`, sehingga `s` tidak berjalan sebelum `j` membaca.
+  3. HRU dikumpulkan per `level` dalam urutan perintah.
+- **Catatan:** tanpa routing antar-HRU semua HRU berada di satu gelombang.
+
+#### 12.4.6  `make_plan`, `Plan`, `Network::plan`, `Network::parts`
+
+- **Lokasi:** `route.rs`, `fn make_plan(order: &[usize], ins: &[Vec<usize>], threads: usize) -> Plan`; `struct Plan { threads, parts, part_of, at }`; `fn plan(&self, threads) -> Plan`; `pub fn parts(&self, threads) -> Vec<usize>`. Sejak 1.1 (M5, Lampiran B.6).
+- **Padanan SWAT+:** tidak ada; SWAT+ menjalankan objek satu per satu dalam urutan `cmd_next`.
+- **Tujuan:** memotong objek di luar HRU menjadi bagian (*part*) yang tidak saling membutuhkan, untuk dirouting bersamaan, ditambah satu bagian terakhir (sisanya, kebanyakan saluran utama dekat outlet) yang dirouting sesudahnya dalam urutan perintah.
+- **Cara kerja:**
+  1. **Apa yang harus lebih dulu.** Untuk objek di posisi `k` dan setiap pengirimnya di posisi `s`: bila `s < k` (air hari ini), `s` harus sebelum `k`; bila `s > k` (air kemarin), `k` harus sebelum `s`.
+  2. **Leluhur.** Untuk setiap objek, himpunan semua yang harus berjalan sebelumnya, sebagai *bit set* (`u64` per 64 objek); ukurannya `size(k)`.
+  3. **Kelompok.** Dari outlet ke hulu (posisi menurun), objek pertama yang bersama leluhurnya berukuran paling banyak `⌈m / (2·threads)⌉` memulai kelompok berisi semuanya. Kelompok yang berbagi leluhur (misalnya akuifer yang menerima dari dua sub-DAS) digabung dengan *union-find*. Kelompok lalu tidak membutuhkan apa pun di luar dirinya.
+  4. **Bagian.** Kelompok dibagikan ke `threads` bagian, terbesar dulu, masing-masing ke bagian yang paling ringan; isi setiap bagian diurutkan menurut urutan perintah. Objek tanpa kelompok menjadi bagian terakhir.
+  5. `part_of[i]` dan `at[i]` mencatat bagian setiap objek dan tempatnya di bagian itu (`u32::MAX` untuk HRU).
+  6. Dengan satu thread, atau pada run setia, hanya ada satu bagian berisi semua objek dalam urutan SWAT+.
+- **Catatan:** rencana dibuat sekali dan disimpan di `Network::plan`, dibuat ulang hanya bila jumlah thread berubah. Pada 12 thread, Batanghari (612 objek) terbagi 45 sampai 47 objek per bagian dan 55 objek (9 %) untuk thread utama; Pessel (3.162 objek) 249 sampai 252 per bagian dan 156 (5 %) untuk thread utama. Uji `a_plan_keeps_every_object_after_what_it_needs` memeriksa pada jaringan buatan bahwa setiap bagian memiliki semua yang dibutuhkannya.
+
+#### 12.4.7  `run_part`, `src`, `Cfg`, `St`, `Part`
+
+- **Lokasi:** `route.rs`, `fn run_part(cfg: &Cfg, part: &mut Part, seen: &[Option<&Ob>], nd: &NetDay)` dan `fn src<'b>(part: &'b Part, seen: &'b [Option<&Ob>], i: usize) -> Option<&'b Ob>`. Sejak 1.1.
+- **Padanan SWAT+:** loop `do while (icmd /= 0)` di `command.f90` atas objek satu bagian.
+- **Tujuan:** loop perintah atas satu bagian, dengan semua yang dibaca objek dari luar bagiannya hanya-baca.
+- **Struktur:** `Cfg` berisi apa yang dibaca setiap objek dari jaringan (RU, peta `ru_of`/`aqu_of`/`chan_of`, asal inflow saluran, `fixes`, `step`, `ga`, `dtm`, `hhsurfq`, pengaturan saluran `ChanCfg`). `St` adalah keadaan jenis yang dimiliki sebuah objek (`Ru(&mut Hyd)`, `Aqu(&mut Aqu)`, `Ch(&mut SdCh)`, `Res`, `Rec`, atau `None`). `Part` berisi nomor objeknya `ids`, objek beserta keadaannya `own`, nomor bagian `me`, rencana, nilai bawaan saluran `carry` (hanya run setia) dan suhu udara tertunda `lags`.
+- **Cara kerja:** sama dengan 12.4.1 langkah 1 sampai 3, dengan dua perbedaan: objek pengirim dibaca lewat `src` (milik bagian ini bila `part_of[i] == me`, selain itu dari `seen`, yaitu HRU dan objek bagian yang sudah selesai), dan RU, akuifer, serta saluran dijalankan oleh fungsi bebas `ru_control(cfg, part, seen, k, iru)`, `aqu_1d_control(ob, a, pet)` dan `ChanCfg::control(c, carry, lags, …)` yang hanya menyentuh milik bagian itu.
+- **Catatan:** `src` mengembalikan `None` hanya untuk objek bagian yang dirouting pada saat yang sama, dan rencana menjamin hal itu tidak terjadi.
+
+#### 12.4.8  `Network::calibrate`
+
+- **Lokasi:** `route.rs`, `pub(crate) fn calibrate(&mut self, cal: &Calibration) -> Result<(), String>`. Sejak 1.1.
+- **Tujuan:** menerapkan perubahan akuifer `cal` pada jaringan yang sedang berjalan (`Simulation::calibrate`, Bab 5.3.11), dengan fungsi yang sama dengan penyiapan, `calibrate_aquifers` (Bab 14.2.2).
+
 ### 12.5  Saluran SWAT-DEG: struktur data dan fungsi bantu (`channel.rs`)
 
 `channel.rs` memporting saluran SWAT-DEG (`chandeg.con`, `channel-lte.cha`, `hyd-sed-lte.cha`, `nutrients.cha`) dengan algoritma `sd_channel_control3`: kurva rating empat kedalaman, routing tampungan (Muskingum bila `codes.bsn` `rte` = 1, *variable storage coefficient* bila `rte` = 0), deposisi dataran banjir dan erosi tebing, rembesan dan penguapan, kualitas air QUAL2E, serta suhu air sungai. Pestisida, patogen, garam/konstituen, gwflow, dan alokasi air (`wallo`) tidak diporting. Struct utamanya:
@@ -320,7 +359,12 @@ Bagian `aqu_initial` dan kalibrasi akuifer (`cal_conditions`) di dalam `Network:
 | `ChanCtx` (publik) | konteks hari: cuaca stasiun, panjang hari `daylth` (jam), pengukur suhu `tgage`, `yrs`, `jday`, `hru_wb` |
 | `ChanInflows` (publik) | asal inflow untuk `ch_temp`: `from_chandeg` (per inflow), `hin_d`, `rus` |
 | `Basin` | `rte`, `qual2e`, `evrch` (koef. penguapan saluran, default 0,6), `scoef` (default 1), `fixes` |
-| `Channels` (publik) | semua saluran `chs`, `b`, `gra` (laju tumbuh alga yang tersimpan antarpanggilan, atribut *save* Fortran), `wtemp` (satu nilai untuk semua saluran), `ru_hrus` dan `ru_elem_is_hru` (pandangan `ch_temp` terhadap RU), `step`, `dtm`, `inflo` (inflow langkah tersimpan, atribut *save*) |
+| `Channels` (publik) | sejak 1.1: semua saluran `chs`, pengaturan `cfg: ChanCfg`, nilai terbawa `carry: Carry`, dan `air_lags: AirLags` |
+| `ChanCfg` | pengaturan yang sama untuk semua saluran: `b` (`Basin`), `ru_hrus` dan `ru_elem_is_hru` (pandangan `ch_temp` terhadap RU), `step`, `dtm`. Method-nya `control`, `ch_watqual4`, `ch_temp` hanya membaca pengaturan ini dan mengubah saluran yang diberikan |
+| `Carry` | yang di SWAT+ terbawa dari hari satu saluran ke saluran berikutnya: `gra` (laju tumbuh alga `ch_watqual4`, atribut *save*), `inflo` (inflow langkah `ch_rtmusk`, atribut *save*), `wtemp` (variabel modul, satu nilai untuk semua saluran). Run setia memakai satu `Carry` untuk semua saluran dalam urutan perintah; `--fix-swat` memakai `Carry` lokal per saluran dengan `gra` milik saluran itu (`SdCh::gra`), sehingga tidak ada saluran yang membaca nilai saluran lain (F21, F22 di Bab 17.6) |
+| `AirLags` | `Vec<(alamat pengukur, yrs, jday, [f32; 4])>`: suhu udara rata-rata selama jeda permukaan, lateral, airtanah, dan salju untuk hari itu, per pengukur suhu. Nilainya hanya bergantung pada pengukur dan hari, sehingga dihitung sekali per pengukur, tidak sekali per saluran (sejak 1.1; hasil sama) |
+| `RcChannel` (publik) | yang dibaca `sd_rating_curve` dari saluran: `chw`, `chd` (m), `chs` (m/m), `chl` (km), `chn`, `chss`, `fps`, `fpn` |
+| `ChHyd` (publik) | hidraulika harian satu saluran (sejak 1.1, 12.6.6): titik kurva `out`, `inflow`, `peak` dan `peak_flo`; tampungan `vol_ch`, `vol_fp`; `bankfull_dep`, `bankfull_wid`; `manning_out` (kedalaman, kecepatan, lebar) |
 
 #### 12.5.1  `Rc::scale`
 
@@ -416,7 +460,7 @@ m = \frac{c_k - c_1\,e^{-t_2/t_1}}{t_1\left(1 - e^{-t_2/t_1}\right)} - \frac{c_2
 2. Untuk saluran ke-`ich` (1-based): baris data `dat = sd_channel_data[props]`, baris hidraulik `hyd-sed-lte.cha` dicari dengan nama `dat.hyd`. Baris QUAL2E dicari dari nama `nut` milik baris data **bernomor `ich`**, dan `db_chw`, `db_chd` dari baris `hyd-sed-lte.cha` ke-`ich` (kuirk `sd_dat(ich)`, `sd_chd(ich)`).
 3. Field `chw, chd, chs, chl, chn, chk, cov, sinu, vcr_coef, ch_clay, ch_bd, n_conc, p_conc, p_bio` dibaca; `sed_nut.cha` tidak dibaca sehingga default tipe berlaku: `pk_rto` 1, `n_sol_part` 0,01, `p_sol_part` 0,01, `n_dep_enr` 0,5, `p_dep_enr` 0,5, `wash_bed_fr` 0,1.
 4. Batas bawah: `chs < 1e-9 → 1e-6`, `chn < 0,01 → 0,01`, `sinu < 1,05 → 1,05`. Kemiringan dataran banjir `fps` dibatasi `≤ chs` lalu `≥ 1e-5` (bila ≤ 1e-6); `fpn` adalah n Manning dataran banjir; `chss` kemiringan sisi.
-5. **Kurva rating dalam alur** (`sd_rating_curve`). Lebar dasar `b = chw − 2·chd·z`; bila ≤ 0 maka `b = max(0, 0,5·chw)` dan `z = (chw − b)/(2·chd)`. Untuk kedalaman `d = 0,1·chd` (titik 1) dan `d = chd` (titik 2, *bankfull*):
+5. **Kurva rating dalam alur** (`sd_rating_curve`; sejak 1.1 fungsi bebas `rating_curve`, 12.6.4, yang juga mengerjakan langkah 6). Lebar dasar `b = chw − 2·chd·z`; bila ≤ 0 maka `b = max(0, 0,5·chw)` dan `z = (chw − b)/(2·chd)`. Untuk kedalaman `d = 0,1·chd` (titik 1) dan `d = chd` (titik 2, *bankfull*):
 
 ```latex
 \text{asli: } P = b + 2\sqrt{d^2\left(1 + \frac{1}{z^2}\right)},\quad A = b\,d + \frac{d}{z} \qquad \text{koreksi: } P = b + 2d\sqrt{1+z^2},\quad A = b\,d + z\,d^2
@@ -459,9 +503,9 @@ ketiganya dinormalisasi dengan jumlahnya sehingga `C_1 + C_2 + C_3 = 1`.
 
 - **Kebiasaan SWAT+ / catatan port:** (a) Luas penampang alur `b·d + d/z` dan keliling basah yang memperlakukan z sebagai vertikal/horizontal (asli) versus trapesium benar (`--fix-swat`); di Bh\_land koreksi menaikkan tampungan dan rembesan beberapa persen, debit outlet berubah < 0,1 %. (b) Di atas bankfull lebar alir memakai lebar dasar `b` (asli) versus lebar atas `chw` (koreksi). (c) Pada run harian, koefisien Muskingum dihitung untuk sub-langkah stabil, tetapi `ch_rtmusk` merouting hari itu dalam satu langkah dengan koefisien tersebut. (d) Sebelum ada aliran, titik keluaran terakhir menyimpan waktu tempuh titik terdangkal, yang menentukan koefisien tampungan hari pertama. (e) Saluran penerus SWAT+ (panjang < 1 m) belum diporting: seluruh jaringan saluran lalu menjadi penerus (lihat 12.4.1).
 
-#### 12.6.2  `Channels::interp_flo`
+#### 12.6.2  `interp_flo`
 
-- **Lokasi:** `channel.rs`, `fn interp_flo(&self, ich: usize, flo_rate: f32) -> Rc`.
+- **Lokasi:** `channel.rs`, `pub fn interp_flo(e: &[Rc; 4], flo_rate: f32) -> Rc` (sejak 1.1 fungsi bebas atas kurva `e`; sebelumnya method `Channels::interp_flo(&self, ich, flo_rate)`).
 - **Padanan SWAT+:** `rcurv_interp_flo.f90`.
 - **Tujuan:** mencari titik kurva rating (kedalaman, luas, kecepatan, waktu tempuh, dsb.) untuk debit `flo_rate` (m3/s).
 - **Cara kerja:** cari titik pertama `k` dengan `Q < Q_k`:
@@ -479,11 +523,38 @@ ketiganya dinormalisasi dengan jumlahnya sehingga `C_1 + C_2 + C_3 = 1`.
 | `Channels::output` | `channel.rs` | tampungan `ch_stor`, inflow `ch_in`, outflow `ch_out` (debit dalam m3/s) dan `ChWat` saluran untuk `channel_sd_day` |
 | `Channels::wtemp_of` | `channel.rs` | suhu air yang dicetak: mode asli satu nilai `wtemp` untuk semua saluran (estimasi berbasis udara dari saluran terakhir); `--fix-swat` suhu sungai saluran itu sendiri |
 
+#### 12.6.4  `rating_curve` dan `channel_geom`
+
+- **Lokasi:** `channel.rs`, `pub fn rating_curve(ch: &RcChannel, fixes: bool) -> ([Rc; 4], f32, f32)` dan `fn channel_geom(bw: f32, chss: f32, dep: f32, fixes: bool) -> (f32, f32)`. Sejak 1.1 sebagai fungsi bebas dengan uji unit (H1 di `docs/roadmap.md`); sebelumnya bagian dari `Channels::new`.
+- **Padanan SWAT+:** `sd_rating_curve.f90`.
+- **Tujuan:** kurva rating empat titik (0,1 dan 1 kali kedalaman *bankfull* di alur; 1,2 dan 2 kali di atas dataran banjir), dengan lebar dasar dan kemiringan sisi yang dipakai. Rumusnya di 12.6.1 langkah 5 dan 6; `channel_geom` memberi keliling basah dan luas trapesium (asli atau terkoreksi).
+- **Catatan:** `Channels::new` memanggil `rating_curve` dan menyimpan `RcChannel` beserta lebar dasar dan kemiringan sisinya (`rc_ch`) untuk `manning_depth`. Uji unit: `the_corrected_curve_is_a_trapezoid`, `swat_s_curve_keeps_its_area`, `the_curve_at_its_points`.
+
+#### 12.6.5  `manning_depth`
+
+- **Lokasi:** `channel.rs`, `pub fn manning_depth(ch: &RcChannel, bw: f32, chss: f32, flo_rate: f32) -> (f32, f32, f32)`. Sejak 1.1.
+- **Padanan SWAT+:** tidak ada. Rumus Manning ditulis seperti `qman`.
+- **Tujuan:** kedalaman (m), kecepatan (m/s), dan lebar atas (m) saat saluran mengalirkan `flo_rate` (m³/s), pada saluran sebagai trapesium sungguhan. Di atas *bankfull* penampang dibagi (Chow 1959): alur utama (trapesium sampai *bankfull* ditambah lebar atas di atasnya) dengan n saluran, dan dua baji dataran banjir (kemiringan `fps`) dengan n dataran banjir, debitnya dijumlah.
+- **Cara kerja:** dalam f64, debit sebagai fungsi kedalaman `Q(d)` dengan rumus di bawah (di alur, d ≤ `chd`: A = b·d + z·d², P = b + 2d·√(1 + z²); di atas `chd` alur utama ditambah dua baji dataran banjir). Batas atas dimulai dari `chd` dan digandakan sampai `Q(hi) ≥ Q` (paling tinggi 10⁴ m); lalu bagi dua 60 kali. Kecepatan `= Q/A`.
+
+```latex
+Q = \frac{A\,(A/P)^{0.6666}\sqrt{S}}{n + 0.001}
+```
+
+- **Catatan:** kurva SWAT+ hanya empat titik dengan garis lurus di antaranya; di bawah titik pertama semua besaran (juga lebar dan kedalaman) diskalakan dengan debit, dan di atas *bankfull* seluruh penampang memakai n dataran banjir, sehingga debitnya bisa turun saat kedalaman naik. `manning_depth` naik bersama debit di semua rentang (uji `manning_depth_meets_the_curve_up_to_bankfull`, `manning_depth_rises_with_the_flow_past_bankfull`). Tanpa debit, nol.
+
+#### 12.6.6  `Channels::hyd_of`, `rating_at`, `Network::channel_hyds`
+
+- **Lokasi:** `channel.rs`, `pub fn hyd_of(&self, ich: usize) -> ChHyd` dan `fn rating_at(e: &[Rc; 4], flo_rate: f32) -> Rc`; `route.rs`, `pub fn channel_hyds(&self) -> Vec<ChHyd>`. Sejak 1.1.
+- **Padanan SWAT+:** tidak ada; tabel `channel_hyd_day.txt` (Bab 15).
+- **Tujuan:** hidraulika hari terakhir yang dirouting untuk saluran `ich`, dihitung ketika diminta: kurva pada debit keluar dan masuk rata-rata hari itu (`rating_at`: `interp_flo`, atau nol tanpa debit), debit puncak taksiran dan titik kurvanya (satu-satunya yang disimpan saat routing, `SdCh::peak`), tampungan saluran dan dataran banjir, kedalaman dan lebar *bankfull*, dan `manning_depth` pada debit keluar. `channel_hyds` memberi semuanya dalam urutan `chandeg.con`.
+- **Catatan:** routing tidak membaca nilai-nilai ini, sehingga tabel SWAT+ sama dengan atau tanpa `--channel-hyd` (uji `tests/channel_hyd.rs`, `the_table_changes_nothing_else`).
+
 ### 12.7  Satu hari saluran: sedimen, routing tampungan, kehilangan air (`channel.rs`)
 
-#### 12.7.1  `Channels::control`
+#### 12.7.1  `Channels::control` dan `ChanCfg::control`
 
-- **Lokasi:** `channel.rs`, `pub fn control(&mut self, ich: usize, hin: Hyd, area_ha: f32, ins: &ChanInflows, cx: &ChanCtx, tsin_in: &[f32], hyd_flo: &mut Vec<f32>) -> Hyd`.
+- **Lokasi:** `channel.rs`, `pub fn control(&mut self, ich: usize, hin: Hyd, area_ha: f32, ins: &ChanInflows, cx: &ChanCtx, tsin_in: &[f32], hyd_flo: &mut Vec<f32>) -> Hyd`. Sejak 1.1 ini pembungkus `ChanCfg::control(&self, c: &mut SdCh, shared: Option<&mut Carry>, lags: &mut AirLags, hin, area_ha, ins, cx, tsin_in, hyd_flo)`, yang dipanggil langsung oleh `run_part` (12.4.7). `shared` adalah `Carry` bersama pada run setia; dengan `--fix-swat` `None`, dan `control` memakai `Carry` lokal dengan `gra` milik saluran.
 - **Padanan SWAT+:** `sd_channel_control3.f90`, yang memanggil `sd_channel_sediment3.f90`, `ch_rtmusk.f90`, `rcurv_interp_flo.f90`, `ch_watqual4.f90` dan `ch_temp.f90`.
 - **Tujuan:** merouting satu hari inflow saluran `ich` (0-based): menambah hujan di permukaan air, deposisi dataran banjir dan erosi tebing, routing tampungan per langkah, rembesan dan penguapan, transformasi kualitas air, dan suhu air; mengembalikan hidrograf keluaran (`ob%hd(1)`).
 - **Masukan dan keluaran:** `hin` (inflow harian: m3, t, kg), `area_ha` (luas tangkapan objek saluran, ha), `ins` dan `cx` (untuk `ch_temp`), `tsin_in` (inflow per langkah, m3 per langkah; diabaikan pada run harian). Keluaran: hidrograf outflow (m3/hari dsb.), `hyd_flo` berisi outflow per langkah (m3), serta keadaan saluran (`ch_in`, `ch_out` dengan debit m3/s, tampungan, `wat`).
@@ -543,7 +614,7 @@ Beban erosi: `sed = E_t`, `orgn = E_t·n_conc/1000`, `sedp = (1−p_bio)·E_t·p
 - **Cara kerja (bagian C, `ch_rtmusk`):**
 
 6. `hyd_flo` disetel ulang ke `step` nol; `wat.evap = wat.seep = 0`. Pada run harian `substeps = nsteps = 1`, selain itu nilai dari inisialisasi. `dts = dtm/substeps·60` detik, `Δt = dts/3600` jam.
-7. Untuk setiap sub-langkah (penghitung `irtstep` naik setiap `substeps` sub-langkah): bila `Q_in > 1e-6`, `I = tsin(irtstep)/substeps` (disimpan di `Channels::inflo`) dan tampungan menerima bagian inflow yang sebanding, `tot_stor += min(1, max(0, I/Q_in))·ht1`. Titik rating inflow `in2 = interp_flo(I/86400)`.
+7. Untuk setiap sub-langkah (penghitung `irtstep` naik setiap `substeps` sub-langkah): bila `Q_in > 1e-6`, `I = tsin(irtstep)/substeps` (disimpan di `Carry::inflo`) dan tampungan menerima bagian inflow yang sebanding, `tot_stor += min(1, max(0, I/Q_in))·ht1`. Titik rating inflow `in2 = interp_flo(I/86400)`.
 8. Bila `tot_stor.flo < 1e-6`: `in1`, `out1` dan `in1_vol`, `out1_vol` di-nol-kan. Selain itu, outflow O (m3) dihitung:
 
 ```latex
@@ -585,12 +656,12 @@ dan serupa untuk P (`p_sol_part`, sedp/solp).
 
 ### 12.8  Kualitas air QUAL2E di saluran (`channel.rs`)
 
-#### 12.8.1  `Channels::ch_watqual4`
+#### 12.8.1  `ChanCfg::ch_watqual4`
 
-- **Lokasi:** `crates/swat-engine/src/channel.rs`, `fn ch_watqual4(&mut self, ich: usize, ht1: &Hyd, ht2: &mut Hyd, rc_prev: Rc, cx: &ChanCtx)`.
+- **Lokasi:** `crates/swat-engine/src/channel.rs`, `fn ch_watqual4(&self, c: &mut SdCh, cr: &mut Carry, ht1: &Hyd, ht2: &mut Hyd, rc_prev: Rc, cx: &ChanCtx)` (method `ChanCfg` sejak 1.1).
 - **Padanan SWAT+:** `ch_watqual4.f90` (QUAL2E: Brown dan Barnwell 1987; formulasi SWAT di Neitsch et al. 2011 bab 7:3), memakai `theta.f90`, `wq_semianalyt.f90`, `wq_k2m.f90`.
 - **Tujuan:** mengubah konsentrasi inflow (N organik, P sedimen/organik, NO3, P terlarut, klorofil-a, NH3, NO2, CBOD, oksigen terlarut) selama waktu tempuh, menghasilkan massa keluaran di `ht2`.
-- **Masukan dan keluaran:** `ht1` (inflow: massa kg, air m3), `rc_prev` (titik rating untuk waktu tempuh), cuaca (`tave`, `solrad` MJ/m2, panjang hari jam); keluaran field nutrien/alga/CBOD/DO dan `temp` di `ht2`; `Channels::gra` (laju tumbuh alga tersimpan).
+- **Masukan dan keluaran:** `ht1` (inflow: massa kg, air m3), `rc_prev` (titik rating untuk waktu tempuh), cuaca (`tave`, `solrad` MJ/m2, panjang hari jam); keluaran field nutrien/alga/CBOD/DO dan `temp` di `ht2`; `Carry::gra` (laju tumbuh alga tersimpan; dengan `--fix-swat` milik saluran itu, `SdCh::gra`).
 - **Cara kerja:**
 
 1. Koefisien suhu tetap: θ tumbuh/respirasi alga 1,047; `rs1` 1,024; `rs2`, `rs3` 1,074; `rs4`, `rs5` 1,024; `bc2`, `bc3`, `bc4` 1,047 (`bc1` 1,083 dideklarasikan tetapi tak dipakai); `rk1` 1,047; `rk2`, `rk3` 1,024; `rk4` 1,060.
@@ -642,9 +713,9 @@ c_{solP} \mathrel{+}= \left(\theta(bc_4)\,c_{OP} + \frac{\theta(rs_2)}{chd_{db}}
 
 ### 12.9  Suhu air sungai (`channel.rs`)
 
-#### 12.9.1  `Channels::ch_temp`
+#### 12.9.1  `ChanCfg::ch_temp`
 
-- **Lokasi:** `crates/swat-engine/src/channel.rs`, `fn ch_temp(&mut self, ich: usize, hd1: Hyd, ht2: Hyd, ins: &ChanInflows, cx: &ChanCtx) -> f32`.
+- **Lokasi:** `crates/swat-engine/src/channel.rs`, `fn ch_temp(&self, c: &mut SdCh, cr: &mut Carry, lags: &mut AirLags, hd1: Hyd, ht2: Hyd, ins: &ChanInflows, cx: &ChanCtx) -> f32` (method `ChanCfg` sejak 1.1), dengan fungsi bantu `fn air_lags(g: &Gage, cx: &ChanCtx, lag0s: [f32; 4]) -> [f32; 4]`.
 - **Padanan SWAT+:** `ch_temp.f90` (model suhu air dengan kontribusi aliran lahan bersuhu udara tertunda dan pertukaran panas menuju suhu kesetimbangan).
 - **Tujuan:** menghitung suhu air saluran (°C) dari suhu air hulu, kontribusi air lokal dari RU (salju leleh, limpasan, aliran lateral) dengan suhu udara tertunda, dan pertukaran panas permukaan selama waktu tempuh.
 - **Masukan dan keluaran:** `hd1` (outflow), `ht2` (outflow hasil routing), inflow (`ins`), cuaca (`tave`, `dewpt`, `windsp` m/s, `solrad`, `solradmx` MJ/m2, `rhum`), pengukur suhu stasiun (`tgage`), `hru_wb` (mm). Keluaran: suhu akhir; menyetel `ch_stor.temp`, `Channels::wtemp`, `SdCh::wtemp`.
@@ -652,7 +723,7 @@ c_{solP} \mathrel{+}= \left(\theta(bc_4)\,c_{OP} + \frac{\theta(rs_2)}{chd_{db}}
 
 1. **Suhu hulu.** Mode asli: untuk setiap inflow secara berurutan, bila berasal dari saluran SWAT-DEG, suhu = rata-rata tertimbang debit dari inflow itu dan inflow **sebelumnya** (inflow pertama dipasangkan dengan hidrograf nol, karena Fortran membaca `hin_d(0)` di luar batas); bila bukan dari saluran, `5 + 0,75·T_ave`. Hanya inflow terakhir yang menentukan. Mode `--fix-swat`: rata-rata tertimbang debit semua inflow dari saluran SWAT-DEG (atau `5 + 0,75·T_ave` bila debitnya < 1e-6 m3/s).
 2. **Air lokal dari RU.** Untuk setiap RU yang menjadi inflow dan setiap elemennya (HRU), bila baris tabel elemen global bernomor **penghitung loop** bertipe `hru`: `q_sno += sno·frac`, `q_surf += surq`, `q_lat += latq`, `q_wyld += wyld` (mm; hanya salju yang dikali fraksi). `q_wyld = 0` menjadi 1e-6; `q_gw = 0`.
-3. **Suhu lokal.** Tanpa pengukur suhu: `T_loc = 5 + 0,75·T_ave`. Dengan pengukur: suhu udara rata-rata `(T_max + T_min)/2` selama jeda `lag` hari (salju 2, permukaan 5, lateral 10, airtanah 250; pada tahun simulasi pertama `lag = min(jday, lag_0)`; bila jendela melewati awal tahun dan sudah lebih dari satu tahun data, hari-hari akhir tahun sebelumnya dipakai; jumlahnya dibagi `lag`):
+3. **Suhu lokal.** Tanpa pengukur suhu: `T_loc = 5 + 0,75·T_ave`. Dengan pengukur: suhu udara rata-rata `(T_max + T_min)/2` selama jeda `lag` hari (salju 2, permukaan 5, lateral 10, airtanah 250; pada tahun simulasi pertama `lag = min(jday, lag_0)`; bila jendela melewati awal tahun dan sudah lebih dari satu tahun data, hari-hari akhir tahun sebelumnya dipakai; jumlahnya dibagi `lag`). Sejak 1.1 keempat rata-rata ini dihitung `air_lags` sekali per pengukur dan hari, lalu disimpan di `AirLags` untuk saluran lain yang memakai pengukur yang sama; urutan penjumlahannya sama, sehingga hasilnya sama. Pada Pessel 2015–2025 ini, bersama data tanaman yang dibagi (Bab 8), mempercepat run sekitar 10 %:
 
 ```latex
 T_{loc} = \frac{0.75\,T_{sno}\,q_{sno} + 0.75\,T_{gw}\,q_{gw} + 0.75\,T_{lat}\,q_{lat} + 0.75\,T_{surf}\,q_{surf}}{q_{wyld}}
@@ -696,13 +767,13 @@ W_f = \sqrt{\frac{2\,Q_{out}/v_c}{(chd/1.5)/chw}},\qquad D_f = \min\left(2\,chd,
 \Delta T = \frac{K_e\,(T_{eq} - T_{init})}{1000\cdot 4186\,D_f/86400}\cdot\frac{TT}{24},\qquad T_w = \max(0.001,\ T_{init} + \Delta T)
 ```
 
-8. `ch_stor.temp = T_w`; `Channels::wtemp = 5 + 0,75·T_ave`; `SdCh::wtemp` = `T_w` (koreksi) atau `wtemp` (asli). Kembalikan `T_w`.
+8. `ch_stor.temp = T_w`; `Carry::wtemp = 5 + 0,75·T_ave`; `SdCh::wtemp` = `T_w` (koreksi) atau `wtemp` (asli). Kembalikan `T_w`.
 
 - **Kebiasaan SWAT+ / catatan port:** (a) suhu hulu dari inflow terakhir dan inflow sebelumnya saja, termasuk pembacaan di luar batas untuk inflow pertama (asli; dikoreksi dengan `--fix-swat`); (b) elemen RU disaring dengan indeks penghitung loop ke tabel elemen global, bukan indeks elemen sebenarnya; (c) limpasan dan aliran lateral tidak dikali fraksi elemen, hanya salju; (d) `T_up·Q_up` (m3/s) dicampur dengan `q_wyld` (mm) seperti di Fortran; (e) koefisien default `w_temp(0)` dipakai karena `temperature.cha` tidak didukung (proyek dengan file itu ditolak `Channels::new`); (f) `vel` dan `rttime` adalah milik hari terakhir yang ada inflow; (g) pada mode asli hasilnya hanya mencapai `ch_stor.temp`, dan `channel_sd_day` mencetak satu nilai `wtemp` untuk semua saluran (di Bh_land, koreksi memberi 21–28 °C berbeda per saluran pada satu hari pertengahan tahun).
 
 ### 12.10  Inventaris fungsi Bab 12
 
-Semua 35 fungsi di kedua file (hasil `grep -n "fn "`), dengan subbab tempat uraiannya:
+Fungsi di kedua file (hasil `grep -n "fn "`, keadaan 1.1), dengan subbab tempat uraiannya:
 
 | Fungsi | File | Subbab |
 |---|---|---|
@@ -717,9 +788,14 @@ Semua 35 fungsi di kedua file (hasil `grep -n "fn "`), dengan subbab tempat urai
 | `Network::hru_runon` | route.rs | 12.3.1 |
 | `Network::set_hru` | route.rs | 12.3.2 |
 | `Network::day` | route.rs | 12.4.1 |
-| `Network::sum_tsin` | route.rs | 12.2.5 |
-| `Network::ru_control` | route.rs | 12.4.2 |
-| `Network::aqu_1d_control` | route.rs | 12.4.3 (Bab 14) |
+| `sum_tsin` | route.rs | 12.2.5 |
+| `ru_control` | route.rs | 12.4.2 |
+| `aqu_1d_control` | route.rs | 12.4.3 (Bab 14) |
+| `Network::hru_waves` | route.rs | 12.4.5 |
+| `make_plan`, `Network::plan`, `Network::parts` | route.rs | 12.4.6 |
+| `run_part`, `src` | route.rs | 12.4.7 |
+| `Network::calibrate`, `calibrate_aquifers` | route.rs | 12.4.8 (Bab 14) |
+| `Network::channel_hyds` | route.rs | 12.6.6 |
 | `Network::aquifers` | route.rs | 12.4.3 (Bab 14) |
 | `Network::channels` | route.rs | 12.4.4 |
 | `Network::reservoir_days` | route.rs | 12.4.4 |
@@ -735,11 +811,14 @@ Semua 35 fungsi di kedua file (hasil `grep -n "fn "`), dengan subbab tempat urai
 | `wq_k2m` | channel.rs | 12.5.6 |
 | `ChNut::new` | channel.rs | 12.5.7 |
 | `Channels::new` | channel.rs | 12.6.1 |
-| `Channels::interp_flo` | channel.rs | 12.6.2 |
+| `interp_flo` | channel.rs | 12.6.2 |
+| `rating_curve`, `channel_geom` | channel.rs | 12.6.4 |
+| `manning_depth` | channel.rs | 12.6.5 |
+| `Channels::hyd_of`, `rating_at` | channel.rs | 12.6.6 |
 | `Channels::output` | channel.rs | 12.6.3 |
 | `Channels::wtemp_of` | channel.rs | 12.6.3 |
-| `Channels::control` | channel.rs | 12.7.1 |
-| `Channels::ch_watqual4` | channel.rs | 12.8.1 |
-| `Channels::ch_temp` | channel.rs | 12.9.1 |
+| `Channels::control`, `ChanCfg::control` | channel.rs | 12.7.1 |
+| `ChanCfg::ch_watqual4` | channel.rs | 12.8.1 |
+| `ChanCfg::ch_temp`, `air_lags` | channel.rs | 12.9.1 |
 
-Ringkasan koreksi `--fix-swat` dalam bab ini (dari `docs/swat-fixes.md`): `ru_d` hanya tot + rhg; trapesium benar pada kurva rating dan waktu tampung Muskingum; lebar atas `chw` di atas bankfull; waktu tempuh QUAL2E pada debit inflow; outflow membawa suhu sungai yang dihitung; suhu hulu tertimbang debit semua saluran hulu; suhu per saluran di `channel_sd_day`.
+Ringkasan koreksi `--fix-swat` dalam bab ini (dari `docs/swat-fixes.md`): `ru_d` hanya tot + rhg; trapesium benar pada kurva rating dan waktu tampung Muskingum; lebar atas `chw` di atas bankfull; waktu tempuh QUAL2E pada debit inflow; outflow membawa suhu sungai yang dihitung; suhu hulu tertimbang debit semua saluran hulu; suhu per saluran di `channel_sd_day`; sejak 1.1 juga `inflo` dan `gra` milik setiap saluran (tidak lagi terbawa dari saluran sebelumnya), yang memungkinkan routing paralel.
