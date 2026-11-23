@@ -555,6 +555,7 @@ berbantuan AI) di F2 dikerjakan lewat jalur ini.
 | **M3** | Uji sintetis: TMA buatan dari debit model dengan lengkung debit yang diketahui; fungsi tujuan (KGE pada TMA, Spearman, batas ET, pengukuran debit); paket Python `calibration/swatcal` | Python | selesai |
 | **M4** | Pengoptimasi pada anggaran run yang sama: pencarian acak, SUFI-2 (pembanding), optimasi Bayesian (`swatcal.optimize`, `swatcal.compare`); *surrogate* di tahap lanjutan | Python | selesai: 3 *seed* × 80 run di Batanghari, tak ada metode yang unggul konsisten (`calibration/README.md`) |
 | **M5** | Routing paralel per sub-DAS; percepatan diukur pada 1–12 inti (naskah mode paralel) | E | selesai: 15,4 s → 9,2 s pada 12 inti (1,67×), tabel identik (`docs/parallel.md`) |
+| **M6** | Studi *spin-up*: panjang pemanasan dan pemanasan bersama untuk run kalibrasi (`Simulation::calibrate`, `batch --shared-spinup`, `swatcal.spinup`) | E, Python | selesai: 2 tahun cukup untuk volume; akuifer tidak menyatu dalam 11 tahun; pemanasan bersama tidak dipakai bawaan (`docs/spinup.md`) |
 
 Sisa F1 (`swat.run` di RustGIS-SwatPlus; GSMaP ke `pcp` sudah ada sebagai `scripts/gsmap-to-pcp.py`) dan F2 lainnya berjalan sesudah atau
 di sela jalur M.

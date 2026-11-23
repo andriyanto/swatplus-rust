@@ -99,7 +99,43 @@ Uji (`tests/batch.rs`): set tanpa perubahan dari pemanasan bersama sama persis, 
 
 #### B.7.4  Hasil
 
-_Diisi sesudah percobaan selesai._
+Percobaan dijalankan 24 November 2026 pada Batanghari dan Pessel (2015–2025), di outlet berupa saluran dengan debit rata-rata terbesar (saluran 1 pada keduanya). Tabel lengkap ada di `docs/spinup.md`; berikut ringkasannya.
+
+**Bagian A.** Selisih basah dikurangi kering, dibagi run biasa:
+
+| Tahun | Batanghari: debit tahunan | debit rendah | Pessel: debit tahunan | debit rendah |
+| --- | ---: | ---: | ---: | ---: |
+| 2015 | 40,5 % | 99,8 % | 55,5 % | 96,7 % |
+| 2016 | 3,9 % | 19,4 % | 3,9 % | 2,1 % |
+| 2017 | 1,3 % | −6,3 % | 0,6 % | 1,5 % |
+| 2018–2025 | antara −1,1 dan 0,4 % | antara −8,7 dan 7,7 % | antara −0,2 dan 0,5 % | antara −9,0 dan 8,9 % |
+
+- **Air tanah sudah lupa keadaan awalnya dalam tahun pertama**: akhir 2015, air tanah DAS ketiga run berselisih paling banyak 1 mm.
+- **Volume tahunan perlu dua tahun**: selisihnya turun dari 40–56 % di tahun pertama menjadi 4 % di tahun kedua, dan sesudahnya dalam ±1 %. Dua tahun pemanasan proyek sudah cukup untuk volume.
+- **Akuifer tidak pernah lupa.** Simpanannya (kolom `stor` di `basin_aqu_yr`) mempertahankan selisih awalnya sampai 2025: di Batanghari run kering naik sekitar 50 per tahun sampai 1.062, run biasa 3.298, run basah sekitar 3.390; Pessel serupa (1.105; 3.352; 3.395). Simpanan run biasa pun masih naik setiap tahun: dengan parameter proyek, akuifer belum seimbang dengan iklimnya sesudah 11 tahun.
+- **Karena itu keadaan awal tetap terlihat di debit rendah dan debit harian**: debit rendah masih berbeda sampai 9 % sesudah sepuluh tahun, dan di Pessel debit harian run kering dan basah hanya cocok dengan NSE 0,48–0,99.
+
+**Bagian B.** Dua puluh set parameter dan set kebenaran, pemanasan sendiri dibandingkan pemanasan bersama:
+
+| | Batanghari | Pessel |
+| --- | ---: | ---: |
+| KGE harian, bersama terhadap sendiri (terendah; median) | 0,970; 0,980 | 0,866; 0,921 |
+| Bias selama 9 tahun tercetak | −0,2 sampai +0,2 % | −0,3 sampai +0,4 % |
+| Perubahan KGE tiap set terhadap kebenaran (rentang; median besarnya) | −0,011 sampai +0,007; 0,002 | −0,030 sampai +0,020; 0,010 |
+| Korelasi peringkat KGE, bersama terhadap sendiri | 0,99 | 0,77 |
+| Set terbaik, sendiri / bersama | s004 / s004 | s006 / s016 |
+| Waktu 21 run, sendiri / bersama | 163 s / 139 s (−14 %) | 432 s / 364 s (−16 %) |
+
+- **Batanghari masih menoleransi pemanasan bersama**: set terbaik sama, peringkat hampir tidak berubah.
+- **Pessel tidak**: peringkat berubah (0,77) dan set terbaiknya lain, karena debitnya lebih banyak membawa keadaan akuifer.
+- **Penghematannya kecil**: dua dari sebelas tahun, 14–16 % waktu.
+
+#### B.7.5  Kesimpulan untuk kalibrasi
+
+1. Setiap run kalibrasi tetap memakai pemanasannya sendiri (bawaan `batch`). `--shared-spinup` hanya untuk eksplorasi cepat dan harus dicek terhadap pemanasan sendiri sebelum dipercaya.
+2. Dua tahun pemanasan cukup untuk volume dan air tanah di kedua DAS.
+3. Keadaan awal akuifer tidak terlupakan dalam 11 tahun. Untuk debit rendah (Q80, Q90), akuifer sebaiknya dimulai dari keadaan akhir run panjang atau dari simpanan yang diperkirakan secara terpisah, dan muka air tanah awal diperlakukan sebagai ketidakpastian.
+4. Akuifer run biasa terus terisi dari tahun ke tahun: parameter akuifer kedua proyek (imbuhan terhadap aliran keluar, *revap* dan *deep seepage*) perlu diperiksa sebelum mengkalibrasi debit rendah.
 
 ### B.8  Catatan langkah kerja
 
@@ -109,4 +145,4 @@ _Diisi sesudah percobaan selesai._
 | 13 November 2026 | M3 uji sintetis, M4 perbandingan pengoptimasi (1 *seed*), M5 routing paralel per sub-DAS | PR #15, #16, #18; `calibration/README.md`, `docs/parallel.md` |
 | 19 November 2026 | M4: *rating fit* mulus, *trust region*, perbandingan 3 *seed* | PR #19 |
 | 23 November 2026 | Pengukuran 1–12 inti di laptop; thread sekali per run; rilis 1.1.0 | PR #20–#23; Zenodo 10.5281/zenodo.24448341 |
-| 24 November 2026 | Studi spin-up: `Simulation::calibrate`, `batch --shared-spinup`, `swatcal.spinup` | B.7, `docs/spinup.md` |
+| 24 November 2026 | Studi spin-up: `Simulation::calibrate`, `batch --shared-spinup`, `swatcal.spinup`; pemanasan 2 tahun cukup untuk volume, akuifer tidak menyatu, pemanasan bersama tidak dipakai bawaan | B.7, `docs/spinup.md` |

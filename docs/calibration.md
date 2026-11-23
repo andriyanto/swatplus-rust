@@ -97,11 +97,12 @@ Python or anything else) writes the sets, calls `batch` and reads the series bac
 69.7 s with one run at a time, 35.7 s with two, on a 2-core machine. The gain is about the
 number of cores, since nothing is shared between runs.
 
-**Spin-up.** Each run simulates its own warm-up years (`print.prt`'s `nyskip`). Starting every
-run from one spin-up made with other parameters (E2's `checkpoint`) would be faster but is not the
-same model: the soil water, aquifers and plants at the end of the warm-up depend on the
-parameters. Whether a shared spin-up followed by a short one of each run's own is good enough is
-for the synthetic tests (M3) to measure, not to assume.
+**Spin-up.** Each run simulates its own warm-up years (`print.prt`'s `nyskip`). `--shared-spinup`
+runs the warm-up once with the project's parameters and starts every set from a copy of it, with
+its changes applied (`Simulation::calibrate`). `docs/spinup.md` measured what that costs: on
+Batanghari the best set and the ranking barely change, on Pessel they do (rank correlation 0.77,
+another best set), for 14–16 % less time. Keep each run's own warm-up unless a check like that
+says otherwise.
 
 ## Stage-based calibration tools (M3)
 

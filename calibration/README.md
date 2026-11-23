@@ -14,6 +14,7 @@ the model runs are made by `swatplus-rust batch` ([`docs/calibration.md`](../doc
 | `params` | The searched space (`parameter:change` between bounds), Latin hypercube sampling |
 | `optimize` | Random search; SUFI-2 (Abbaspour et al., 2007: Latin hypercube rounds, ranges narrowed around the behavioural runs); Bayesian optimisation (a numpy Gaussian process, Matérn 5/2, expected improvement, batches by constant liar) |
 | `compare` | The optimisers on a synthetic world with the same run budget, under three states of knowledge, over several seeds (M4) |
+| `spinup` | How long a warm-up a project needs (dry, usual and wet starts) and whether calibration runs can share one (`batch --shared-spinup`); results in [`docs/spinup.md`](../docs/spinup.md) |
 
 ```bash
 pip install numpy pytest
