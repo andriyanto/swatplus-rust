@@ -658,7 +658,7 @@ Catatan: `Soil` dan `SoilLayer` menurunkan `Default` Rust (semua nol/kosong), bu
 
 ### 3.9  `cal.rs`: kalibrasi keras
 
-Modul ini memuat dua file kalibrasi SWAT+: `cal_parms.cal` (daftar parameter yang boleh diubah beserta rentang absolutnya, dibaca `cal_parm_read`) dan `calibration.cal` (daftar perubahan, dibaca `cal_parmchg_read`). Perubahan diterapkan satu kali setelah objek disiapkan (`cal_conditions`, dipanggil dari `proc_cal`); penerapannya dibahas di bab HRU. Modul ini juga berisi fungsi `define_unit_elements` yang dipakai bersama oleh pembaca kalibrasi dan pembaca unit routing.
+Modul ini memuat dua file kalibrasi SWAT+: `cal_parms.cal` (daftar parameter yang boleh diubah beserta rentang absolutnya, dibaca `cal_parm_read`) dan `calibration.cal` (daftar perubahan, dibaca `cal_parmchg_read`). Perubahan diterapkan satu kali setelah objek disiapkan (`cal_conditions`, dipanggil dari `proc_cal`); penerapannya dibahas di Bab 14. Sejak 1.1 kedua isi berkas itu juga dapat dibentuk di memori sebagai `Calibration` dan diberikan langsung kepada engine, tanpa menulis berkas (3.9.3 sampai 3.9.5). Modul ini juga berisi fungsi `define_unit_elements` yang dipakai bersama oleh pembaca kalibrasi dan pembaca unit routing.
 
 **Struct `CalParm`** (tipe `calibration_parameters`): `name` (nama parameter, mis. `cn2`, `esco`, `awc`), `ob_typ` (jenis objek pemilik parameter: `hru`, `chan`, `res`, `bsn`, `plt`, …), `absmin` dan `absmax` (`f32`, batas absolut nilai hasil perubahan). Field Fortran `units` tidak disimpan.
 
@@ -684,6 +684,8 @@ x' = \begin{cases} v & \text{absval} \\ x + v & \text{abschg} \\ (1 + v/100)\,x 
 
 **Struct `CalCond`** (tipe `calibration_conditions`): `var` (variabel yang diuji; `cal_conditions` mengenali antara lain `hsg`, `texture`, `plant`, `pl_class`, `landuse`, `cal_group`, `res_typ`, `sol`, dan `range`), `alt` (operator), `targ: f32` (angka; tidak dipakai oleh kondisi yang diterapkan SWAT+), dan `targc` (teks yang harus sama dengan variabel). Kondisi `range` hanya memakai `var`; batasnya adalah `val1`/`val2` milik `CalUpdate`.
 
+**Struct `Calibration`** (sejak 1.1): kalibrasi keras yang diterapkan satu run, yaitu `parms: Vec<CalParm>` (isi `cal_parms.cal`: jenis objek dan rentang setiap parameter) dan `updates: Vec<CalUpdate>` (isi `calibration.cal`). Kalibrasi proyek sendiri berasal dari berkasnya; program kalibrasi membentuk satu `Calibration` per set parameter. Engine menerapkannya persis seperti `calibration.cal` (`Simulation::with_calibration`, Bab 5; `cal_conditions` dan `calibrate_aquifers`, Bab 14). Tidak ada padanan SWAT+: di sana kedua daftar adalah larik global `cal_parms` dan `cal_upd` yang hanya diisi oleh pembaca berkas.
+
 #### 3.9.1  `CalParm::default`
 
 - **Lokasi:** `crates/swat-model/src/cal.rs`, `impl Default for CalParm`
@@ -708,7 +710,28 @@ x' = \begin{cases} v & \text{absval} \\ x + v & \text{abschg} \\ (1 + v/100)\,x 
   - Rentang yang terbalik (mis. `5 -3`) menghasilkan rentang kosong, sama seperti `do ie = 5, 3` di Fortran.
   - Kasus patologis di mana bilangan negatif muncul sendiri di posisi terakhir setelah sebuah rentang (mis. `1 -3 -5`) memakai elemen sebelumnya yang negatif sebagai awal rentang; Fortran akan menghasilkan nomor negatif, sedangkan port memotongnya menjadi 0. Masukan seperti ini tidak dihasilkan oleh SWAT+ Editor.
 
-#### 3.9.3  Uji unit `cal.rs`
+#### 3.9.3  `Calibration::of` dan `Calibration::with_updates`
+
+- **Lokasi:** `crates/swat-model/src/cal.rs`, `pub fn of(project: &Project) -> Calibration` dan `pub fn with_updates(project: &Project, updates: Vec<CalUpdate>) -> Calibration`
+- **Padanan SWAT+:** isi `cal_parms` dan `cal_upd` setelah `cal_parm_read` dan `cal_parmchg_read`.
+- **Tujuan:** `of` memberi kalibrasi proyek sendiri (salinan `project.cal_parms` dan `project.cal_upd`); `with_updates` memberi rentang parameter proyek dengan daftar perubahan lain, untuk satu set parameter program kalibrasi.
+- **Catatan port:** `Simulation::new` memakai `Calibration::of`, sehingga run tanpa kalibrasi di memori tidak berubah sedikit pun.
+
+#### 3.9.4  `Calibration::unknown`
+
+- **Lokasi:** `cal.rs`, `pub fn unknown(&self) -> Vec<&str>`
+- **Padanan SWAT+:** tidak ada.
+- **Tujuan:** nama perubahan yang tidak tercantum di `parms` (dibandingkan dengan `fortran_eq`). `Simulation::with_calibration` dan `Simulation::calibrate` menolak kalibrasi bila daftar ini tidak kosong, dengan nama parameternya.
+- **Catatan port:** dalam run dari berkas, perubahan seperti itu mendapat `CalParm::default` (jenis `plt`) dan ditolak `cal_conditions`, sehingga HRU tidak disimulasikan dan run hanya berisi cuaca. Untuk program kalibrasi, penolakan lebih awal dengan nama parameter lebih berguna daripada run tanpa HRU.
+
+#### 3.9.5  `CalUpdate::all`
+
+- **Lokasi:** `cal.rs`, `pub fn all(name: &str, chg_typ: &str, val: f32) -> CalUpdate`
+- **Padanan SWAT+:** satu baris `calibration.cal` tanpa kondisi, lapisan, tahun, hari, dan daftar objek (`num_tot = 0`).
+- **Tujuan:** perubahan `name` untuk semua objek jenisnya: `absval` mengganti nilai dengan `val`, `abschg` menambah `val`, `pctchg` mengubah `val` persen, `relchg` mengalikan dengan 1 + `val`. Dipakai oleh `run --set` dan kolom `sets.csv` perintah `batch` (Bab 16).
+- **Cara kerja:** field lain bernilai bawaan `CalUpdate` (`elems` kosong = semua objek).
+
+#### 3.9.6  Uji unit `cal.rs`
 
 | Fungsi uji | Lokasi | Yang diuji |
 | --- | --- | --- |
@@ -895,9 +918,9 @@ Modul ini berisi struct untuk file definisi unit routing (`rout_unit.ele`, `rout
 | `basin.rs` | 8 (`BasinCodes::default`, `BasinParams::default`, `get`, `complete`, `adj_pkr`, `dorm_hr`, `plaps`, `tlaps`) | 0 |
 | `climate.rs` | 3 (`cio_slot`, `path_section`, `values`) | 0 |
 | `hru.rs` | 1 (`PlantInit::default`) | 0 |
-| `cal.rs` | 2 (`CalParm::default`, `define_unit_elements`) | 1 |
+| `cal.rs` | 6 (`CalParm::default`, `define_unit_elements`, `Calibration::of`, `with_updates`, `unknown`, `CalUpdate::all`) | 1 |
 | `mgt.rs` | 0 | 0 |
 | `objects.rs` | 2 (`cio_slot`, `code`) | 0 |
 | `routing.rs` | 1 (`AquiferDb::default`) | 0 |
 | `print.rs` | 1 (`object`) | 0 |
-| **Jumlah** | **42** | **6** |
+| **Jumlah** | **46** | **6** |

@@ -87,7 +87,7 @@ Pemanggil wajib membebaskan penyangga itu dengan `swat_free(ptr, 4 + panjang)`.
   3. Susun judul tabel: spasi, judul `file.cio` tanpa titik dua di ujung, rata kiri 24 karakter, lalu `swatplus-rust <versi>`. Judul ini identik dengan yang dipakai program baris perintah, sehingga tabel WASM dan tabel *native* dapat dibandingkan bita demi bita.
   4. Buat `TextTables::new(judul, MemStore::new(), &project.print)`, set `tables.fixes = opts.fixes`.
   5. Pasang `progress::Reporter` dengan fungsi *emit* yang menerima baris JSON `{"event":"progress","done":…,"days":…,"date":…}`. Karena `Reporter` menghasilkan teks, *closure* `num(key)` membaca kembali dua angka dari teks itu: memotong string sesudah `"done":` atau `"days":`, mengambil awalan berdigit, mem-*parse* sebagai `usize` (0 bila gagal), lalu memanggil `progress(done, days)`.
-  6. `swat_engine::run::run_with(&project, &mut tables, RunOptions { fixes })?`.
+  6. `swat_engine::run::run_with(&project, &mut tables, RunOptions { fixes, threads: 1 })?`. Di WebAssembly HRU dan routing selalu berjalan pada satu thread (sejak 1.1 field `threads` ditulis eksplisit).
   7. Dari `RunReport`, ubah setiap alasan yang tidak `None` menjadi catatan: `HRU water balance not simulated (…)`, `channels not routed (…)`, `routing units and aquifers not simulated (…)`.
   8. `tables.finish()?` mengembalikan `MemStore`; untuk setiap pasangan (nama, teks) di `store.files`:
      - bila `parquet`: nama dasar = nama tanpa `.txt`; `text_to_parquet(teks, Vec::new(), 1 << 20)` (satu *row group* per 2^20 = 1.048.576 baris), simpan `<dasar>.parquet`; galat diberi awalan nama berkas;
@@ -157,11 +157,12 @@ Biner `swatplus-rust` adalah program yang dijalankan *runner* RustGIS dan penggu
 
 ```text
 swatplus-rust inspect <TxtInOut folder>
-swatplus-rust run <TxtInOut folder> [--out <folder>] [--fix-swat] [--format text|parquet|both] [--progress json] [--strict]
+swatplus-rust run <TxtInOut folder> [--out <folder>] [--fix-swat] [--format text|parquet|both] [--progress json] [--strict] [--channel-hyd] [--threads N] [--calibration <file>] [--cal-parms <file>] [--set <name> <absval|abschg|pctchg|relchg> <value>]...
+swatplus-rust batch <TxtInOut folder> --sets <sets.csv> --channels <n,n,...> --out <folder> [--threads N] [--fix-swat] [--depth] [--cal-parms <file>] [--shared-spinup]
 swatplus-rust compare <SWAT+ table> <our table> [--abs 0.001] [--rel 1e-4]
 ```
 
-Selain itu `--version` atau `-V` mencetak `swatplus-rust <versi>` (pada rilis ini `swatplus-rust 1.0.1`).
+Selain itu `--version` atau `-V` mencetak `swatplus-rust <versi>` (pada rilis 1.1.0: `swatplus-rust 1.1.0`). Perintah `batch` dan opsi `run` sesudah `--strict` ditambahkan di 1.1.
 
 **Opsi `run`.**
 
@@ -172,6 +173,11 @@ Selain itu `--version` atau `-V` mencetak `swatplus-rust <versi>` (pada rilis in
 | `--format text\|parquet\|both` | `text` | tabel teks SWAT+, Parquet, atau keduanya |
 | `--progress json` | mati | progres dan event sebagai baris JSON di *stdout*; tanpa ini pesan ke *stderr* |
 | `--strict` | mati | tulis tabel lengkap (juga Parquet), lalu keluar dengan kode 3 bila sebagian proyek tidak disimulasikan |
+| `--channel-hyd` | mati | sejak 1.1: tulis juga `channel_hyd_day.txt` (Bab 15.5.13); tabel SWAT+ tidak berubah |
+| `--threads N` | 0 (semua inti) | sejak 1.1: dengan `--fix-swat`, jumlah thread HRU dan routing; tanpa `--fix-swat` tidak berpengaruh |
+| `--calibration <berkas>` | — | sejak 1.1: `calibration.cal` lain sebagai ganti milik proyek, diterapkan di memori |
+| `--cal-parms <berkas>` | — | sejak 1.1: `cal_parms.cal` lain |
+| `--set <nama> <jenis> <nilai>` | — | sejak 1.1, boleh diulang: perubahan `nama` untuk semua objek jenisnya (`CalUpdate::all`), sesudah perubahan proyek; jenis `absval`, `abschg`, `pctchg`, atau `relchg` |
 
 **Kode keluar** (sesuai `docs/runner.md` dan kode):
 
@@ -180,7 +186,7 @@ Selain itu `--version` atau `-V` mencetak `swatplus-rust <versi>` (pada rilis in
 | 0 | selesai (`run`, `inspect`, `--version`); pada `compare`: semua nilai cocok |
 | 1 | galat: proyek tidak terbaca atau gagal dijalankan, folder atau tabel tidak dapat ditulis, berkas `compare` tidak terbuka; pada `compare` juga: ada ketidakcocokan, baris hilang/berlebih, urutan baris salah, atau tidak ada kolom yang dibandingkan |
 | 2 | argumen salah (perintah tak dikenal, opsi tak dikenal, nilai opsi hilang atau tidak valid) |
-| 3 | `run --strict`: sebagian proyek tidak disimulasikan |
+| 3 | `run --strict`: sebagian proyek tidak disimulasikan; `batch`: ada run yang gagal |
 
 **Event JSON** (`--progress json`), satu objek per baris di *stdout*:
 
@@ -193,7 +199,7 @@ Selain itu `--version` atau `-V` mencetak `swatplus-rust <versi>` (pada rilis in
 | `done` | `days`, `seconds` | terakhir, bila berhasil |
 | `error` | `text` | terakhir, bila gagal |
 
-**Struct `RunArgs<'a>`** (privat): `out: &str` (folder keluaran), `fixes: bool`, `text: bool` (pertahankan tabel teks), `parquet: bool` (tulis Parquet), `json: bool` (event JSON), `strict: bool`.
+**Struct `RunArgs<'a>`** (privat): `out: &str` (folder keluaran), `fixes: bool`, `text: bool` (pertahankan tabel teks), `parquet: bool` (tulis Parquet), `json: bool` (event JSON), `strict: bool`; sejak 1.1 juga `channel_hyd: bool`, `threads: usize`, `calibration: Option<&str>`, `cal_parms: Option<&str>`, `sets: Vec<CalUpdate>`.
 
 #### 16.2.1  `main`
 
@@ -202,13 +208,14 @@ Selain itu `--version` atau `-V` mencetak `swatplus-rust <versi>` (pada rilis in
 - **Tujuan:** mengurai argumen dan meneruskan ke `inspect`, `run`, atau `compare_cmd`.
 - **Masukan dan keluaran:** `std::env::args()` tanpa nama program → `ExitCode`.
 - **Cara kerja:**
-  1. Argumen dikumpulkan sebagai `Vec<&str>` lalu dicocokkan dengan pola *slice*: `["inspect", dir]`, `["run", dir, opts @ ..]`, `["compare", expected, actual, opts @ ..]`, `["--version"] | ["-V"]`; selain itu cetak `USAGE` ke *stderr* dan keluar 2. Catatan: `inspect` dengan argumen tambahan juga dianggap salah.
+  1. Argumen dikumpulkan sebagai `Vec<&str>` lalu dicocokkan dengan pola *slice*: `["inspect", dir]`, `["run", dir, opts @ ..]`, `["batch", dir, opts @ ..]` (sejak 1.1, 16.2.7), `["compare", expected, actual, opts @ ..]`, `["--version"] | ["-V"]`; selain itu cetak `USAGE` ke *stderr* dan keluar 2. Catatan: `inspect` dengan argumen tambahan juga dianggap salah.
   2. Untuk `run`, `RunArgs` diawali dengan `out = dir`, `text = true`, lainnya `false`. Iterator opsi diperiksa berpasangan (opsi saat ini, intipan nilai berikutnya lewat `it.clone().next()`):
      - `--out v`: `out = v`, lompati `v`;
      - `--fix-swat`: `fixes = true`;
      - `--format v` dengan `v` ∈ {text, parquet, both}: `text = (v != "parquet")`, `parquet = (v != "text")`, lompati `v`;
      - `--progress json`: `json = true`, lompati nilai;
      - `--strict`: `strict = true`;
+     - sejak 1.1: `--channel-hyd`; `--threads v` (bilangan bulat); `--calibration v` dan `--cal-parms v` (tidak diawali `--`); `--set nama jenis nilai` (tiga nilai berikutnya; jenis harus salah satu dari empat dan nilai harus angka, selain itu pesan khusus dan kode 2), menjadi `CalUpdate::all`;
      - selainnya (termasuk `--out` tanpa nilai, format tak dikenal, `--progress` selain `json`): cetak `USAGE`, keluar 2.
   3. Opsi boleh diulang; nilai terakhir yang menang (mis. dua `--format`).
 - **Catatan port:** sejak 1.0.1 `--out` hanya menerima nilai yang tidak diawali `--`, sehingga `--out --strict` tidak lagi memperlakukan `--strict` sebagai nama folder, melainkan ditolak sebagai argumen salah (kode 2).
@@ -249,7 +256,7 @@ Selain itu `--version` atau `-V` mencetak `swatplus-rust <versi>` (pada rilis in
   4. Hitung `days = project.time.days()`. Dalam mode JSON, kirim event `start` dengan tanggal hari pertama dan terakhir; tanggal dibentuk dari tahun dan hari Julian dengan `swat_engine::clock::xmon` atas tabel panjang bulan kabisat (`NDAYS_LEAP`) atau bukan (`NDAYS_NOLEAP`) sesuai `is_leap(tahun)`.
   5. Buat `TextTables::new(judul, DirStore::new(out), &project.print)` (tabel ditulis langsung ke berkas sambil berjalan), set `fixes`, dan dalam mode JSON pasang `progress::Reporter` dengan `emit` sebagai keluaran.
   6. Bila `--fix-swat`, kirim catatan bahwa bug SWAT+ dikoreksi dan hasil akan berbeda.
-  7. `run_with(&project, &mut tables, RunOptions { fixes })`:
+  7. `run_with(&project, &mut tables, RunOptions { fixes, threads })`, atau sejak 1.1 `run_with_calibration(…, &cal)` bila `--calibration`, `--cal-parms` atau `--set` diberikan (kalibrasi dari `calibration`, 16.2.6; galatnya → `fail`). Sebelumnya `tables.channel_hyd` diisi dari `--channel-hyd`:
      - galat → `fail`;
      - berhasil: kumpulkan alasan yang tidak `None` dari `hru_skipped`, `channel_skipped`, `routing_skipped`. Bila `--strict` dan ada alasan, simpan pesan "not simulated: …" (alasan digabung dengan ` ;  `); sejak 1.0.1 semua tabel tetap ditulis lengkap (juga Parquet), baru kemudian program mengirim `error` itu dan keluar **3**. Setiap alasan juga menjadi catatan: neraca air HRU tidak disimulasikan (`hru_wb_day.txt` hanya berisi presipitasi), saluran tidak dirutekan (meneruskan aliran masuknya), atau unit perutean dan akuifer tidak disimulasikan.
   8. `tables.finish()` menuntaskan tabel (mis. tabel rata-rata tahunan); gagal → `fail`. Ambil `store.names()`, lalu lepaskan `store` agar berkas tertutup sebelum dibaca ulang.
@@ -261,7 +268,7 @@ Selain itu `--version` atau `-V` mencetak `swatplus-rust <versi>` (pada rilis in
   - Dengan `--format parquet`, tabel teks tetap ditulis lebih dulu (pengonversi membaca teks), lalu dihapus. Akibatnya nilai Parquet adalah angka yang tercetak di tabel teks (presisi SWAT+), bukan nilai internal engine (lihat `docs/runner.md`).
   - Pada jalur `--strict` (kode 3), sejak 1.0.1 `tables.finish()` tetap dipanggil, sehingga tabel akhir periode dituntaskan dan Parquet dibuat sebelum event `error` dikirim; sebelumnya program keluar sebelum tabel dituntaskan.
   - Folder bawaan `--out` sama dengan folder masukan, seperti SWAT+; alur kerja validasi memakai `--out` terpisah agar tabel Fortran dan Rust tidak saling menimpa.
-  - Engine berjalan pada satu *thread*. `docs/runner.md` menjelaskan bahwa HRU tidak dapat dijalankan paralel tanpa mengubah hasil, karena beberapa variabel SWAT+ membawa nilai satu HRU ke HRU berikutnya pada hari yang sama (bilangan acak tabel keputusan, permintaan hara tanaman, *enrichment ratio*, fraksi fosfor sedimen, status sistem septik). Paralelisme hanya cocok untuk mode `--fix-swat` kelak.
+  - Run setia berjalan pada satu *thread*: HRU tidak dapat dijalankan paralel tanpa mengubah hasil, karena beberapa variabel SWAT+ membawa nilai satu HRU ke HRU berikutnya pada hari yang sama (bilangan acak tabel keputusan, permintaan hara tanaman, *enrichment ratio*, fraksi fosfor sedimen, status sistem septik). Sejak 1.1, `--fix-swat --threads N` menjalankan HRU dan routing di N thread dengan salinan per HRU dari keadaan itu (Bab 5.3.13 dan 12.4.6); tabelnya sama untuk berapa pun N.
 
 #### 16.2.5  `compare_cmd`
 
@@ -274,6 +281,31 @@ Selain itu `--version` atau `-V` mencetak `swatplus-rust <versi>` (pada rilis in
   2. Buka kedua berkas sebagai `BufReader`; gagal → `error: <path>: …`, kode 1.
   3. Label laporan = nama berkas `actual` tanpa folder.
   4. `compare(e, a, abs, rel, label)`: `Ok(true)` → 0; `Ok(false)` → 1; `Err` → pesan dan 1.
+
+#### 16.2.6  `calibration`
+
+- **Lokasi:** `crates/swatplus-rust/src/main.rs`, `fn calibration(project: &Project, o: &RunArgs) -> Result<Calibration, String>`. Sejak 1.1.
+- **Padanan SWAT+:** tidak ada; di SWAT+ kalibrasi lain berarti berkas lain.
+- **Tujuan:** kalibrasi yang diminta `--calibration`, `--cal-parms`, dan `--set`.
+- **Cara kerja:** mulai dari `Calibration::of(project)`; bila `--cal-parms`, `parms` dibaca dari berkas itu (`swat_io::cal::read_cal_parms`); bila `--calibration`, `updates` dibaca dari berkas itu (`read_calibration`); perubahan `--set` ditambahkan sesudahnya. Tanpa `cal_parms.cal` sama sekali: galat yang meminta `--cal-parms`.
+- **Catatan:** `run` memakai `run_with_calibration` hanya bila salah satu opsi ini diberikan, dan mencatat "calibration: *n* change(s) applied in memory; the project's files are unchanged". Tanpa opsi itu jalurnya tetap `run_with`.
+
+#### 16.2.7  Perintah `batch` (`crates/swatplus-rust/src/batch.rs`)
+
+Sejak 1.1 (M2, Lampiran B.3). `swatplus-rust batch <proyek> --sets <sets.csv> --channels <n,n,...> --out <folder> [--threads N] [--fix-swat] [--depth] [--cal-parms <berkas>] [--shared-spinup]` menjalankan satu proyek sekali per set parameter, berdampingan di inti komputer, dan hanya menyimpan deret yang dibutuhkan kalibrasi.
+
+**Struct `BatchArgs<'a>`:** `sets`, `channels` (nomor saluran di `channel_sd`), `out`, `threads` (run sekaligus; 0 = sebanyak inti), `fixes`, `depth` (kedalaman juga), `cal_parms`, `shared_spinup`.
+
+- **`read_sets(text: &str) -> Result<(Vec<String>, Vec<Vec<CalUpdate>>), String>`:** membaca CSV set parameter. Baris kepala berisi kolom `parameter:jenis` (`cn2:pctchg`, `esco:absval`; jenis salah satu dari empat), boleh diawali kolom `run` yang menamai setiap baris; baris kosong dan baris `#` dilewati. Setiap baris menjadi satu set `CalUpdate::all(nama, jenis, nilai)`; tanpa kolom `run` nama run `0001`, `0002`, …. Galat untuk kolom tanpa jenis, jenis tak dikenal, nilai bukan angka, atau jumlah nilai yang tidak sama dengan kolom. Uji `parameter_sets_are_read_from_csv`.
+- **`series_csv(s: &Series) -> String`:** deret satu run sebagai CSV: `date` (`yyyy-mm-dd`, dari `xmon`), `precip_mm`, `et_mm`, `flo_<n>` per saluran, dan bila ada kedalaman `dep_<n>`, `dep_mann_<n>`; nilai yang tidak ada ditulis NaN.
+- **`batch(dir: &str, a: &BatchArgs) -> ExitCode`:**
+  1. Wajib `--sets`, `--out`, dan paling sedikit satu saluran; muat proyek; baca set.
+  2. Kalibrasi dasar `Calibration::of(project)`, dengan `parms` dari `--cal-parms` bila diberikan; tanpa `parms`: galat.
+  3. Nomor saluran harus 1 sampai jumlah saluran SWAT-DEG.
+  4. Tanpa `--shared-spinup`: setiap set menjadi `Calibration { parms, updates: kalibrasi proyek ++ set }`, dijalankan `run_batch` (Bab 5.9.4) dengan `RunOptions { fixes, threads: 1 }`.
+  5. Dengan `--shared-spinup`: perlu `nyskip ≥ 1`; tahun terakhir pemanasan `yrc_start + nyskip − 1`; `run_batch_shared` (Bab 5.9.5).
+  6. Tulis `run_<nama>.csv` untuk setiap run yang berhasil dan ringkasan `runs.csv` (`run`, `status`, `mean_flo_<n>`; untuk run gagal alasannya). Kode keluar 3 bila ada run yang gagal, selain itu 0.
+- **Catatan:** progres ditulis ke *stderr* (`k/n runs done`). Pada Batanghari, empat run: 69,7 detik satu per satu, 35,7 detik dua sekaligus di dua inti.
 
 ### 16.3  Pembanding tabel dan toleransi K12 (`crates/swatplus-rust/src/compare.rs`)
 
@@ -400,14 +432,15 @@ Konsekuensi praktis:
 
 ### 16.5  Validasi dan rilis di GitHub Actions (`.github/workflows/*.yml`)
 
-Empat alur kerja menjaga kedua pintu di atas. Ringkasannya:
+Lima alur kerja menjaga kedua pintu di atas. Ringkasannya:
 
 | Alur kerja | Pemicu | Yang diperiksa atau dihasilkan |
 | --- | --- | --- |
 | `ci.yml` (CI) | *push* ke `main`, *pull request*, manual | format, lint, uji, build WASM, kesetaraan WASM vs *native*, Parquet, MSRV |
 | `validate.yml` (Validate against SWAT+) | *push* ke `main`, *pull request*, manual | menjalankan SWAT+ Fortran dan port pada puluhan skenario lalu `compare` setiap tabel |
 | `fortran.yml` (SWAT+ Fortran build) | manual, atau perubahan berkas alur itu sendiri | membangun SWAT+ Fortran acuan dan menyimpannya di cabang `fortran-bin` |
-| `release.yml` (Release) | *tag* `v*` | biner untuk empat target dan modul WASM, dipublikasikan sebagai *GitHub release* |
+| `release.yml` (Release) | *tag* `v*` | biner untuk enam target (empat sampai 1.0.1) dan modul WASM, dipublikasikan sebagai *GitHub release* |
+| `preview-build.yml` (Preview build, sejak 1.1) | *push* ke cabang `preview/**`, manual | biner Windows x86-64, Windows ARM64, dan Linux x86-64 untuk dicoba, sebagai artefak run, tanpa rilis; dikemas bersama Osu\_1hru, Ames\_sub1, dan `scripts/bench-threads.ps1` |
 
 #### 16.5.1  `ci.yml`
 
@@ -417,18 +450,20 @@ Semua *job* berjalan di `ubuntu-latest` dengan `RUSTFLAGS=-D warnings` (peringat
 2. **wasm** (WebAssembly build): bangun `swat_wasm.wasm` untuk `wasm32-unknown-unknown`; bangun biner *native*; kemas `Osu_1hru` menjadi tar; jalankan `node scripts/wasm-run.mjs … 3`; pastikan `run.json` berisi `"ok":true`; jalankan `swatplus-rust run` *native* ke folder lain. Setiap tabel `.txt` dibandingkan bita demi bita dengan `cmp`; tabel yang berbeda menghasilkan peringatan (bukan galat) dan harus lolos `swatplus-rust compare` dengan toleransi bawaan. *Job* gagal hanya bila ada tabel di luar toleransi.
 3. **parquet** (Parquet tables read by DuckDB and Arrow): salin `Osu_1hru`, ubah `print.prt` dengan `scripts/print-daily.sh` agar semua tabel utama dicetak harian, jalankan `run --format both --progress json`, lalu `scripts/check-parquet.py` membandingkan setiap tabel Parquet (dibaca DuckDB dan pyarrow) dengan tabel teksnya.
 4. **msrv**: `cargo build --workspace` dengan Rust 1.90 (versi minimum yang didukung).
+5. **calibration** (Calibration tools (Python), sejak 1.1): bangun `swatplus-rust` mode *release*, lalu `python -m pytest -q tests` di `calibration/` (paket `swatcal`, hanya numpy), termasuk uji yang menjalankan program lewat `batch`.
 
 #### 16.5.2  `validate.yml`
 
 Inilah pembuktian utama klaim bit-for-bit (dalam K12) terhadap SWAT+ Fortran.
 
-1. Ambil biner `swatplus-fortran` dari cabang `fortran-bin` (lihat 16.5.3) dan bangun `swatplus-rust` mode *release*.
+1. Ambil biner `swatplus-fortran` dari cabang `fortran-bin` (lihat 16.5.3) dan bangun `swatplus-rust` mode *release*. Sejak 1.0.3 skenario Batanghari dan Pessel (data milik Dinas SDA-BK Provinsi Sumatera Barat) tidak ada di repositori publik; alur kerja mengambilnya dari repositori privat dengan *secret* `TESTDATA_TOKEN`, dan tanpa *secret* itu melewati skenario tersebut dengan peringatan.
 2. Buat varian skenario: `scripts/make-variants.sh` (varian fase 2 dari `Ames_sub1`), `scripts/make-phase3-variants.py` (Batanghari dan `Bh_land`, dipotong sampai 2019), `scripts/make-pessel-variants.py` (dataran pantai Pessel 2015–2017 dan varian `Ps_*`, termasuk padi sawah `Ps_paddy`), `scripts/make-reservoir-variants.py` (Batanghari dengan waduk dan sumber titik: `Bh_res`, `Bh_rel`, Bh\_nosed), dan Pessel utuh untuk 2015 saja dengan pencetakan sejak hari pertama.
 3. Untuk setiap skenario dalam daftar (`Osu_1hru`, `Ames_sub1`, varian `Ames_*`, `Bh_land`, `Batanghari`, `Bh_res`, `Bh_rel`, `Bh_nosed`, varian `Ps_*`, dan `Pessel`): salin ke `runs/<skenario>/fortran`, ubah `print.prt` dengan `print-daily.sh` agar tabel yang dibandingkan dicetak harian, jalankan SWAT+ Fortran dan pastikan `success.fin` ada, lalu jalankan port pada folder yang sama dengan `--out runs/<skenario>/rust` (port tidak membaca keluaran SWAT+ sebagai masukan).
 4. Untuk setiap kombinasi tabel (`hru_wb`, `hru_pw`, `hru_nb`, `hru_ls`, `ru`, `aquifer`, `channel_sd`, `basin_*`, `lsunit_*`, `basin_sd_cha`, `reservoir`, `basin_res`, `recall`, `basin_psc`) dan periode (`day`, `mon`, `yr`, `aa`, `subday`) yang ditulis port: `swatplus-rust compare` dengan toleransi bawaan; hasil menjadi anotasi `::notice` atau `::error`. Tabel yang tidak ditulis port (misalnya tabel hara untuk HRU yang tidak disimulasikan penuh) dilewati.
 5. `scripts/compare-yields.py` membandingkan hasil panen tanaman.
 6. Tabel harian dan subharian dihapus setelah dibandingkan (tabel harian Batanghari bisa bergigabita).
 7. *Job* gagal bila ada satu saja tabel atau hasil panen yang tidak cocok; batas waktu 60 menit.
+8. Sejak 1.0.3: hasil perbandingan setiap skenario (jumlah dan selisih, tanpa nilai) disimpan sebagai artefak dan di cabang `validation-logs`, dengan ringkasan per skenario dari `scripts/validation-summary.py`; run 28 Oktober 2026 tersimpan di `docs/validation-results/`.
 
 #### 16.5.3  `fortran.yml`
 
@@ -438,7 +473,7 @@ Membangun SWAT+ Fortran pada commit acuan `6f515368525e7d84089ae0f9d33f4c9115de5
 
 Dipicu *tag* `v*`.
 
-1. **build** (matriks): `x86_64-unknown-linux-gnu` (ubuntu-latest), `aarch64-apple-darwin` (macos-latest), `x86_64-apple-darwin` (macos-13), `x86_64-pc-windows-msvc` (windows-latest). Masing-masing `cargo build --release --locked -p swatplus-rust --target …`, dikemas bersama `LICENSE`, `NOTICE`, `README.md`, dan `docs/runner.md` sebagai `.tar.gz` (atau `.zip` untuk Windows).
+1. **build** (matriks, `fail-fast: false` sejak 1.0.2 sehingga satu platform yang gagal tidak menghentikan yang lain): `x86_64-unknown-linux-gnu` dan `aarch64-unknown-linux-gnu` (ubuntu-latest, ARM64 dengan *cross linker* `aarch64-linux-gnu-gcc`), `aarch64-apple-darwin` dan `x86_64-apple-darwin` (keduanya macos-latest), `x86_64-pc-windows-msvc` dan `aarch64-pc-windows-msvc` (windows-latest). Target ARM64 Linux dan Windows ditambahkan di 1.0.2. Masing-masing `cargo build --release --locked -p swatplus-rust --target …`, dikemas bersama `LICENSE`, `NOTICE`, `README.md`, dan `docs/runner.md` sebagai `.tar.gz` (atau `.zip` untuk Windows).
 2. **wasm**: `cargo build --release --locked -p swat-wasm --target wasm32-unknown-unknown`; dikemas bersama `scripts/wasm-run.mjs`, `LICENSE`, `NOTICE`, dan `docs/runner.md`.
 3. **publish**: unduh semua artefak dan `gh release create <tag>` dengan catatan rilis dari `CHANGELOG.md`.
 
@@ -461,6 +496,8 @@ Catatan: rilis tidak menjalankan ulang validasi terhadap SWAT+; validasi bergant
 | `emit` | `swatplus-rust/src/main.rs` | 16.2.3 |
 | `run` | `swatplus-rust/src/main.rs` | 16.2.4 |
 | `compare_cmd` | `swatplus-rust/src/main.rs` | 16.2.5 |
+| `calibration` | `swatplus-rust/src/main.rs` | 16.2.6 |
+| `read_sets`, `series_csv`, `batch`, `tests::parameter_sets_are_read_from_csv` | `swatplus-rust/src/batch.rs` | 16.2.7 |
 | `Rows::new` | `swatplus-rust/src/compare.rs` | 16.3.1 |
 | `Rows::next_row` | `swatplus-rust/src/compare.rs` | 16.3.2 |
 | `compare` | `swatplus-rust/src/compare.rs` | 16.3.3 |

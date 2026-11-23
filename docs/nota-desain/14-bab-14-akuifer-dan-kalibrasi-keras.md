@@ -102,7 +102,7 @@ Konstruktor `Network::new` (dibahas utuh di Bab 12) memuat dua blok khusus akuif
 
 #### 14.2.1  Blok `aqu_initial` (bagian dari `Network::new`)
 
-- **Lokasi:** `crates/swat-engine/src/route.rs`, di dalam `pub fn new(project, stations, tconc, ovn_km, fixes) -> Result<Option<Network>, String>`, ditandai komentar `// aqu_initial`.
+- **Lokasi:** `crates/swat-engine/src/route.rs`, di dalam `pub fn new(project, cal, stations, tconc, ovn_km, fixes) -> Result<Option<Network>, String>`, ditandai komentar `// aqu_initial`.
 - **Padanan SWAT+:** `aqu_initial.f90` (dipanggil dari `proc_aqu.f90` setelah `aqu_read`). `aqu_read_init` dan `aqu_read_init_cs` tidak diport: keduanya hanya membaca `initial.aqu` untuk konstituen (pestisida, garam, cs), dan loop yang seharusnya memakai datanya di `aqu_read_init` kosong.
 - **Tujuan:** Membuat satu `Aqu` per objek akuifer, menyalin baris basis datanya, menghitung konstanta resesi dan peluruhan nitrat, dan mengisi status awal (`aqu_d`).
 - **Masukan dan keluaran:** objek akuifer dari `project.objects_of(ObjectKind::Aquifer)` (urutan larik objek, dimulai di `first[&Aquifer]`), `props` tiap objek (nomor baris `aquifer.aqu`), `project.aquifer_db`, luas objek (ha); keluaran vektor `aqus` dan peta `aqu_of` (indeks objek ke nomor akuifer).
@@ -133,14 +133,14 @@ dengan q0 = `flo` (mm), A = luas (ha); 10·mm·ha = m3, dan m3·ppm/1000 = kg.
   - Nitrat dan P awal dihitung dari *aliran* awal (`flo`, mm), bukan dari simpanan; ini perilaku SWAT+ apa adanya.
   - Perhitungan memakai `f32` dengan urutan operasi Fortran: `(10*flo*area) * no3 / 1000`.
 
-#### 14.2.2  Blok kalibrasi akuifer (bagian dari `Network::new`)
+#### 14.2.2  `calibrate_aquifers`
 
-- **Lokasi:** `crates/swat-engine/src/route.rs`, di dalam `Network::new`, tepat setelah blok `aqu_initial` (komentar `// cal_conditions: the aquifers' calibration`).
+- **Lokasi:** `crates/swat-engine/src/route.rs`, `fn calibrate_aquifers(aqus: &mut [Aqu], obs: &[Ob], cal: &Calibration) -> Result<(), String>`. Sampai 1.0.3 blok di dalam `Network::new`; sejak 1.1 fungsi tersendiri yang dipanggil `Network::new` tepat setelah blok `aqu_initial`, dan `Network::calibrate` saat kalibrasi di tengah run (`Simulation::calibrate`, Bab 5.3.11).
 - **Padanan SWAT+:** cabang `!!AQU` di `cal_parm_select.f90`, dipanggil dari `cal_conditions.f90` untuk parameter yang `ob_typ`-nya `aqu`.
 - **Tujuan:** Menerapkan baris `calibration.cal` yang parameternya milik akuifer, setelah akuifer diinisialisasi, dan menghitung ulang besaran turunan yang ikut dihitung ulang oleh SWAT+.
-- **Masukan dan keluaran:** `project.cal_upd` (perubahan), `project.cal_parms` (jenis objek dan batas), `aqus`; keluaran `aqus[*].db`, `alpha_e`, `nloss`, `d.stor`, `d.no3_st` yang diubah; `Err` untuk hal yang tidak didukung.
+- **Masukan dan keluaran:** `cal.updates` (perubahan), `cal.parms` (jenis objek dan batas), `aqus`, `obs` (luas objek akuifer); keluaran `aqus[*].db`, `alpha_e`, `nloss`, `d.stor`, `d.no3_st` yang diubah; `Err` untuk hal yang tidak didukung.
 - **Cara kerja:** untuk setiap perubahan `u` berurutan:
-  1. `p = cal_parm(project, u)`; lewati bila `p.ob_typ != "aqu"`.
+  1. `p = cal_parm(cal, u)`; lewati bila `p.ob_typ != "aqu"`.
   2. Bila `u` memiliki kondisi, kembalikan `Err("calibration of … with conditions (aquifer)")`. (Di SWAT+ kondisi akan diuji pada HRU yang bernomor sama dengan akuifer; port memilih menolak.)
   3. Untuk setiap elemen `e` dari `cal_elems(u, aqus.len())` (daftar objek, atau semua akuifer): ambil `aqus[e-1]` (galat bila di luar rentang), definisikan `chg(v) = chg_par(u, &p, v)`.
   4. Terapkan menurut nama parameter:
@@ -168,12 +168,12 @@ dengan q0 = `flo` (mm), A = luas (ha); 10·mm·ha = m3, dan m3·ppm/1000 = kg.
 
 ### 14.3  Simulasi harian akuifer
 
-#### 14.3.1  `Network::aqu_1d_control`
+#### 14.3.1  `aqu_1d_control`
 
-- **Lokasi:** `crates/swat-engine/src/route.rs`, `fn aqu_1d_control(&mut self, iaq: usize, pet: f32)`
+- **Lokasi:** `crates/swat-engine/src/route.rs`, `fn aqu_1d_control(o: &mut Ob, a: &mut Aqu, pet: f32)` (sejak 1.1 fungsi bebas atas objek akuifer dan keadaannya, dipanggil `run_part`, Bab 12.4.7; sebelumnya method `Network::aqu_1d_control(&mut self, iaq, pet)`)
 - **Padanan SWAT+:** `aqu_1d_control.f90`.
 - **Tujuan:** Satu hari neraca air dan nitrat sebuah akuifer dangkal: resapan masuk, aliran balik dengan resesi eksponensial, rembesan dalam, revap, transport nitrat, P mineral, dan pembagian aliran balik menurut tujuan.
-- **Masukan dan keluaran:** `iaq` (nomor akuifer 0-based); `pet` = PET harian stasiun cuaca objek (mm), diambil `Network::day` dari `nd.weat[wst].pet`; masukan air dari `obs[ob].hin` (jumlah hidrograf yang masuk hari ini: `flo` m3, `no3` kg); luas A (ha). Keluaran: `aqus[iaq].d` (status `AquDay`), `obs[ob].hd[0]` (aliran balik: `flo` m3, `no3` kg, `solp` kg) dan `obs[ob].hd[1]` (rembesan: `flo` m3, `no3` kg). Semua field hidrograf lain bernilai 0 (hidrograf dibuat dari `Hyd::default()`, padanan `ob%hd = hz`).
+- **Masukan dan keluaran:** `iaq` (nomor akuifer 0-based); `pet` = PET harian stasiun cuaca objek (mm), diambil `run_part` (dulu `Network::day`) dari `nd.weat[wst].pet`; masukan air dari `obs[ob].hin` (jumlah hidrograf yang masuk hari ini: `flo` m3, `no3` kg); luas A (ha). Keluaran: `aqus[iaq].d` (status `AquDay`), `obs[ob].hd[0]` (aliran balik: `flo` m3, `no3` kg, `solp` kg) dan `obs[ob].hd[1]` (rembesan: `flo` m3, `no3` kg). Semua field hidrograf lain bernilai 0 (hidrograf dibuat dari `Hyd::default()`, padanan `ob%hd = hz`).
 - **Cara kerja:**
   1. **Resapan** (mm) dari volume masuk:
 
@@ -381,10 +381,10 @@ x' = \begin{cases} v & \text{absval} \\ x + v & \text{abschg} \\ (1 + v/100)\,x 
 
 #### 14.6.2  `cal_parm`
 
-- **Lokasi:** `crates/swat-engine/src/hru/mod.rs`, `pub(crate) fn cal_parm(project: &Project, u: &CalUpdate) -> CalParm`
+- **Lokasi:** `crates/swat-engine/src/hru/mod.rs`, `pub(crate) fn cal_parm(cal: &Calibration, u: &CalUpdate) -> CalParm` (sejak 1.1 mencari di `cal.parms`, bukan `project.cal_parms`)
 - **Padanan SWAT+:** pencarian `num_db` di `cal_parmchg_read.f90` (loop `ical` yang mencari `cal_upd(i)%name == cal_parms(ical)%name`).
 - **Tujuan:** Mencari baris `cal_parms.cal` milik sebuah perubahan.
-- **Masukan dan keluaran:** proyek, perubahan; salinan `CalParm` yang cocok, atau `CalParm::default()` bila tidak ada.
+- **Masukan dan keluaran:** kalibrasi, perubahan; salinan `CalParm` yang cocok, atau `CalParm::default()` bila tidak ada.
 - **Cara kerja:** mencari baris pertama yang namanya sama menurut `fortran_eq` (perbandingan string gaya Fortran, mengabaikan spasi di akhir).
 
 #### 14.6.3  `cal_elems`
@@ -413,13 +413,13 @@ x' = \begin{cases} v & \text{absval} \\ x + v & \text{abschg} \\ (1 + v/100)\,x 
 
 #### 14.6.5  `cal_conditions`
 
-- **Lokasi:** `crates/swat-engine/src/hru/mod.rs`, `fn cal_conditions(project: &Project, hrus: &mut [Hru]) -> Result<(), String>`
+- **Lokasi:** `crates/swat-engine/src/hru/mod.rs`, `pub(crate) fn cal_conditions(project: &Project, cal: &Calibration, hrus: &mut [Hru]) -> Result<(), String>` (parameter `cal` dan visibilitas `pub(crate)` sejak 1.1)
 - **Padanan SWAT+:** `cal_conditions.f90` (dipanggil dari `proc_cal.f90`), cabang HRU, `sol` dan `bsn`.
 - **Tujuan:** Menerapkan setiap baris `calibration.cal` pada HRU/tanah/basin yang memenuhi kondisinya.
-- **Masukan dan keluaran:** proyek (`cal_upd`, `cal_parms`, parameter basin), HRU yang sudah disiapkan; HRU yang diubah, atau `Err` dengan pesan yang menyebut apa yang tidak diport.
+- **Masukan dan keluaran:** proyek (parameter basin), kalibrasi `cal` (`updates` dan `parms`: milik proyek, atau dari memori), HRU yang sudah disiapkan; HRU yang diubah, atau `Err` dengan pesan yang menyebut apa yang tidak diport.
 - **Cara kerja:** untuk setiap perubahan `u` berurutan:
-  1. `p = cal_parm(project, u)`. Bila `p.ob_typ` bukan `hru`, `sol`, `bsn` atau `aqu`: `Err("calibration of … (<ob_typ> parameter)")`. Bila `chg_typ` bukan salah satu dari empat jenis: `Err`.
-  2. `aqu`: dilewati (ditangani di `Network::new`).
+  1. `p = cal_parm(cal, u)`. Bila `p.ob_typ` bukan `hru`, `sol`, `bsn` atau `aqu`: `Err("calibration of … (<ob_typ> parameter)")`. Bila `chg_typ` bukan salah satu dari empat jenis: `Err`.
+  2. `aqu`: dilewati (ditangani `calibrate_aquifers`).
   3. `bsn`: bila `cal_cond_met(u, hrus, 1)` (kondisi diuji pada HRU 1), terapkan sekali. Satu-satunya parameter basin yang didukung adalah `surlag`: `surlag = chg(surlag)`, dengan `surlag` lokal yang diawali dari `params["surlag"]` (atau 4,0) dan memuat hasil perubahan sebelumnya, lalu untuk setiap HRU koefisien lag aliran permukaan dihitung ulang:
 
 ```latex
@@ -435,6 +435,7 @@ dengan t\_conc waktu konsentrasi HRU (jam). Parameter basin lain: `Err`.
   - Jenis parameter `plt` (`phu_mat`, `lai_pot`, `harv_idx`, …), `cli` (`precip`, `temp` per hari), `rdt` (tabel keputusan waduk), `hlt`, `cha`, `res`, `swq`, `gwf` dan lain-lain tidak diport dan ditolak.
   - Untuk `bsn`, port menerapkan perubahan tepat sekali dan mengabaikan daftar objek; di Fortran, `num_elem` bawaan untuk `bsn` adalah 1, sehingga sama untuk berkas biasa. Sejak 1.0.1 `cal_conditions` menyimpan `surlag` lokal yang diawali dari nilai basin, dan setiap perubahan dimulai dari hasil perubahan sebelumnya, seperti `bsn_prm%surlag` di Fortran: dua `pctchg` 50 lalu −20 membuat 4 hari menjadi 4,8. Divalidasi oleh **Ps\_edge** (Ps\_coast dengan `surlag` dikalibrasi dua kali dan setiap lahan basah bernomor ganjil tanpa baris `sediment.res`).
   - Pemeriksaan jenis objek dan jenis perubahan dilakukan untuk semua baris sebelum penerapan baris itu, sehingga proyek dengan kalibrasi yang tidak didukung gagal secara eksplisit, tidak diam-diam diabaikan.
+  - Sejak 1.1 fungsi ini juga dipanggil `Simulation::calibrate` di tengah run (Bab 5.3.11). Karena `surlag` diawali dari nilai basin proyek, bukan nilai saat itu, perubahan `surlag` di tengah run ditolak di sana, bersama perubahan yang menyiapkan keadaan ulang (`z`, `bd`, `awc` lewat `soil_awc_init`).
 
 #### 14.6.6  `cal_hru`
 
@@ -509,18 +510,20 @@ usle_{mult} = e^{-0.053\,rock_{1}}\; K_{1}\; P\; LS\; 11.8
 
 ### 14.7  Ringkasan, cakupan dan verifikasi
 
-**Daftar fungsi bab ini** (26 fungsi/metode, ditambah dua blok di dalam `Network::new`):
+**Daftar fungsi bab ini** (26 fungsi/metode, ditambah satu blok di dalam `Network::new`):
 
 | Kelompok | Fungsi | Subbab |
 | --- | --- | --- |
 | Tipe akuifer | `AquDay::columns`, `AquDay::columns_as`, `AquiferDb::default`, `read_aquifers` | 14.1 |
-| Inisialisasi | blok `aqu_initial`, blok kalibrasi akuifer (di `Network::new`) | 14.2 |
-| Harian | `Network::aqu_1d_control`, `Network::aquifers` | 14.3 |
+| Inisialisasi | blok `aqu_initial` (di `Network::new`), `calibrate_aquifers` | 14.2 |
+| Harian | `aqu_1d_control`, `Network::aquifers` | 14.3 |
 | Keluaran | `aqu_add`, `aqu_div`, `AquAcc::day`, `aqu_scaled`, `aqu_sum`, `OutputSink::aqu_day`, `OutputSink::aqu_period`, `OutputSink::basin_aqu` | 14.4 |
 | Data/pembacaan kalibrasi | `CalParm::default`, `define_unit_elements`, `read_cal_parms`, `read_calibration` | 14.5 |
 | Penerapan kalibrasi | `chg_par`, `cal_parm`, `cal_elems`, `cal_cond_met`, `cal_conditions`, `cal_hru`, `cal_soil`, `soil_awc_init` | 14.6 |
 
 **Alur data akuifer.** HRU mengirim hidrograf resapan (`rhg`, jenis 2) atau total ke akuifer menurut berkas sambungan (`*.con`); unit routing meneruskan resapan elemennya tanpa rasio pengantaran (Bab 12). Loop perintah menjumlahkan masukan menjadi `hin`, lalu `aqu_1d_control` menghasilkan `hd[0]` (aliran balik, biasanya ke kanal SWAT-DEG `sdc` dengan jenis `tot`) dan `hd[1]` (rembesan dalam, jenis `rhg`, yang hanya berpindah bila sambungan menyebut objek tujuan). Air yang meninggalkan sistem lewat revap tidak dikembalikan ke HRU; revap hanya mengurangi simpanan.
+
+**Kalibrasi di memori (sejak 1.1).** Kalibrasi yang sama dapat datang dari memori (`Calibration`, Bab 3.9) alih-alih dari `calibration.cal`: `Simulation::with_calibration` dan `run_with_calibration` (Bab 5) meneruskannya ke `init_hrus` → `cal_conditions` dan `Network::new` → `calibrate_aquifers`, sehingga run identik dengan run salinan proyek yang berkasnya ditulis. Perintah `run --set`, `--calibration`, `--cal-parms` dan `batch` memakainya (Bab 16). Studi spin-up (Lampiran B.7.5) memeriksa neraca akuifer Batanghari dan Pessel: akuifer dangkal seimbang, akuifer dalam (`aqu_deep…`) hanya terisi dan alirannya tidak dikirim ke mana pun (`out_tot` 0), dan semua parameter akuifer masih bawaan SWAT+ Editor.
 
 **Batas port.** Proyek dengan akuifer 2-D, gwflow, alokasi air dari akuifer, garam/konstituen, atau kalibrasi jenis selain `hru`/`sol`/`bsn`/`aqu` ditolak dengan pesan eksplisit, bukan dijalankan sebagian.
 

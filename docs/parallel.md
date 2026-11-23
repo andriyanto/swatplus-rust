@@ -16,8 +16,9 @@ default as many as the computer has; `--threads 1` runs them on the main thread)
    from (HRU to HRU routing, `docs/routing.md`), so it reads their water of the same day, as in
    SWAT+'s command order. Without HRU-to-HRU routing all HRUs are one wave (Batanghari: 1,858 HRUs
    in one).
-2. **A wave's HRUs** are split into as many contiguous parts as threads (`std::thread::scope`, no
-   dependency), each HRU's day computed with its own state.
+2. **A wave's HRUs** run on the thread pool (rayon, started once per run; a wave of fewer than 8
+   HRUs runs on the main thread), each HRU's day computed with its own state, its period sums
+   made beside it on the same thread (`run.rs`, `hru_wave`).
 3. **What follows each HRU's day** (crop yields summed for the basin, its water handed to the
    routing) is done afterwards on the main thread, in the wave's order.
 4. **The routing by sub-basin** (M5, below) follows on the same threads; the output stays on the
@@ -46,7 +47,7 @@ per run into parts (`route::make_plan`):
    object (an aquifer fed from two sub-basins, say) are joined. A group then needs nothing from
    outside it.
 3. **Parts.** The groups go to the threads, largest first, each to the least loaded; each part
-   keeps the command order. They are routed at once (`std::thread::scope`), then the objects in no
+   keeps the command order. They are routed at once (on the same thread pool), then the objects in no
    group (the main channels near the outlets) on the main thread, in the command order.
 
 | Project | objects past the HRUs | parts on 4 threads | on 12 threads | left for the main thread (12) |

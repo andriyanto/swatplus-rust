@@ -42,6 +42,7 @@ Glosarium ini menghimpun istilah teknis dari Bab 3–17: nama file dan variabel 
 | basin\_crop\_yld | Luas panen (ha), hasil (t), dan t/ha setiap tanaman di tingkat cekungan per tahun dan rata-rata tahunan. | 5 |
 | basin\_prm\_default | Subrutin SWAT+ yang mengganti parameter basin bernilai nol atau kosong (< 1e-6) dengan nilai bawaan operasional; ditiru port oleh `BasinParams::complete`. | 3, 4 |
 | basin\_sw\_init | Rutin yang menetapkan air tanah dan salju awal pada tahun tercetak pertama. | 5 |
+| batch (perintah) | Perintah `swatplus-rust batch` (sejak 1.1): satu proyek dijalankan sekali per set parameter dari `sets.csv`, beberapa run berdampingan di inti komputer, masing-masing hanya menyimpan deret debit (dan kedalaman) saluran pilihan serta hujan dan ET DAS. | 5, 16 |
 | Benih (`rndseed`, seed) | Bilangan bulat keadaan generator bilangan acak; setiap generator cuaca punya sepuluh. | 6 |
 | Berat isi tanah (bulk density, `bd`, `avbd`) | Kerapatan isi tanah (g/cm3); `avbd` adalah rata-rata profil. | 7, 14 |
 | Bh\_land | Batanghari dengan PET Hargreaves dan HRU perkotaan/lahan basah diganti hutan, untuk validasi fase lahan dan routing. | 17 |
@@ -71,14 +72,17 @@ Glosarium ini menghimpun istilah teknis dari Bab 3–17: nama file dan variabel 
 | cal\_group | Label grup kalibrasi pada tata guna lahan HRU. | 14 |
 | cal\_parm\_select | Subrutin SWAT+ yang memilih field menurut nama parameter dan menghitung ulang turunannya. | 14 |
 | cal\_parms.cal (`CalParm`) | Berkas daftar parameter yang dapat dikalibrasi, jenis objeknya dan batas mutlaknya. | 14 |
+| Calibration | Struct kalibrasi keras satu run (sejak 1.1): `parms` (isi `cal_parms.cal`) dan `updates` (isi `calibration.cal`), dari berkas proyek atau dibentuk di memori oleh program kalibrasi. | 3, 5, 14 |
 | calibration.cal (`CalUpdate`) | Berkas daftar perubahan parameter dengan jenis perubahan, nilai, kondisi, lapisan dan objek. | 14 |
 | CBOD | Kebutuhan oksigen biokimia karbon (mg/L) pada limpasan dan air saluran; di kanal meluruh orde satu dan mengendap. | 7, 12 |
 | cbod / dox | Kebutuhan oksigen biokimia karbon dan oksigen terlarut (kg), tidak diproses di reservoir. | 13 |
 | cdn (β\_denit) | Koefisien laju denitrifikasi. | 9 |
 | cdylib | Jenis crate Rust yang menghasilkan pustaka dinamis/modul dengan ABI C, dipakai untuk `.wasm`. | 16 |
 | Celeritas (`celerity_bf`) | Kecepatan rambat gelombang banjir di saluran, diambil 5/3 kecepatan aliran menurut Manning. | 11, 12 |
+| channel\_hyd\_day.txt | Tabel tambahan (sejak 1.1, `run --channel-hyd`; bukan tabel SWAT+): hidraulika harian setiap saluran SWAT-DEG dari kurva ratingnya dan rumus Manning. | 12, 15, 16 |
 | channel\_sd\_subday.txt | Tabel aliran keluar kanal SWAT-DEG per langkah waktu sub-harian. | 15 |
 | check-parquet.py | Skrip CI yang memeriksa tabel Parquet dengan pyarrow dan DuckDB terhadap tabel teksnya. | 16, 17 |
+| checkpoint | Salinan `Simulation` di antara dua hari yang melanjutkan persis seperti aslinya; bersama `run_until` menjadi hot start di memori (sejak 1.1). | 5 |
 | Checksum tar | Jumlah bita header dengan field checksum dianggap 8 spasi, ditulis oktal. | 15 |
 | chem\_app.ops (`surf_frac`) | Metode aplikasi pupuk; fraksi yang tinggal di lapisan permukaan. | 10 |
 | chg\_par | Fungsi SWAT+ yang menghitung nilai parameter baru dan membatasinya. | 14 |
@@ -211,6 +215,7 @@ Glosarium ini menghimpun istilah teknis dari Bab 3–17: nama file dan variabel 
 | --- | --- | --- |
 | Gage | File stasiun terukur untuk satu variabel iklim (hujan, suhu, radiasi, kelembapan, atau angin) yang ditempatkan ke larik harian; nama `sim` berarti variabel itu disimulasikan. | 4, 6 |
 | Garis miring (`/`) | Pengakhir masukan list-directed; variabel sisanya tidak diubah. | 4 |
+| gelombang HRU (wave) | Kelompok HRU yang dapat dijalankan bersamaan pada mode paralel `--fix-swat`: setiap HRU berada di gelombang sesudah HRU yang airnya ia terima hari itu (`Network::hru_waves`). | 5, 12 |
 | Generator cuaca (weather generator, WGN, `weather-wgn.cli`) | Model stokastik yang membangkitkan cuaca harian dari parameter statistik iklim bulanan per stasiun bila data terukur tidak ada atau hilang; juga sumber elevasi rujukan lapse bila data disimulasikan. | 3, 4, 5, 6 |
 | gfortran | Kompiler Fortran GNU yang dipakai membangun biner rujukan SWAT+; memanggil libm (glibc) untuk fungsi matematika. | 5 |
 | glibc | Pustaka C GNU di Linux; libm-nya dipakai biner native dan acuan Fortran. | 16, 17 |
@@ -334,6 +339,7 @@ Glosarium ini menghimpun istilah teknis dari Bab 3–17: nama file dan variabel 
 | Konduktivitas hidraulik jenuh (`k`, Ksat) | Laju aliran air melalui lapisan tanah jenuh (mm/jam). | 3, 14 |
 | Konstanta psikrometrik (γ) | Parameter yang menghubungkan tekanan uap dan suhu udara (kPa/°C). | 6 |
 | Konstanta resesi aliran dasar (`alpha`) | Konstanta (1/hari) yang menentukan laju penurunan aliran balik dari akuifer dangkal; dipakai sebagai `alpha_e = exp(-alpha)`. | 3, 14 |
+| kumpulan thread (thread pool) | Sejumlah thread yang dibuat sekali per run (rayon) dan dipakai ulang setiap hari oleh HRU dan routing paralel; memulai thread setiap hari lebih mahal daripada HRU proyek kecil. | 5, 12 |
 | Kurva rating (rating curve, kurva debit, `rcurv`, `Rc`) | Tabel empat titik kedalaman kanal SWAT-DEG (0,1 bankfull, bankfull, 1,2 dan 2 kali bankfull) berisi debit, luas, volume, kecepatan, dan waktu tempuh. | 12, 17 |
 | Kurva volume–luas (`br1`, `br2`) | Hubungan pangkat A = br1·V^br2 antara volume tampungan (m3) dan luas permukaan (ha). | 13 |
 | Kurva-S (`ascrv`, `leaf1`, `leaf2`) | Fungsi f(x) = x/(x + exp(a − b x)) yang koefisiennya ditentukan dari dua titik; dipakai untuk LAI, RUE–CO₂ dan fraksi N/P. | 8 |
@@ -454,6 +460,7 @@ Glosarium ini menghimpun istilah teknis dari Bab 3–17: nama file dan variabel 
 | Pelimpah utama (*principal spillway*, `pvol`, `psa`) | Ketinggian muka air normal; `pvol` volume (ha-m di file, m3 di model) dan `psa` luas (ha) pada ketinggian itu. | 13 |
 | Peluang hari basah (`pr_wd`, `pr_ww`, `wet_dry`, `wet_wet`) | Peluang hari basah setelah hari kering, P(W\|D), dan setelah hari basah, P(W\|W), dalam bulan tertentu; parameter rantai Markov orde satu generator cuaca. | 3, 6 |
 | Pelumpuran (puddling, `puddle.ops`) | Pengolahan tanah sawah di bawah genangan (`mgt_newtillmix_wet`) yang juga mengubah konduktivitas lapisan atas dan sedimen air. | 9, 10, 17 |
+| pemanasan bersama (shared spin-up) | Satu pemanasan dengan parameter proyek yang dipakai semua set parameter sebuah kalibrasi (`batch --shared-spinup`); studi spin-up menunjukkan peringkat set bisa berubah, sehingga tidak dipakai bawaan. | 5, 16, Lampiran B |
 | Pembelahan lapisan (`layersplit`) | Penyisipan batas lapisan baru pada kedalaman tertentu, dipakai untuk membentuk lapisan biozona. | 11 |
 | Pencampuran biologis (`biomix`, `bmix`) | Pengadukan tanah lapisan atas oleh biota (cacing dan sebagainya) yang memindahkan air dan pool; `biomix` adalah efisiensinya. | 7, 9 |
 | Pencarian biner (`search`) | Pencarian nama dalam daftar terurut dengan paling banyak 25 pembagian dua; dapat gagal pada daftar tak terurut. | 5 |
@@ -519,6 +526,7 @@ Glosarium ini menghimpun istilah teknis dari Bab 3–17: nama file dan variabel 
 | Rasio puncak (`pk_rto`) | Pengali debit rata-rata untuk debit puncak harian, ditambah faktor luas 2,66 A^−0,3. | 12 |
 | rate | Opsi pelepasan laju tetap (m3/s). | 13 |
 | rate\_pct | Opsi pelepasan persentase volume utama per hari. | 13 |
+| rayon | Pustaka Rust (MIT) untuk komputasi paralel; satu-satunya dependensi eksternal engine sejak 1.1, untuk kumpulan thread mode paralel. | 2, 5, 12 |
 | Reaerasi (`rk2`) | Pemasukan oksigen dari udara sebanding defisit terhadap oksigen jenuh. | 12 |
 | Recall (`rec`) | Objek ruang sumber yang memasukkan hidrograf atau beban terukur atau dari model luar (sumber titik, debit terukur) dari file harian, bulanan, tahunan, atau koefisien ekspor; didefinisikan di `recall.rec`. | 3, 4, 5, 12, 13, 17 |
 | recall / basin\_psc (tabel keluaran) | Tabel beban titik sumber yang dibaca dari berkas (per objek dan jumlah basin). | 15 |
@@ -527,6 +535,7 @@ Glosarium ini menghimpun istilah teknis dari Bab 3–17: nama file dan variabel 
 | Regresi USGS (`usgs_reg`, `regres`) | Persamaan regresi beban badai urban Driver dan Tasker untuk padatan tersuspensi, N total, dan P total. | 11 |
 | Rembesan (seepage, `water_seep`, `seep`) | Air genangan lahan basah atau reservoir yang masuk ke tanah melalui dasarnya, dibatasi konduktivitas dasar (mm/jam); untuk reservoir 240·k·A m3/hari. | 11, 13 |
 | Rembesan dalam (deep seepage, `seep`, `deep_seep`) | Bagian resapan yang hilang ke akuifer dalam, menjadi hidrograf kedua akuifer. | 14 |
+| rencana routing (Plan) | Potongan objek di luar HRU menjadi bagian per sub-DAS yang tidak saling membutuhkan, dirouting bersamaan, ditambah bagian terakhir (saluran utama) di thread utama (`make_plan`). | 12 |
 | Reporter | Pelapor progres yang memancarkan event `progress` setiap kali persentase bulat berubah dan pada hari terakhir. | 15, 16 |
 | REQUIRED | Tipe repetisi kolom Parquet tanpa nilai null; tidak memerlukan definition/repetition level. | 15 |
 | res\_convert\_mass | Konversi air awal dari fraksi volume dan konsentrasi ke volume dan massa. | 13 |
@@ -567,6 +576,7 @@ Glosarium ini menghimpun istilah teknis dari Bab 3–17: nama file dan variabel 
 | Sheet (lembar) | Penyangga teks satu berkas tabel beserta status header dan penulisannya. | 15 |
 | sim | Nama sumber di `weather-sta.cli` yang berarti variabel dibangkitkan generator. | 6 |
 | Simpanan akuifer (`stor`, mm) | Volume air tersimpan per luas akuifer. | 14 |
+| Simulation | Struct run yang berjalan satu hari setiap panggilan `step` (sejak 1.1): `time_control` dengan loop tahun dan harinya dibalik ke luar, sehingga run dapat dihentikan, diperiksa, disalin, dan dikalibrasi di antara dua hari. | 5 |
 | Sinuositas (`sinu`) | Rasio panjang alur terhadap panjang lembah; menentukan jari-jari lengkung tikungan. | 12 |
 | Sistem septik (`septic.str`) | Sistem pengolahan air limbah rumah tangga di lokasi yang efluennya meresap ke lapisan tanah melalui bidang resapan; basis datanya dibaca dengan perilaku pergeseran baris yang ditiru persis. | 3, 4, 11 |
 | Skema tabel (`Field`, `Kind`) | Deskripsi komponen tipe turunan (nama, jenis, bawaan, panjang larik) yang dipakai port untuk membaca tabel generik. | 3, 4 |

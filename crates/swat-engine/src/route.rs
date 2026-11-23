@@ -773,12 +773,11 @@ impl Network {
         }
     }
 
-    /// The command loop past the HRUs. With `fixes` and more than one thread, the network is
-    /// cut into parts (see [`Plan`]) routed at once, then what is left in command order; each
+    /// One day of the network: the command loop past the HRUs. With `fixes` and more than one
+    /// thread, the network is cut into parts (see [`Plan`]) routed at once, on `pool`'s threads
+    /// (or threads started for the day without one), then what is left in command order; each
     /// object's day is the same whatever the part it is in, so the results are the same for any
     /// number of threads.
-    /// One day of the network. With `pool` (--fix-swat, several threads) the parts of the plan
-    /// run on its threads; without, on threads started for the day.
     pub fn day(&mut self, nd: &NetDay, threads: usize, pool: Option<&rayon::ThreadPool>) {
         let threads = if self.fixes { threads.max(1) } else { 1 };
         if self.plan.as_ref().is_none_or(|p| p.threads != threads) {

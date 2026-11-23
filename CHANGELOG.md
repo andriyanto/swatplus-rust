@@ -12,8 +12,11 @@
 - **Aquifer balance** (`python -m swatcal.aquifers`): the projects' shallow aquifers are in balance;
   their deep aquifers (`aqu_deep…`) only fill with the deep seepage and send their flow nowhere,
   about 5 % of the recharge lost to the rivers.
-- The design note has a new appendix (Lampiran B: the M track step by step, with a work log),
-  rebuilt by `scripts/build-nota-desain.sh`.
+- The design note (Indonesian, `docs/nota-desain`) describes 1.1: chapters 1–17 now cover the
+  functions added or changed since 1.0.1 (the step-by-step simulation, calibration in memory,
+  batches, the parallel mode, channel hydraulics, the byte reader, the recall table format of
+  1.0.3), and a new appendix (Lampiran B) records the M track step by step with a work log. Rebuilt
+  by `scripts/build-nota-desain.sh`.
 
 ## 1.1.0
 

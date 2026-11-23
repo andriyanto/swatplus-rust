@@ -18,6 +18,7 @@ Padanan Fortran-nya tersebar: setiap tabel teks SWAT+ ditulis oleh subrutin `*_o
 | `ru` | `ru_*` | `ru_output.f90` |
 | `aquifer` | `aquifer_*` | `aquifer_output.f90` |
 | `channel_sd` | `channel_sd_*`, `channel_sd_subday.txt` | `sd_channel_output.f90` |
+| opsi `run --channel-hyd` (sejak 1.1; bukan baris `print.prt`) | `channel_hyd_day.txt` | tidak ada (bukan tabel SWAT+) |
 | `basin_wb`, `_nb`, `_ls`, `_pw` | `basin_*` (perlu `ls_unit.ele`) | `basin_output.f90` |
 | `lsunit_wb`, `_nb`, `_ls`, `_pw` | `lsunit_*` (perlu `ls_unit.def`) | `lsu_output.f90` |
 | `basin_aqu` | `basin_aqu_*` (perlu `aqu_catunit.ele`) | `basin_aquifer_output.f90` |
@@ -35,7 +36,7 @@ Baris harian mengikuti jendela cetak dan interval `print.prt`; periode dicetak s
 - `swatplus-rust inspect <TxtInOut>`, `swatplus-rust compare <tabel SWAT+> <tabel kita> [--abs 0.001] [--rel 1e-4]`, `swatplus-rust --version`.
 - Modul WebAssembly `swat_wasm.wasm` mengekspor `memory`, `swat_alloc(len) -> ptr`, `swat_free(ptr, len)`, dan `swat_run(ptr, len, flags) -> ptr`. Masukan adalah arsip tar berkas TxtInOut (dalam satu folder atau tanpa folder); `flags` 1 = Parquet, 2 = teks (keduanya bila tidak satu pun), 4 = `--fix-swat`. Keluaran: 4 bita panjang *little-endian* lalu arsip tar berisi tabel dan `run.json` (`{"version":…,"ok":…,"error":…,"notes":[…],"tables":[…]}`). Modul mengimpor `env.swat_progress(done, days)` yang dipanggil tiap persen bulat.
 - Catatan presisi WebAssembly: di wasm, fungsi matematika (`exp`, `ln`, `powf`, trigonometri) adalah port musl milik Rust, bukan glibc, sehingga beberapa hasil f32 dapat berbeda di bit terakhir. Pada Osu\_1hru selama 14 tahun, 17 dari 18 tabel identik; tabel rata-rata tahunan unit routing (dicetak dengan 9 digit bermakna) berbeda 1 dan 2 ULP f32 pada dua nilainya, masih dalam toleransi (keputusan K12).
-- Kecepatan: engine satu *thread*; seluruh Pessel (3.966 HRU, 1.454 kanal) 6,4 detik per tahun simulasi di satu inti, terhadap 16,7 detik untuk SWAT+ gfortran Release. Paralelisasi HRU tidak dapat memberi hasil SWAT+ karena beberapa variabel global membawa nilai satu HRU ke HRU berikutnya (bilangan acak tabel keputusan, permintaan hara tanaman, *enrichment ratio*, fraksi P sedimen, keadaan septik); itu menjadi wilayah mode `--fix-swat` kelak.
+- Kecepatan: run setia berjalan pada satu *thread*; seluruh Pessel (3.966 HRU, 1.454 kanal) 6,4 detik per tahun simulasi di satu inti pada 1.0, terhadap 16,7 detik untuk SWAT+ gfortran Release. Paralelisasi HRU tidak dapat memberi hasil SWAT+ karena beberapa variabel global membawa nilai satu HRU ke HRU berikutnya (bilangan acak tabel keputusan, permintaan hara tanaman, *enrichment ratio*, fraksi P sedimen, keadaan septik). Sejak 1.1, `--fix-swat --threads N` memberi setiap HRU salinannya sendiri dan menjalankan HRU serta routing di N thread (Bab 5.3.13, 12.4.6); di laptop Windows ARM 12 inti, proyek seukuran Batanghari 15,4 detik pada satu thread dan 9,2 detik pada dua belas (1,67×), dengan tabel yang sama. Run yang tidak mencetak tabel harian HRU juga tidak lagi menyusun barisnya (15.5.2): Batanghari satu thread 16,8 menjadi 13,7 detik.
 
 **Alur pemanggil (`main.rs`, fungsi `run`).** (1) Muat proyek; (2) susun judul tabel `format!(" {:<24} swatplus-rust {versi}", judul_file.cio)`; (3) bila JSON, pancarkan kejadian `start` dengan tanggal pertama dan terakhir; (4) buat `TextTables::new(&judul, DirStore::new(out), &project.print)`, set `fixes` dan `progress`; (5) `run_with`; (6) pancarkan `note` untuk bagian yang dilewati; (7) `tables.finish()` mengembalikan `DirStore`, yang `names()`-nya memberi daftar berkas; (8) untuk setiap berkas: bila Parquet diminta, buka `.txt`, panggil `text_to_parquet(BufReader, BufWriter, 1 << 20)`, pancarkan `table` dengan jumlah baris, hapus `.txt` bila teks tidak diminta; (9) pancarkan `done` dengan detik berlalu. Modul wasm (`run_inner`) melakukan hal yang sama dengan `MemStore` dan `tar`.
 
@@ -98,6 +99,7 @@ Baris harian mengikuti jendela cetak dan interval `print.prt`; periode dicetak s
 | `CHUNK` | `4 << 20` (4 MiB) | Ambang penyangga per berkas sebelum ditulis ke store. Komentar kode: tabel harian proyek besar mencapai gigabita. |
 | `SUBDAY_UNITS` | satu baris panjang berisi satuan (`m^3/s`, `tons`, `kg_N`, `kg_P`, `m`, `m/m`, `mm`, `m/s`) | Baris satuan yang ditulis SWAT+ di bawah header `channel_sd_subday.txt`. Menurut komentar kode, itu adalah baris satuan tabel kanal harian, bukan yang semestinya untuk tabel sub-harian; port menyalinnya apa adanya. |
 | `KEYS` | `"  jday   mon   day    yr    unit  gis_id  name            "` | Awal header untuk tabel berkunci objek (HRU, LSU, basin, akuifer, kanal, waduk). |
+| `CHANNEL_HYD` | 21 pasangan (nama, satuan), dari `flo_out` (`m^3/s`) sampai `wid_mann` (`m`) | Kolom `channel_hyd_day.txt` (sejak 1.1, 15.5.13). |
 | `WEATHER` | `["tmx", "tmn", "tmpav", "solarad", "wndspd", "rhum"]` | Nama kolom `hru_pw_day` saat HRU tidak disimulasikan (hanya cuaca). |
 | `TABLES` | 21 nama: `reservoir`, `basin_res`, `recall`, `basin_psc`, `hru_wb`, `hru_nb`, `hru_ls`, `hru_pw`, `ru`, `aquifer`, `channel_sd`, `basin_wb`, `basin_nb`, `basin_ls`, `basin_pw`, `lsunit_wb`, `lsunit_nb`, `lsunit_ls`, `lsunit_pw`, `basin_aqu`, `basin_sd_cha` | Baris `print.prt` yang dikenali port; bendera cetaknya dibaca di `new`. |
 
@@ -114,6 +116,7 @@ Baris harian mengikuti jendela cetak dan interval `print.prt`; periode dicetak s
 | `pub fixes: bool` | Mode `--fix-swat`: memperbaiki label kolom akuifer yang salah. |
 | `.crop_yld: String` | Bendera `crop_yld` dari `print.prt`: `y` hasil panen basin, `a` per HRU, `b` keduanya. |
 | `pub progress: Option<progress::Reporter>` | Pelapor progres JSON (15.9), bila diminta. |
+| `pub channel_hyd: bool` | Sejak 1.1: tulis `channel_hyd_day.txt` (`run --channel-hyd`). |
 
 Komentar struct mencatat perilaku saat HRU tidak disimulasikan (fitur di luar cakupan port): tabel neraca air harian hanya berisi presipitasi, tabel tanaman hanya cuaca, dan tabel HRU lain tidak ditulis.
 
@@ -135,6 +138,18 @@ v = \pm\, d_1.d_2d_3d_4 \times 10^{x} = \pm\, 0.d_1d_2d_3d_4 \times 10^{x+1}
 ```
 
 - **Catatan port:** pembulatan ke empat digit bermakna dilakukan sekali oleh formatter Rust pada nilai f32 eksak (bukan pada mantisa Fortran-style), jadi digit yang dihasilkan sama dengan pembulatan Fortran untuk semua nilai yang tidak tepat di titik tengah; untuk nilai yang tepat di titik tengah, aturan *tie-breaking* Rust dan gfortran belum diverifikasi di repo. Rentang f32 (|eksponen| ≤ 39) menjamin eksponen selalu dua digit, sehingga kasus Fortran tiga digit (huruf `E` dihilangkan) tidak pernah muncul. Sejak 1.0.1, NaN dan tak hingga dicetak seperti gfortran, rata kanan lebar 15: `NaN`, `Infinity`, `-Infinity`; sebelumnya fungsi ini mencetak `0.E+01`, karena `format!("{:.3e}")` menghasilkan `NaN`/`inf` tanpa huruf `e`. Uji `e15_4_as_gfortran` memeriksa kasus ini. Untuk `-0.0`, port mencetak tanpa tanda.
+
+#### 15.3.1a  `list_real4`
+
+- **Lokasi:** `text.rs`, `fn list_real4(v: f32) -> String`. Sejak 1.0.3.
+- **Padanan SWAT+:** keluaran *list-directed* gfortran (`write (u, *)`) untuk `REAL(4)`: format `1PG16.9E2`, didahului satu spasi pemisah butir.
+- **Tujuan:** menulis nilai tabel recall dan titik sumber persis seperti SWAT+, sampai digit terakhir.
+- **Cara kerja:**
+  1. NaN dan tak hingga: `NaN`, `Infinity`, `-Infinity`, rata kanan dalam 16.
+  2. Sembilan digit bermakna dibulatkan dari nilai tepat f32 (`{:.8e}` atas `f64::from(v)`, seperti `printf` yang dipakai gfortran), dengan eksponen *e*.
+  3. Bila nilai 0, atau −1 ≤ *e* ≤ 8 (0,1 sampai di bawah 10⁹ setelah pembulatan): bentuk titik tetap `F12.d` (`0.00000000` untuk nol; `0.ddddddddd` untuk *e* = −1; selain itu titik desimal sesudah digit ke-(*e*+1)), rata kanan 12, ditambah empat spasi tempat eksponen.
+  4. Selain itu: `1PE16.8E2`, satu digit, titik, delapan digit, `E±dd`.
+- **Catatan port:** sampai 1.0.2 port menulis bentuk desimal terpendek Rust (`{:>14e}`) dari f32 yang sama; nilainya terbaca ulang dengan selisih sampai 6e-8 (setengah jarak f32), satu-satunya selisih tak nol pada validasi 28 Oktober (Bh\_res, Bh\_rel, Bh\_nosed). Uji `list_real4_as_gfortran` memakai nilai dan bidang dari tabel recall SWAT+ Bh\_res (gfortran 13), misalnya `417.183960`, `8.34399983E-02`, `319887840.`.
 
 #### 15.3.2  `TextTables::new`
 
@@ -235,7 +250,7 @@ Lima method privat `TextTables` menulis baris untuk lima keluarga tabel. Semuany
 | HRU, LSU, basin (`_wb`, `_nb`, `_ls`, `_pw`) | `hru_rows` | `f12.3` | `hru_output.f90`: 100 `42f12.3`, 101 `25f12.3`, 104 `4f12.3,15f17.3`, 108 `12(1x,f16.3)`; `basin_output.f90`: 100/104; `lsu_output.f90`: 100/102/103 |
 | Unit routing `ru_*` | `ru_row` | ilmiah 9 digit bermakna, lebar 15 | `ru_output.f90`: *list-directed* `write (2600,*)` |
 | Kanal, waduk (`channel_sd`, `basin_sd_cha`, `reservoir`, `basin_res`) | `cha_row` | `e15.4` (`e15_4`), luas `f16.4` untuk basin | `sd_channel_output.f90` 100 `73e15.4`; `basin_sdchannel_output.f90` 100 `f16.4,59(1x,e14.4)`; `reservoir_output.f90` 100 `63e15.4`; `basin_reservoir_output.f90` 100 `f14.4,59(1x,e14.4)` |
-| Recall dan titik sumber basin (`recall`, `basin_psc`) | `rec_row` | eksponensial terpendek Rust | `recall_output.f90`, `basin_recall_output.f90`: *list-directed* |
+| Recall dan titik sumber basin (`recall`, `basin_psc`) | `rec_row` | `1PG16.9E2` gfortran (`list_real4`, sejak 1.0.3) | `recall_output.f90`, `basin_recall_output.f90`: *list-directed* |
 | Akuifer (`aquifer`, `basin_aqu`) | `aqu_row` | `f15.3` | `aquifer_output.f90` 100 `20f15.3`; `basin_aquifer_output.f90` 100 `17f15.3` |
 
 #### 15.4.1  `TextTables::hru_rows`
@@ -279,10 +294,10 @@ Lima method privat `TextTables` menulis baris untuk lima keluarga tabel. Semuany
 - **Padanan SWAT+:** `recall_output.f90` (`write (4600,*) …, ob(iob)%name, ob(iob)%typ, rec_d(irec)`) dan `basin_recall_output.f90` (`write (4500,*) …, bsn%name, brec_d`), header `header_write.f90` (`rec_hdr_time`, `hyd_hdr`).
 - **Tujuan:** menulis beban *recall* (titik sumber yang dibaca dari berkas) per objek atau dijumlahkan untuk basin (`basin_psc`).
 - **Cara kerja:**
-  1. Header baris 1: judul. Baris 2: `jday`, `mon`, `day`, `yr` lebar 12, spasi, `name` rata kiri 16, `type` rata kiri 8 bila ada, nama kolom `Hyd` lebar 14 + spasi.
+  1. Header baris 1: judul. Baris 2: `jday`, `mon`, `day`, `yr` lebar 12, spasi, `name` rata kiri 16 untuk tabel per objek (`ob%name`) atau 25 untuk tabel basin (`bsn%name`, sejak 1.0.3), `type` rata kiri 8 bila ada, nama kolom `Hyd` lebar 14 + spasi.
   2. Baris 3 (satuan): 65 spasi lalu 18 satuan lebar 14: `m^3/s`, `tons`, `kgN`, `kgP`, `kgN`, `kgP`, `kg`, `kgN`, `kgN`, `kg`, `kg`, enam `tons`, `degc`.
-  3. Baris data: tanggal lebar 12, nama, tipe (`recall` untuk tabel per objek), lalu setiap nilai sebagai `{v:>14e}` didahului spasi.
-- **Catatan port:** komentar kode menandai tabel ini *list-directed*: lebar 12 untuk bilangan bulat meniru keluaran list-directed gfortran untuk `integer(4)`. Nilai ditulis dengan format eksponensial **terpendek yang dapat dibaca ulang tepat** (`{:e}` Rust, misalnya `1.5e0`, `0e0`), sehingga nilai f32 internal tersimpan utuh. Berbeda dari tabel lain, baris satuan berisi satuan sungguhan (meniru header SWAT+), dan baris satuan itu dimulai dengan spasi lalu teks, sehingga dilewati oleh `text_to_parquet`.
+  3. Baris data: tanggal lebar 12, nama (lebar 16 atau 25), tipe (`recall` untuk tabel per objek), lalu setiap nilai dengan `list_real4` (17 karakter, 15.3.1a).
+- **Catatan port:** komentar kode menandai tabel ini *list-directed*: lebar 12 untuk bilangan bulat meniru keluaran list-directed gfortran untuk `integer(4)`. Sejak 1.0.3 nilai ditulis seperti gfortran (`1PG16.9E2`, sembilan digit bermakna), sehingga setiap baris data sama byte demi byte dengan SWAT+ (Bh\_res, 2015–2017). Sebelumnya port menulis eksponensial terpendek yang terbaca ulang tepat (`{:e}` Rust, misalnya `1.5e0`), yang nilainya sama tetapi tulisannya berbeda. Berbeda dari tabel lain, baris satuan berisi satuan sungguhan (meniru header SWAT+), dan baris satuan itu dimulai dengan spasi lalu teks, sehingga dilewati oleh `text_to_parquet`.
 
 #### 15.4.5  `TextTables::aqu_row`
 
@@ -297,7 +312,7 @@ Lima method privat `TextTables` menulis baris untuk lima keluarga tabel. Semuany
 
 ### 15.5  `text.rs` (3): implementasi `OutputSink for TextTables<S>`
 
-Trait `OutputSink` didefinisikan di `swat-engine/src/run.rs`; semua method-nya kecuali `hru_day` punya implementasi bawaan kosong, sehingga sink lain (misalnya sink uji) hanya perlu mengisi yang diperlukan. `TextTables` mengisi kesembilan belas method. Engine memanggilnya hanya untuk hari yang dicetak (jendela dan interval `print.prt`) dan untuk periode setelah tahun pemanasan; `TextTables` tinggal memeriksa bendera tabel. Tipe `Day { jday, mon, day, yr }` membawa tanggal; `Period` adalah `Mon`, `Yr`, atau `Aa`; `Region` adalah `Basin` atau `Lsu`.
+Trait `OutputSink` didefinisikan di `swat-engine/src/run.rs`; semua method-nya kecuali `hru_day` punya implementasi bawaan kosong, sehingga sink lain (misalnya sink uji) hanya perlu mengisi yang diperlukan. `TextTables` mengisi kesembilan belas method versi 1.0, ditambah `cha_hyd` dan `wants_cha_hyd` sejak 1.1 (15.5.13). Engine memanggilnya hanya untuk hari yang dicetak (jendela dan interval `print.prt`) dan untuk periode setelah tahun pemanasan; `TextTables` tinggal memeriksa bendera tabel. Tipe `Day { jday, mon, day, yr }` membawa tanggal; `Period` adalah `Mon`, `Yr`, atau `Aa`; `Region` adalah `Basin` atau `Lsu`.
 
 #### 15.5.1  `OutputSink::progress`
 
@@ -314,6 +329,7 @@ Trait `OutputSink` didefinisikan di `swat-engine/src/run.rs`; semua method-nya k
 - **Tujuan:** menulis baris harian keempat tabel HRU.
 - **Masukan dan keluaran:** cuaca HRU (`tmax`, `tmin`, `tave` °C; `solrad` MJ/m²; `windsp` m/s; `rhum` fraksi; `precip` mm); hasil hari HRU (`HruDay`) bila HRU disimulasikan.
 - **Cara kerja:**
+  0. Sejak 1.1: bila tidak satu pun dari `hru_wb`, `hru_nb`, `hru_ls`, `hru_pw` dicetak harian, kembali segera. Method ini dipanggil untuk setiap HRU setiap hari, dan menyusun baris yang tidak dicetak memakan sebagian besar waktu run proyek besar.
   1. Susun larik cuaca `[tmax, tmin, tave, solrad, windsp, rhum]`.
   2. Bila `h` ada: `hru_values(h, cuaca)` (di `swat-engine/src/periods.rs`) menghasilkan `(wb, nb, ls, pw)`; tulis lewat `hru_rows("hru", None, …, h.nutrients)`.
   3. Bila `h` kosong (HRU di luar cakupan port): bila `hru_wb` harian diminta, tulis header dengan satu kolom `precip` dan nilai presipitasi; bila `hru_pw` harian diminta, tulis header `WEATHER` dan enam nilai cuaca. Tabel `nb` dan `ls` tidak ditulis.
@@ -408,6 +424,17 @@ Trait `OutputSink` didefinisikan di `swat-engine/src/run.rs`; semua method-nya k
 - **Lokasi:** `text.rs`, `fn recall(&mut self, p: Option<Period>, d: Day, name: &str, h: &Hyd)`; `fn basin_psc(&mut self, p: Option<Period>, d: Day, name: &str, h: &Hyd)`.
 - **Padanan SWAT+:** `recall_output.f90` (unit 4600–4603) dan `basin_recall_output.f90` (unit 4500–4503, berkas `basin_psc_*.txt` menurut `header_write.f90`).
 - **Cara kerja:** `rec_row("recall", p, d, name, Some("recall"), h)` dan `rec_row("basin_psc", p, d, name, None, h)` (tabel basin tanpa kolom tipe).
+
+#### 15.5.13  `OutputSink::cha_hyd` dan `wants_cha_hyd`
+
+- **Lokasi:** `text.rs`, `fn cha_hyd(&mut self, d: Day, ich: usize, gis_id: i32, name: &str, h: &ChHyd)` dan `fn wants_cha_hyd(&self) -> bool`. Sejak 1.1.
+- **Padanan SWAT+:** tidak ada; `channel_hyd_day.txt` bukan tabel SWAT+ (`docs/channel-hydraulics.md`).
+- **Tujuan:** satu baris hidraulika harian per saluran SWAT-DEG, ditulis bila `channel_hyd` benar (`run --channel-hyd`) pada setiap hari di jendela cetak `print.prt`, terlepas dari apakah `channel_sd` dicetak harian.
+- **Cara kerja:**
+  1. `wants_cha_hyd` mengembalikan `channel_hyd`, sehingga engine hanya menghitung hidraulika bila tabel ini diminta.
+  2. Header: judul, `KEYS`, 21 nama kolom `CHANNEL_HYD` lebar 14 didahului spasi; baris kedua satuannya.
+  3. Baris: `keys`, lalu dengan `e15_4`: `flo_out`, `dep_out`, `wid_out`, `area_out`, `perim_out`, `vel_out`, `ttime_out` (kurva pada debit keluar), `flo_in`, `dep_in`, `vel_in` (debit masuk), `flo_peak`, `dep_peak`, `vel_peak` (puncak taksiran), `vol_ch`, `vol_fp` (m³), `dep_bf`, `wid_bf`; `overbank` sebagai bilangan bulat lebar 15 (1 bila `dep_out > dep_bf`); lalu `dep_mann`, `vel_mann`, `wid_mann` dari `manning_depth`.
+- **Catatan:** uji `tests/channel_hyd.rs`: semua tabel SWAT+ sama dengan atau tanpa tabel ini, dan nilainya membaca debit saluran yang benar.
 
 ### 15.6  `parquet.rs` (1): format Parquet yang ditulis tangan, kolom, dan protokol Thrift *compact*
 
@@ -744,12 +771,13 @@ p = \left\lfloor \frac{100 \cdot \text{done}}{\text{days}} \right\rfloor
 
 ### 15.10  Rekapitulasi bab
 
-Bab ini mencakup **84 fungsi** di enam berkas `crates/swat-output/src/`: `store.rs` 7 (trait method, 2 implementasi `append`, 4 fungsi kecil), `text.rs` 37 (3 fungsi format bebas `e15_4`/`period_index`/`suffix`, 3 bantu `header`/`keys`/`row`, 12 method `TextTables`, 19 method `OutputSink`), `parquet.rs` 29 (4 method `Column` + `plain`, 14 method `Compact`, `physical`, 4 method `ParquetWriter`, `parse_f32`, `text_to_parquet` beserta `infer` dan `push`, 2 uji), `tar.rs` 3 (`read`, `write`, 1 uji), `progress.rs` 7 (`quote`, `date`, `progress`, `text`, `Reporter::new`, `Reporter::day`, 1 uji), `lib.rs` 0. Closure lokal (`field` dan `octal` di `tar.rs`, `io` di `text_to_parquet`) dijelaskan di dalam entri induknya.
+Bab ini mencakup **87 fungsi** di enam berkas `crates/swat-output/src/`: `store.rs` 7 (trait method, 2 implementasi `append`, 4 fungsi kecil), `text.rs` 40 (4 fungsi format bebas `e15_4`/`list_real4`/`period_index`/`suffix`, 3 bantu `header`/`keys`/`row`, 12 method `TextTables`, 21 method `OutputSink`), `parquet.rs` 29 (4 method `Column` + `plain`, 14 method `Compact`, `physical`, 4 method `ParquetWriter`, `parse_f32`, `text_to_parquet` beserta `infer` dan `push`, 2 uji), `tar.rs` 3 (`read`, `write`, 1 uji), `progress.rs` 7 (`quote`, `date`, `progress`, `text`, `Reporter::new`, `Reporter::day`, 1 uji), `lib.rs` 0. Closure lokal (`field` dan `octal` di `tar.rs`, `io` di `text_to_parquet`) dijelaskan di dalam entri induknya.
 
 Hal yang perlu diingat saat membaca keluaran port:
 
-1. **Nilai tabel teks = nilai SWAT+, tata letak kolom tidak selalu.** Lebar kunci dan beberapa lebar nilai (misalnya `f17.3` tabel hara, `2i10` waduk) disederhanakan; pembanding dan konverter memisahkan kolom berdasarkan spasi. Port tidak pernah mencetak tanda bintang luapan; kolom melebar.
+1. **Nilai tabel teks = nilai SWAT+, tata letak kolom tidak selalu.** Sejak 1.0.3 tabel recall dan titik sumber sama juga dalam tulisannya (`list_real4`). Lebar kunci dan beberapa lebar nilai (misalnya `f17.3` tabel hara, `2i10` waduk) disederhanakan; pembanding dan konverter memisahkan kolom berdasarkan spasi. Port tidak pernah mencetak tanda bintang luapan; kolom melebar.
 2. **Kolom yang tidak dihitung port tidak dicetak** (tabel HRU tanpa hara, mode degradasi HRU, kolom teks `plant_cov`/`mgt_ops`).
 3. **Kebiasaan SWAT+ yang dipertahankan di keluaran:** label `orgn`/`orgp` pada kolom akuifer yang berisi karbon dan N organik (diperbaiki dengan `--fix-swat`), baris satuan kanal harian di bawah header `channel_sd_subday.txt`, label `m^3/s` untuk aliran sub-harian yang sebenarnya m³.
 4. **Parquet adalah turunan teks**: tipe kolom disimpulkan dari nama dan 1.000 baris pertama; nilai float adalah angka yang tercetak; NaN untuk NaN atau bintang.
 5. **Semua format biner ditulis tangan** (Thrift compact, PLAIN, ustar) tanpa dependensi, demi lisensi LGPL.
+6. **`channel_hyd_day.txt` (sejak 1.1) bukan tabel SWAT+**: tidak dibandingkan dengan Fortran, dan tidak memengaruhi tabel lain.

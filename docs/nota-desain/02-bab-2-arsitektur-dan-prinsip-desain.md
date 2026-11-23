@@ -1,6 +1,6 @@
 ## Bab 2  Arsitektur dan prinsip desain
 
-Engine terdiri dari enam crate Rust tanpa dependensi eksternal. Data mengalir satu arah: file TxtInOut dibaca menjadi model proyek, model disimulasikan hari demi hari, dan hasilnya ditulis sebagai tabel. RustGIS menjalankan engine sebagai program terpisah atau modul WebAssembly, tidak pernah sebagai pustaka yang ditautkan.
+Engine terdiri dari enam crate Rust. Sampai 1.0.3 tidak ada dependensi eksternal; sejak 1.1 ada satu, `rayon` (lisensi MIT), untuk kumpulan thread mode paralel. Data mengalir satu arah: file TxtInOut dibaca menjadi model proyek, model disimulasikan hari demi hari, dan hasilnya ditulis sebagai tabel. RustGIS menjalankan engine sebagai program terpisah atau modul WebAssembly, tidak pernah sebagai pustaka yang ditautkan.
 
 ### 2.1  Crate dan tugasnya
 
@@ -8,10 +8,10 @@ Engine terdiri dari enam crate Rust tanpa dependensi eksternal. Data mengalir sa
 | --- | --- | --- | --- |
 | `swat-model` | pustaka | Data proyek: `file.cio`, kode dan parameter DAS, periode simulasi, pengaturan cetak, objek spasial dan alirannya, cuaca, HRU, tanah, tabel database. Tanpa I/O | — |
 | `swat-io` | pustaka | Pembaca file TxtInOut, mengikuti aturan input list-directed Fortran seperti SWAT+ membacanya; dari folder atau dari file di memori | `swat-model` |
-| `swat-engine` | pustaka | Simulasi: jam, cuaca, jadwal cetak, HRU, routing unit, akuifer, saluran, reservoir, recall, dalam urutan perintah SWAT+ | `swat-model` |
+| `swat-engine` | pustaka | Simulasi: jam, cuaca, jadwal cetak, HRU, routing unit, akuifer, saluran, reservoir, recall, dalam urutan perintah SWAT+; simulasi per hari (`Simulation`) dan banyak run sekaligus (`batch`) | `swat-model`, `rayon` |
 | `swat-output` | pustaka | Keluaran: tabel teks SWAT+, Parquet, arsip tar, progres JSON-line; penyimpanan di folder atau memori | `swat-model`, `swat-engine` |
 | `swat-wasm` | cdylib | Engine sebagai modul WebAssembly: arsip tar skenario masuk, arsip tar tabel keluar | semua di atas |
-| `swatplus-rust` | program | Program baris perintah: `inspect`, `run`, `compare` | semua kecuali `swat-wasm` |
+| `swatplus-rust` | program | Program baris perintah: `inspect`, `run`, `batch`, `compare` | semua kecuali `swat-wasm` |
 
 `swat-engine` tidak bergantung pada `swat-io`: engine menerima `Project` yang sudah jadi, dari mana pun asalnya. Ini memungkinkan RustGIS kelak membangun proyek tanpa file TxtInOut.
 
@@ -22,10 +22,12 @@ Empat pustaka membentuk satu jalur dari file ke tabel; program baris perintah da
 ### 2.2  Alur data satu kali jalan
 
 1. **Baca.** `swat-io` membaca `file.cio`, lalu setiap file yang dirujuknya, menjadi `swat_model::Project`. Sumber file bisa folder (`DirSource`) atau memori (arsip tar di browser).
-2. **Siapkan.** `swat-engine::run_with` membangun objek simulasi: stasiun cuaca, HRU dengan tanah dan tanamannya, unit routing, akuifer, saluran, reservoir. Kalibrasi diterapkan setelah inisialisasi, seperti di SWAT+.
-3. **Simulasikan.** Untuk setiap hari: perbarui jam, hitung cuaca, jalankan perintah objek dalam urutan `object.cnt`/`*.con` (HRU, unit routing, akuifer, saluran, reservoir, recall), akumulasikan periode.
+2. **Siapkan.** `Simulation::new` membangun objek simulasi: stasiun cuaca, HRU dengan tanah dan tanamannya, unit routing, akuifer, saluran, reservoir. Kalibrasi diterapkan setelah inisialisasi, seperti di SWAT+; `Simulation::with_calibration` memakai kalibrasi dari memori sebagai ganti `calibration.cal` (sejak 1.1).
+3. **Simulasikan.** Setiap panggilan `Simulation::step` menjalankan satu hari: perbarui jam, hitung cuaca, jalankan perintah objek dalam urutan `object.cnt`/`*.con` (HRU, unit routing, akuifer, saluran, reservoir, recall), akumulasikan periode.
 4. **Tulis.** Setiap hasil harian dikirim ke `OutputSink`. `swat-output` mengubahnya menjadi tabel teks persis seperti format `write` Fortran, atau Parquet, lalu menyimpannya lewat `Store` (folder atau memori).
 5. **Laporkan.** Progres dan peristiwa (`start`, `progress`, `note`, `table`, `done`, `error`) keluar sebagai baris JSON.
+
+`run_with` adalah langkah 2 sampai 4 berurutan: `Simulation::new`, `step` sampai hari terakhir, lalu `finish`. Program kalibrasi memakai langkah yang sama secara terpisah: menjalankan pemanasan sekali (`run_until`), menyalin keadaan (`checkpoint`), atau menjalankan banyak kalibrasi berdampingan (`batch`).
 
 ### 2.3  Prinsip desain
 
@@ -40,13 +42,13 @@ Empat pustaka membentuk satu jalur dari file ke tabel; program baris perintah da
 
 **Tolak, jangan tebak.** Fitur yang belum di-port menghasilkan catatan bernama, bukan perkiraan. Bagian yang ditolak meneruskan airnya ke hilir; `--strict` mengubahnya menjadi kode keluar 3.
 
-**Tanpa dependensi, tanpa `unsafe`.** Semua crate hanya memakai pustaka standar Rust (`unsafe_code = "forbid"`). Penulis Parquet, tar, dan JSON ditulis sendiri. Karena itu engine bisa dibangun untuk `wasm32-unknown-unknown` tanpa glue JavaScript.
+**Dependensi seminimal mungkin, tanpa `unsafe`.** Crate engine hanya memakai pustaka standar Rust ditambah `rayon` (sejak 1.1, untuk kumpulan thread mode paralel; dicatat di `NOTICE`), dengan `unsafe_code = "forbid"`. Satu-satunya `unsafe` ada di antarmuka ekspor modul WebAssembly (`swat-wasm`, `unsafe_code = "deny"` dengan izin per fungsi). Penulis Parquet, tar, dan JSON ditulis sendiri. Karena itu engine bisa dibangun untuk `wasm32-unknown-unknown` tanpa glue JavaScript; di sana HRU berjalan pada satu thread.
 
 **Pemisahan lisensi (keputusan K11).** Engine berlisensi LGPL-2.1, sama dengan SWAT+. RustGIS berlisensi Apache-2.0 dan hanya menjalankan engine sebagai proses terpisah atau modul WASM; keduanya bertemu lewat format data: TxtInOut masuk, tabel dan JSON keluar.
 
 ### 2.4  Mode koreksi `--fix-swat`
 
-Tanpa flag ini, hasil sama dengan SWAT+. Dengan flag ini, bug yang terdokumentasi diperbaiki: misalnya variabel yang tak sengaja dibawa dari HRU sebelumnya, atau pembagian luas yang dilakukan dua kali. Hasilnya tidak bisa dibandingkan lagi dengan SWAT+, sehingga validasi bit demi bit hanya berlaku untuk mode bawaan. Paralelisme HRU direncanakan hanya untuk mode koreksi, karena di mode bawaan urutan HRU memengaruhi hasil (Bab 17).
+Tanpa flag ini, hasil sama dengan SWAT+. Dengan flag ini, bug yang terdokumentasi diperbaiki: misalnya variabel yang tak sengaja dibawa dari HRU sebelumnya, atau pembagian luas yang dilakukan dua kali. Hasilnya tidak bisa dibandingkan lagi dengan SWAT+, sehingga validasi bit demi bit hanya berlaku untuk mode bawaan. Paralelisme hanya ada di mode koreksi, karena di mode bawaan urutan HRU memengaruhi hasil (Bab 17). Sejak 1.1, `--fix-swat --threads N` memberi setiap HRU salinan sendiri dari keadaan yang di SWAT+ dipakai bersama (`Saved`), lalu menjalankan HRU per gelombang dan routing per sub-DAS di beberapa thread (Bab 5 dan 12). Tabelnya sama untuk berapa pun jumlah thread, dan run setia tetap berjalan pada satu thread dengan hasil SWAT+.
 
 ### 2.5  Hubungan dengan RustGIS
 

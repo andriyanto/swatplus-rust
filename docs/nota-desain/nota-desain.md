@@ -1,8 +1,10 @@
-# Nota Desain SWAT+ Rust Engine 1.0
+# Nota Desain SWAT+ Rust Engine 1.1
 
 ## Bab 1  Pendahuluan
 
-Nota ini, yang sudah diperbarui untuk perbaikan versi 1.0.1, menjelaskan engine SWAT+ versi Rust 1.0.0 (`swatplus-rust`) fungsi demi fungsi: apa tugas setiap fungsi, subrutin SWAT+ mana yang ditirunya, persamaan yang dihitungnya, dan kebiasaan SWAT+ yang sengaja dipertahankan. Engine ini adalah terjemahan SWAT+ Fortran commit `6f51536` (16 Oktober 2026) yang menghasilkan tabel keluaran yang sama bit demi bit.
+Nota ini menjelaskan engine SWAT+ versi Rust (`swatplus-rust`) fungsi demi fungsi, dalam keadaannya pada versi 1.1 (rilis 1.1.0 ditambah studi spin-up sesudahnya): apa tugas setiap fungsi, subrutin SWAT+ mana yang ditirunya, persamaan yang dihitungnya, dan kebiasaan SWAT+ yang sengaja dipertahankan. Engine ini adalah terjemahan SWAT+ Fortran commit `6f51536` (16 Oktober 2026) yang menghasilkan tabel keluaran yang sama bit demi bit.
+
+Engine 1.0.0 adalah dasarnya. Perbaikan 1.0.1 sampai 1.0.3 dan tambahan 1.1 (simulasi per hari, kalibrasi di memori, banyak run sekaligus, mode paralel, hidraulika saluran) dimasukkan ke bab yang membahas fungsi bersangkutan, dengan keterangan versi di tempatnya. Lampiran B mencatat jalur M (riset kalibrasi berbasis tinggi muka air) langkah demi langkah, beserta catatan kerjanya.
 
 ### 1.1  Tujuan nota
 
@@ -11,21 +13,25 @@ Nota ini, yang sudah diperbarui untuk perbaikan versi 1.0.1, menjelaskan engine 
 - Mencatat keputusan desain: kenapa hasil harus identik, kenapa kebiasaan SWAT+ dipertahankan, kenapa engine dipisah dari RustGIS.
 - Menyediakan glosarium istilah dan daftar pustaka dari persamaan yang dipakai.
 
-### 1.2  Ruang lingkup engine 1.0
+### 1.2  Ruang lingkup engine
 
-Engine 1.0 menjalankan proyek SWAT+ dari lahan sampai outlet:
+Engine menjalankan proyek SWAT+ dari lahan sampai outlet:
 
 - **HRU**: cuaca, neraca air, tanaman, nutrien, karbon (model asli dan Century), erosi, manajemen berdasarkan tanggal, heat unit, dan tabel keputusan, sawah, lahan basah, tile drain dan struktur lain, septik, kawasan urban.
 - **Routing**: routing lanskap antar HRU, unit routing, akuifer, saluran SWAT-DEG, reservoir, dan sumber titik (recall).
 - **Langkah waktu**: harian, atau subharian dengan Green-Ampt atau curve number dengan hidrograf satuan.
 - **Keluaran**: tabel teks SWAT+, tabel yang sama dalam Parquet, arsip tar, dan progres JSON-line.
-- **Platform**: program native (Linux, macOS, Windows) dan modul WebAssembly untuk browser.
+- **Platform**: program native (Linux dan Windows untuk x86-64, dan sejak 1.0.2 juga ARM64; macOS Apple silicon dan Intel) dan modul WebAssembly untuk browser.
+- **Simulasi per hari (1.1)**: `Simulation` berjalan satu hari setiap panggilan, sehingga pemanggil dapat berhenti di antara dua hari, memeriksa keadaan, menyalinnya (`checkpoint`), mengubah parameter (`calibrate`), lalu melanjutkan (Bab 5).
+- **Kalibrasi (1.1)**: perubahan parameter dari memori, bukan dari berkas (`Calibration`), dan banyak run sekaligus dengan perintah `batch` (Bab 3, 5, 14, 16; Lampiran B).
+- **Mode paralel (1.1)**: dengan `--fix-swat --threads N`, HRU dan routing berjalan di beberapa thread dengan tabel yang sama untuk berapa pun jumlah thread (Bab 5, 12).
+- **Hidraulika saluran (1.1)**: tabel tambahan `channel_hyd_day.txt` dari kurva rating SWAT-DEG dan rumus Manning; bukan tabel SWAT+ (Bab 12, 15).
 
 Fitur yang belum di-port ditolak dengan namanya: `run` menyebut alasannya dan meneruskan air bagian itu, atau gagal bila `--strict` dipakai. Engine tidak pernah menebak.
 
 ### 1.3  Dasar validasi
 
-Tabel keluaran dibandingkan dengan SWAT+ Fortran pada dua contoh SWAT+ (Osu\_1hru, Ames\_sub1), dua proyek nyata dari Sumatera Barat (Batanghari, 1.858 HRU; Pessel, 3.966 HRU), dan 33 varian yang menguji fitur tertentu. CI menjalankan kedua engine pada setiap push dan membandingkan setiap tabel. Target keputusan K12: beda relatif paling banyak 1e-4 atau satu satuan pada desimal terakhir yang dicetak. Pada kenyataannya hasil identik bit demi bit; rinciannya di Bab 17.
+Tabel keluaran dibandingkan dengan SWAT+ Fortran pada dua contoh SWAT+ (Osu\_1hru, Ames\_sub1), dua proyek nyata dari Sumatera Barat (Batanghari, 1.858 HRU; Pessel, 3.966 HRU), dan 33 varian yang menguji fitur tertentu. CI menjalankan kedua engine pada setiap push dan membandingkan setiap tabel. Target keputusan K12: beda relatif paling banyak 1e-4 atau satu satuan pada desimal terakhir yang dicetak. Pada kenyataannya hasil identik bit demi bit; sejak 1.0.3 itu berlaku juga untuk tabel recall dan titik sumber, yang sebelumnya berbeda paling banyak 6e-8 karena bentuk tulisan angkanya (Bab 15). Setiap tambahan 1.1 diperiksa dengan cara yang sama: run setia (tanpa `--fix-swat`) memberi tabel yang identik byte demi byte dengan 1.0.3 pada ke-37 skenario. Rinciannya di Bab 17.
 
 ### 1.4  Konvensi penulisan
 
@@ -46,11 +52,11 @@ Persamaan ditulis dalam notasi matematika, bukan salinan kode Fortran. SWAT+ ber
 - Bab 3 sampai 16 mengikuti crate dan modul, dari model data, pembaca input, loop simulasi, proses di HRU, routing, sampai keluaran dan program.
 - Setiap fungsi punya entri sendiri: lokasi, padanan SWAT+, tujuan, masukan dan keluaran, cara kerja, dan catatan. Fungsi kecil dikumpulkan dalam tabel.
 - Bab 17 merangkum validasi, katalog kebiasaan SWAT+, koreksi `--fix-swat`, dan fitur yang ditolak.
-- Glosarium dan daftar pustaka ada di akhir.
+- Glosarium dan daftar pustaka ada di akhir. Lampiran A membahas data hujan satelit GSMaP; Lampiran B jalur M (kalibrasi, mode paralel, studi spin-up) dan catatan langkah kerja (B.8).
 
 ## Bab 2  Arsitektur dan prinsip desain
 
-Engine terdiri dari enam crate Rust tanpa dependensi eksternal. Data mengalir satu arah: file TxtInOut dibaca menjadi model proyek, model disimulasikan hari demi hari, dan hasilnya ditulis sebagai tabel. RustGIS menjalankan engine sebagai program terpisah atau modul WebAssembly, tidak pernah sebagai pustaka yang ditautkan.
+Engine terdiri dari enam crate Rust. Sampai 1.0.3 tidak ada dependensi eksternal; sejak 1.1 ada satu, `rayon` (lisensi MIT), untuk kumpulan thread mode paralel. Data mengalir satu arah: file TxtInOut dibaca menjadi model proyek, model disimulasikan hari demi hari, dan hasilnya ditulis sebagai tabel. RustGIS menjalankan engine sebagai program terpisah atau modul WebAssembly, tidak pernah sebagai pustaka yang ditautkan.
 
 ### 2.1  Crate dan tugasnya
 
@@ -58,10 +64,10 @@ Engine terdiri dari enam crate Rust tanpa dependensi eksternal. Data mengalir sa
 | --- | --- | --- | --- |
 | `swat-model` | pustaka | Data proyek: `file.cio`, kode dan parameter DAS, periode simulasi, pengaturan cetak, objek spasial dan alirannya, cuaca, HRU, tanah, tabel database. Tanpa I/O | — |
 | `swat-io` | pustaka | Pembaca file TxtInOut, mengikuti aturan input list-directed Fortran seperti SWAT+ membacanya; dari folder atau dari file di memori | `swat-model` |
-| `swat-engine` | pustaka | Simulasi: jam, cuaca, jadwal cetak, HRU, routing unit, akuifer, saluran, reservoir, recall, dalam urutan perintah SWAT+ | `swat-model` |
+| `swat-engine` | pustaka | Simulasi: jam, cuaca, jadwal cetak, HRU, routing unit, akuifer, saluran, reservoir, recall, dalam urutan perintah SWAT+; simulasi per hari (`Simulation`) dan banyak run sekaligus (`batch`) | `swat-model`, `rayon` |
 | `swat-output` | pustaka | Keluaran: tabel teks SWAT+, Parquet, arsip tar, progres JSON-line; penyimpanan di folder atau memori | `swat-model`, `swat-engine` |
 | `swat-wasm` | cdylib | Engine sebagai modul WebAssembly: arsip tar skenario masuk, arsip tar tabel keluar | semua di atas |
-| `swatplus-rust` | program | Program baris perintah: `inspect`, `run`, `compare` | semua kecuali `swat-wasm` |
+| `swatplus-rust` | program | Program baris perintah: `inspect`, `run`, `batch`, `compare` | semua kecuali `swat-wasm` |
 
 `swat-engine` tidak bergantung pada `swat-io`: engine menerima `Project` yang sudah jadi, dari mana pun asalnya. Ini memungkinkan RustGIS kelak membangun proyek tanpa file TxtInOut.
 
@@ -72,10 +78,12 @@ Empat pustaka membentuk satu jalur dari file ke tabel; program baris perintah da
 ### 2.2  Alur data satu kali jalan
 
 1. **Baca.** `swat-io` membaca `file.cio`, lalu setiap file yang dirujuknya, menjadi `swat_model::Project`. Sumber file bisa folder (`DirSource`) atau memori (arsip tar di browser).
-2. **Siapkan.** `swat-engine::run_with` membangun objek simulasi: stasiun cuaca, HRU dengan tanah dan tanamannya, unit routing, akuifer, saluran, reservoir. Kalibrasi diterapkan setelah inisialisasi, seperti di SWAT+.
-3. **Simulasikan.** Untuk setiap hari: perbarui jam, hitung cuaca, jalankan perintah objek dalam urutan `object.cnt`/`*.con` (HRU, unit routing, akuifer, saluran, reservoir, recall), akumulasikan periode.
+2. **Siapkan.** `Simulation::new` membangun objek simulasi: stasiun cuaca, HRU dengan tanah dan tanamannya, unit routing, akuifer, saluran, reservoir. Kalibrasi diterapkan setelah inisialisasi, seperti di SWAT+; `Simulation::with_calibration` memakai kalibrasi dari memori sebagai ganti `calibration.cal` (sejak 1.1).
+3. **Simulasikan.** Setiap panggilan `Simulation::step` menjalankan satu hari: perbarui jam, hitung cuaca, jalankan perintah objek dalam urutan `object.cnt`/`*.con` (HRU, unit routing, akuifer, saluran, reservoir, recall), akumulasikan periode.
 4. **Tulis.** Setiap hasil harian dikirim ke `OutputSink`. `swat-output` mengubahnya menjadi tabel teks persis seperti format `write` Fortran, atau Parquet, lalu menyimpannya lewat `Store` (folder atau memori).
 5. **Laporkan.** Progres dan peristiwa (`start`, `progress`, `note`, `table`, `done`, `error`) keluar sebagai baris JSON.
+
+`run_with` adalah langkah 2 sampai 4 berurutan: `Simulation::new`, `step` sampai hari terakhir, lalu `finish`. Program kalibrasi memakai langkah yang sama secara terpisah: menjalankan pemanasan sekali (`run_until`), menyalin keadaan (`checkpoint`), atau menjalankan banyak kalibrasi berdampingan (`batch`).
 
 ### 2.3  Prinsip desain
 
@@ -90,13 +98,13 @@ Empat pustaka membentuk satu jalur dari file ke tabel; program baris perintah da
 
 **Tolak, jangan tebak.** Fitur yang belum di-port menghasilkan catatan bernama, bukan perkiraan. Bagian yang ditolak meneruskan airnya ke hilir; `--strict` mengubahnya menjadi kode keluar 3.
 
-**Tanpa dependensi, tanpa `unsafe`.** Semua crate hanya memakai pustaka standar Rust (`unsafe_code = "forbid"`). Penulis Parquet, tar, dan JSON ditulis sendiri. Karena itu engine bisa dibangun untuk `wasm32-unknown-unknown` tanpa glue JavaScript.
+**Dependensi seminimal mungkin, tanpa `unsafe`.** Crate engine hanya memakai pustaka standar Rust ditambah `rayon` (sejak 1.1, untuk kumpulan thread mode paralel; dicatat di `NOTICE`), dengan `unsafe_code = "forbid"`. Satu-satunya `unsafe` ada di antarmuka ekspor modul WebAssembly (`swat-wasm`, `unsafe_code = "deny"` dengan izin per fungsi). Penulis Parquet, tar, dan JSON ditulis sendiri. Karena itu engine bisa dibangun untuk `wasm32-unknown-unknown` tanpa glue JavaScript; di sana HRU berjalan pada satu thread.
 
 **Pemisahan lisensi (keputusan K11).** Engine berlisensi LGPL-2.1, sama dengan SWAT+. RustGIS berlisensi Apache-2.0 dan hanya menjalankan engine sebagai proses terpisah atau modul WASM; keduanya bertemu lewat format data: TxtInOut masuk, tabel dan JSON keluar.
 
 ### 2.4  Mode koreksi `--fix-swat`
 
-Tanpa flag ini, hasil sama dengan SWAT+. Dengan flag ini, bug yang terdokumentasi diperbaiki: misalnya variabel yang tak sengaja dibawa dari HRU sebelumnya, atau pembagian luas yang dilakukan dua kali. Hasilnya tidak bisa dibandingkan lagi dengan SWAT+, sehingga validasi bit demi bit hanya berlaku untuk mode bawaan. Paralelisme HRU direncanakan hanya untuk mode koreksi, karena di mode bawaan urutan HRU memengaruhi hasil (Bab 17).
+Tanpa flag ini, hasil sama dengan SWAT+. Dengan flag ini, bug yang terdokumentasi diperbaiki: misalnya variabel yang tak sengaja dibawa dari HRU sebelumnya, atau pembagian luas yang dilakukan dua kali. Hasilnya tidak bisa dibandingkan lagi dengan SWAT+, sehingga validasi bit demi bit hanya berlaku untuk mode bawaan. Paralelisme hanya ada di mode koreksi, karena di mode bawaan urutan HRU memengaruhi hasil (Bab 17). Sejak 1.1, `--fix-swat --threads N` memberi setiap HRU salinan sendiri dari keadaan yang di SWAT+ dipakai bersama (`Saved`), lalu menjalankan HRU per gelombang dan routing per sub-DAS di beberapa thread (Bab 5 dan 12). Tabelnya sama untuk berapa pun jumlah thread, dan run setia tetap berjalan pada satu thread dengan hasil SWAT+.
 
 ### 2.5  Hubungan dengan RustGIS
 
@@ -762,7 +770,7 @@ Catatan: `Soil` dan `SoilLayer` menurunkan `Default` Rust (semua nol/kosong), bu
 
 ### 3.9  `cal.rs`: kalibrasi keras
 
-Modul ini memuat dua file kalibrasi SWAT+: `cal_parms.cal` (daftar parameter yang boleh diubah beserta rentang absolutnya, dibaca `cal_parm_read`) dan `calibration.cal` (daftar perubahan, dibaca `cal_parmchg_read`). Perubahan diterapkan satu kali setelah objek disiapkan (`cal_conditions`, dipanggil dari `proc_cal`); penerapannya dibahas di bab HRU. Modul ini juga berisi fungsi `define_unit_elements` yang dipakai bersama oleh pembaca kalibrasi dan pembaca unit routing.
+Modul ini memuat dua file kalibrasi SWAT+: `cal_parms.cal` (daftar parameter yang boleh diubah beserta rentang absolutnya, dibaca `cal_parm_read`) dan `calibration.cal` (daftar perubahan, dibaca `cal_parmchg_read`). Perubahan diterapkan satu kali setelah objek disiapkan (`cal_conditions`, dipanggil dari `proc_cal`); penerapannya dibahas di Bab 14. Sejak 1.1 kedua isi berkas itu juga dapat dibentuk di memori sebagai `Calibration` dan diberikan langsung kepada engine, tanpa menulis berkas (3.9.3 sampai 3.9.5). Modul ini juga berisi fungsi `define_unit_elements` yang dipakai bersama oleh pembaca kalibrasi dan pembaca unit routing.
 
 **Struct `CalParm`** (tipe `calibration_parameters`): `name` (nama parameter, mis. `cn2`, `esco`, `awc`), `ob_typ` (jenis objek pemilik parameter: `hru`, `chan`, `res`, `bsn`, `plt`, …), `absmin` dan `absmax` (`f32`, batas absolut nilai hasil perubahan). Field Fortran `units` tidak disimpan.
 
@@ -788,6 +796,8 @@ x' = \begin{cases} v & \text{absval} \\ x + v & \text{abschg} \\ (1 + v/100)\,x 
 
 **Struct `CalCond`** (tipe `calibration_conditions`): `var` (variabel yang diuji; `cal_conditions` mengenali antara lain `hsg`, `texture`, `plant`, `pl_class`, `landuse`, `cal_group`, `res_typ`, `sol`, dan `range`), `alt` (operator), `targ: f32` (angka; tidak dipakai oleh kondisi yang diterapkan SWAT+), dan `targc` (teks yang harus sama dengan variabel). Kondisi `range` hanya memakai `var`; batasnya adalah `val1`/`val2` milik `CalUpdate`.
 
+**Struct `Calibration`** (sejak 1.1): kalibrasi keras yang diterapkan satu run, yaitu `parms: Vec<CalParm>` (isi `cal_parms.cal`: jenis objek dan rentang setiap parameter) dan `updates: Vec<CalUpdate>` (isi `calibration.cal`). Kalibrasi proyek sendiri berasal dari berkasnya; program kalibrasi membentuk satu `Calibration` per set parameter. Engine menerapkannya persis seperti `calibration.cal` (`Simulation::with_calibration`, Bab 5; `cal_conditions` dan `calibrate_aquifers`, Bab 14). Tidak ada padanan SWAT+: di sana kedua daftar adalah larik global `cal_parms` dan `cal_upd` yang hanya diisi oleh pembaca berkas.
+
 #### 3.9.1  `CalParm::default`
 
 - **Lokasi:** `crates/swat-model/src/cal.rs`, `impl Default for CalParm`
@@ -812,7 +822,28 @@ x' = \begin{cases} v & \text{absval} \\ x + v & \text{abschg} \\ (1 + v/100)\,x 
   - Rentang yang terbalik (mis. `5 -3`) menghasilkan rentang kosong, sama seperti `do ie = 5, 3` di Fortran.
   - Kasus patologis di mana bilangan negatif muncul sendiri di posisi terakhir setelah sebuah rentang (mis. `1 -3 -5`) memakai elemen sebelumnya yang negatif sebagai awal rentang; Fortran akan menghasilkan nomor negatif, sedangkan port memotongnya menjadi 0. Masukan seperti ini tidak dihasilkan oleh SWAT+ Editor.
 
-#### 3.9.3  Uji unit `cal.rs`
+#### 3.9.3  `Calibration::of` dan `Calibration::with_updates`
+
+- **Lokasi:** `crates/swat-model/src/cal.rs`, `pub fn of(project: &Project) -> Calibration` dan `pub fn with_updates(project: &Project, updates: Vec<CalUpdate>) -> Calibration`
+- **Padanan SWAT+:** isi `cal_parms` dan `cal_upd` setelah `cal_parm_read` dan `cal_parmchg_read`.
+- **Tujuan:** `of` memberi kalibrasi proyek sendiri (salinan `project.cal_parms` dan `project.cal_upd`); `with_updates` memberi rentang parameter proyek dengan daftar perubahan lain, untuk satu set parameter program kalibrasi.
+- **Catatan port:** `Simulation::new` memakai `Calibration::of`, sehingga run tanpa kalibrasi di memori tidak berubah sedikit pun.
+
+#### 3.9.4  `Calibration::unknown`
+
+- **Lokasi:** `cal.rs`, `pub fn unknown(&self) -> Vec<&str>`
+- **Padanan SWAT+:** tidak ada.
+- **Tujuan:** nama perubahan yang tidak tercantum di `parms` (dibandingkan dengan `fortran_eq`). `Simulation::with_calibration` dan `Simulation::calibrate` menolak kalibrasi bila daftar ini tidak kosong, dengan nama parameternya.
+- **Catatan port:** dalam run dari berkas, perubahan seperti itu mendapat `CalParm::default` (jenis `plt`) dan ditolak `cal_conditions`, sehingga HRU tidak disimulasikan dan run hanya berisi cuaca. Untuk program kalibrasi, penolakan lebih awal dengan nama parameter lebih berguna daripada run tanpa HRU.
+
+#### 3.9.5  `CalUpdate::all`
+
+- **Lokasi:** `cal.rs`, `pub fn all(name: &str, chg_typ: &str, val: f32) -> CalUpdate`
+- **Padanan SWAT+:** satu baris `calibration.cal` tanpa kondisi, lapisan, tahun, hari, dan daftar objek (`num_tot = 0`).
+- **Tujuan:** perubahan `name` untuk semua objek jenisnya: `absval` mengganti nilai dengan `val`, `abschg` menambah `val`, `pctchg` mengubah `val` persen, `relchg` mengalikan dengan 1 + `val`. Dipakai oleh `run --set` dan kolom `sets.csv` perintah `batch` (Bab 16).
+- **Cara kerja:** field lain bernilai bawaan `CalUpdate` (`elems` kosong = semua objek).
+
+#### 3.9.6  Uji unit `cal.rs`
 
 | Fungsi uji | Lokasi | Yang diuji |
 | --- | --- | --- |
@@ -999,12 +1030,12 @@ Modul ini berisi struct untuk file definisi unit routing (`rout_unit.ele`, `rout
 | `basin.rs` | 8 (`BasinCodes::default`, `BasinParams::default`, `get`, `complete`, `adj_pkr`, `dorm_hr`, `plaps`, `tlaps`) | 0 |
 | `climate.rs` | 3 (`cio_slot`, `path_section`, `values`) | 0 |
 | `hru.rs` | 1 (`PlantInit::default`) | 0 |
-| `cal.rs` | 2 (`CalParm::default`, `define_unit_elements`) | 1 |
+| `cal.rs` | 6 (`CalParm::default`, `define_unit_elements`, `Calibration::of`, `with_updates`, `unknown`, `CalUpdate::all`) | 1 |
 | `mgt.rs` | 0 | 0 |
 | `objects.rs` | 2 (`cio_slot`, `code`) | 0 |
 | `routing.rs` | 1 (`AquiferDb::default`) | 0 |
 | `print.rs` | 1 (`object`) | 0 |
-| **Jumlah** | **42** | **6** |
+| **Jumlah** | **46** | **6** |
 
 ## Bab 4  swat-io: membaca file input TxtInOut
 
@@ -1181,7 +1212,7 @@ Hampir semua subrutin baca SWAT+ memakai pernyataan `read (unit, *) v1, v2, …`
 - **Padanan SWAT+:** pemindai leksikal masukan list-directed gfortran (pustaka *runtime*, bukan kode SWAT+).
 - **Tujuan:** menambahkan paling banyak `want` nilai dari satu baris ke `out` dan melaporkan mengapa berhenti.
 - **Cara kerja:**
-  1. `target = out.len() + want`; baris diubah menjadi larik karakter; `after_value = false` mencatat apakah hal terakhir yang dilihat adalah sebuah nilai (menentukan apakah koma berarti *null*).
+  1. `target = out.len() + want`; baris dipindai sebagai byte (sejak 1.1: semua pemisah dan tanda kutip adalah ASCII, sehingga baris selalu dipotong di batas karakter dan tidak perlu diubah menjadi larik karakter); `after_value = false` mencatat apakah hal terakhir yang dilihat adalah sebuah nilai (menentukan apakah koma berarti *null*).
   2. Untuk setiap posisi: bila `out` sudah mencapai `target`, kembalikan `Full`.
   3. Spasi atau tab: lewati.
   4. Koma: bila `after_value` salah (koma di awal atau koma kedua berturutan), dorong `None`; set `after_value = false`.
@@ -1189,14 +1220,14 @@ Hampir semua subrutin baca SWAT+ memakai pernyataan `read (unit, *) v1, v2, …`
   6. Kutip `'` atau `"`: panggil `quoted`, dorong teksnya, `after_value = true`.
   7. Selain itu: kumpulkan karakter sampai spasi, tab, koma, atau `/`. Bila token berbentuk pengulangan (`repeat`), dorong nilai ulang sebanyak hitungan (dibatasi `target`); bila tidak, dorong token apa adanya. `after_value = true`.
   8. Di akhir baris: `Full` bila target tercapai, `None` bila belum (pemanggil lanjut ke baris berikutnya).
-- **Kebiasaan SWAT+ / catatan port:** satu koma setelah nilai hanyalah pemisah (`a, b ,c` → tiga nilai); `,2` → *null* lalu `2`. Garis miring di tengah teks tanpa kutip memotong token: `data/pcp.pcp` dibaca sebagai `data` lalu *read* berakhir; inilah alasan `readcio_read` membaca baris folder keluaran dengan format `'(A)'`. Koma di akhir baris tidak menghasilkan *null* tambahan (yang dihitung hanya koma kedua). Uji `blanks_tabs_and_commas`, `nulls_slash_and_repeats` memverifikasi aturan ini.
+- **Kebiasaan SWAT+ / catatan port:** satu koma setelah nilai hanyalah pemisah (`a, b ,c` → tiga nilai); `,2` → *null* lalu `2`. Garis miring di tengah teks tanpa kutip memotong token: `data/pcp.pcp` dibaca sebagai `data` lalu *read* berakhir; inilah alasan `readcio_read` membaca baris folder keluaran dengan format `'(A)'`. Koma di akhir baris tidak menghasilkan *null* tambahan (yang dihitung hanya koma kedua). Uji `blanks_tabs_and_commas`, `nulls_slash_and_repeats` memverifikasi aturan ini. Versi 1.0 mengubah setiap baris menjadi `Vec<char>`; pada run tiga tahun Batanghari, membaca berkas cuaca memakan sekitar sepersepuluh waktu run, sehingga 1.1 memindai byte. Hasil pembacaannya sama (37 skenario validasi tidak berubah).
 
 #### 4.2.8  `quoted` (privat)
 
-- **Lokasi:** `list.rs`, `fn quoted(chars: &[char], start: usize, quote: char) -> (String, usize)`
+- **Lokasi:** `list.rs`, `fn quoted(line: &str, start: usize, quote: u8) -> (String, usize)` (indeks `start` dalam byte sejak 1.1)
 - **Padanan SWAT+:** konstanta karakter bertanda kutip dalam masukan list-directed.
 - **Tujuan:** membaca string bertanda kutip mulai dari `start`.
-- **Cara kerja:** mulai setelah kutip pembuka; kutip yang sama dua kali berturut (`''`) menghasilkan satu kutip literal; kutip tunggal menutup string dan fungsi mengembalikan indeks setelahnya. Bila baris habis tanpa kutip penutup, seluruh sisa baris menjadi teks.
+- **Cara kerja:** mulai setelah kutip pembuka; potongan teks di antara kutip disalin sekaligus; kutip yang sama dua kali berturut (`''`) menghasilkan satu kutip literal; kutip tunggal menutup string dan fungsi mengembalikan indeks setelahnya. Bila baris habis tanpa kutip penutup, seluruh sisa baris menjadi teks.
 - **Kebiasaan SWAT+ / catatan port:** kutip jenis lain di dalam string tidak istimewa (`"it''s"` tetap `it''s`). String kutip yang tidak ditutup tidak berlanjut ke baris berikutnya.
 
 #### 4.2.9  `repeat` (privat)
@@ -1841,7 +1872,7 @@ Selain uji unit yang disebut di akhir setiap subbab (34 fungsi uji, termasuk dua
 
 ## Bab 5  swat-engine: inisialisasi dan loop simulasi
 
-Bab ini menjelaskan jantung *crate* `swat-engine`: bagaimana sebuah `Project` (hasil pembacaan berkas masukan pada bab-bab sebelumnya) diubah menjadi simulasi harian, dan bagaimana hasil harian itu dijumlahkan menjadi tabel bulanan, tahunan, dan rata-rata tahunan. File yang dicakup adalah `crates/swat-engine/src/lib.rs` (deklarasi modul), `run.rs` (loop simulasi, trait `OutputSink`, `RunOptions`, `RunReport`, `run`, `run_with`, `regions`, `lapse_rates`, dan gerbang cetak harian), `clock.rs` (jam simulasi), `fortran.rs` (rutin kecil yang meniru gfortran dan SWAT+ secara bit demi bit), `hyd.rs` (tipe hidrograf dan operatornya), serta `periods.rs` (akumulator periode).
+Bab ini menjelaskan jantung *crate* `swat-engine`: bagaimana sebuah `Project` (hasil pembacaan berkas masukan pada bab-bab sebelumnya) diubah menjadi simulasi harian, dan bagaimana hasil harian itu dijumlahkan menjadi tabel bulanan, tahunan, dan rata-rata tahunan. File yang dicakup adalah `crates/swat-engine/src/lib.rs` (deklarasi modul), `run.rs` (loop simulasi, trait `OutputSink`, `RunOptions`, `RunReport`, `run`, `run_with`, `run_with_calibration`, struct `Simulation` beserta method-nya, gelombang HRU paralel `hru_wave`, `regions`, `lapse_rates`, dan gerbang cetak harian), `batch.rs` (banyak run sekaligus, sejak 1.1), `clock.rs` (jam simulasi), `fortran.rs` (rutin kecil yang meniru gfortran dan SWAT+ secara bit demi bit), `hyd.rs` (tipe hidrograf dan operatornya), serta `periods.rs` (akumulator periode).
 
 Dalam SWAT+ Fortran, peran ini dipegang oleh `time_control.f90` (loop tahun dan hari), `command.f90` (loop objek per hari beserta panggilan rutin keluaran), dan rutin keluaran seperti `hru_output.f90`, `basin_output.f90`, `aquifer_output.f90`, `sd_channel_output.f90`. Port Rust memisahkan perhitungan dari penulisan berkas: engine hanya memanggil method trait `OutputSink`, sedangkan penulisan tabel teks dilakukan oleh *crate* lain (lihat bab tentang keluaran). Semua bab tentang HRU, iklim, routing, kanal, dan reservoir yang lain dipanggil dari loop yang dijelaskan di sini.
 
@@ -1849,7 +1880,7 @@ Prinsip yang dipegang di seluruh bab: aritmetika dikerjakan dalam presisi tungga
 
 ### 5.1  Modul crate (`lib.rs`) dan urutan satu hari simulasi
 
-`lib.rs` tidak berisi fungsi. Isinya: dokumentasi crate, atribut lint, dan deklarasi sebelas modul publik: `channel`, `climate`, `clock`, `fortran`, `hru`, `hyd`, `periods`, `res`, `route`, `run`, `waterbody`.
+`lib.rs` tidak berisi fungsi. Isinya: dokumentasi crate, atribut lint, dan deklarasi dua belas modul publik: `batch` (sejak 1.1), `channel`, `climate`, `clock`, `fortran`, `hru`, `hyd`, `periods`, `res`, `route`, `run`, `waterbody`.
 
 Dua atribut lint patut dicatat karena mencerminkan kebijakan port:
 
@@ -1858,7 +1889,7 @@ Dua atribut lint patut dicatat karena mencerminkan kebijakan port:
 
 #### 5.1.1  Urutan proses satu hari simulasi
 
-Daftar bernomor berikut adalah diagram alir `run_with` (bagian 5.3), dengan padanan di `time_control.f90` dan `command.f90`. Indentasi menunjukkan sarang loop.
+Daftar bernomor berikut adalah diagram alir `run_with` (bagian 5.3), dengan padanan di `time_control.f90` dan `command.f90`. Indentasi menunjukkan sarang loop. Sejak 1.1 loop ini dibalik menjadi langkah-langkah `Simulation` (5.3.6 sampai 5.3.12): butir 1 adalah `Simulation::new`, butir 2.1 sampai 2.3 `start_year`, setiap putaran butir 2.4 satu panggilan `step` (`run_day`), butir 2.5 `end_year`, dan butir 3 `finish`. Urutan operasinya tidak berubah, sehingga tabelnya sama byte demi byte.
 
 1. **Inisialisasi sebelum loop** (padanan: bagian awal `time_control` dan seluruh rantai `proc_*` sebelum itu).
    1. `Clock::new` membuat jam dari `time.sim` (tabel `ndays` mula-mula tabel tahun kabisat).
@@ -1880,7 +1911,7 @@ Daftar bernomor berikut adalah diagram alir `run_with` (bagian 5.3), dengan pada
       4. `weather.climate_control(&clock)`: cuaca hari ini di semua stasiun (padanan `climate_control`).
       5. Hitung bendera `output` (`yrs > nyskip`), `printing` (output dan gerbang membuka), `end_sim` (hari terakhir tahun terakhir; saat itu `prt.end_sim` membagi `yrs_prt`), dan isi `PeriodDay`.
       6. Majukan indeks deposisi atmosfer (padanan `cli_atmodep_time_control`).
-      7. **Fase lahan, HRU demi HRU dalam urutan perintah SWAT+** (`Network::hru_order`, sehingga HRU yang menerima air HRU lain dihitung setelahnya; padanan cabang `case ("hru")` dalam `command`):
+      7. **Fase lahan, HRU demi HRU dalam urutan perintah SWAT+** (dengan `--fix-swat`, per gelombang di beberapa thread; lihat 5.3.13) (`Network::hru_order`, sehingga HRU yang menerima air HRU lain dihitung setelahnya; padanan cabang `case ("hru")` dalam `command`):
          1. Salin cuaca stasiun ke `HruWeather`, tambahkan deposisi atmosfer, lalu bila `lapse = 1` terapkan koreksi elevasi (padanan awal `hru_control`).
          2. Bila PET Penman-Monteith (`pet = 1`), naikkan angin minimum menjadi 0,01 m/s.
          3. Bentuk `DayCtx` (tanggal, data WGN, *runon* dari HRU hulu via `Network::hru_runon`) dan jalankan `Hru::day` (padanan `hru_control`).
@@ -1888,7 +1919,7 @@ Daftar bernomor berikut adalah diagram alir `run_with` (bagian 5.3), dengan pada
          5. Serahkan hidrograf HRU ke jaringan (`Network::set_hru`).
       8. **Keluaran HRU dalam urutan nomor HRU**: `out.hru_day` (bila mencetak), akumulasi periode `HruAcc::day` (bila `output`), baris untuk wilayah, dan pada hari terakhir simulasi `out.crop_yld_aa`.
       9. `regions(...)`: neraca cekungan dan unit lanskap (padanan `basin_output`, `lsu_output`).
-      10. **Fase routing** `Network::day` (padanan sisa loop `command`: unit routing, akuifer, kanal SWAT-DEG, reservoir, *recall*, dalam urutan perintah).
+      10. **Fase routing** `Network::day` (padanan sisa loop `command`: unit routing, akuifer, kanal SWAT-DEG, reservoir, *recall*, dalam urutan perintah; dengan `--fix-swat`, per sub-DAS di beberapa thread, Bab 12).
       11. **Keluaran objek routing** bila `output`: jumlah kanal cekungan, jumlah akuifer cekungan (berbobot luas), lalu per kanal (subharian dan harian), per akuifer, per reservoir dan cekungan reservoir (setelah itu aliran masuk/keluar harian reservoir dinolkan, seperti `basin_reservoir_output`), per *recall* dan cekungan *recall*, terakhir per unit routing.
       12. Bila `day == 181`: `Hru::midyear` (reset unit panas dasar di belahan bumi selatan).
    5. **Akhir tahun** (setelah loop hari): tulis hasil tanaman cekungan tahunan dan, pada tahun terakhir, rata-rata tahunannya; `Hru::end_year` untuk setiap HRU (pencampuran tanah `cswat = 0`, umur tanaman tahunan, reset unit panas belahan utara); `yrc += 1`.
@@ -1909,7 +1940,9 @@ Perbedaan struktural dengan Fortran: `command.f90` menjalankan semua objek (HRU,
 | `HruRows` | struct (diekspor ulang dari `periods`) | Satu baris periode HRU/wilayah: `wb` (32 kolom neraca air), `nb` (15 kolom neraca hara), `ls` (13 kolom kehilangan), `pw` (25 kolom tanaman dan cuaca). |
 | `PrintGate` | struct privat | Saklar cetak harian SWAT+: `day_print`, `over` (`day_print_over`), `int_day_cur`, dan salinan `PrintSettings` yang sudah dilengkapi. |
 | `RunReport` | struct | Apa yang dilakukan run selain keluaran: `hru_skipped`, `routing_skipped`, `channel_skipped` (masing-masing `Option<String>` berisi alasan bila bagian itu tidak disimulasikan). |
-| `RunOptions` | struct `Copy` | Satu field `fixes: bool`: perbaiki bug SWAT+ (lihat `docs/swat-fixes.md`) alih-alih menirunya. Bawaan `false` = identik dengan SWAT+. |
+| `RunOptions` | struct `Copy` | `fixes: bool`: perbaiki bug SWAT+ (lihat `docs/swat-fixes.md`) alih-alih menirunya; bawaan `false` = identik dengan SWAT+. `threads: usize` (sejak 1.1): dengan `fixes`, jumlah thread HRU dan routing (0 = sebanyak inti komputer); tanpa `fixes` tidak berpengaruh. |
+| `NoOutput` | struct `Copy` (sejak 1.1) | `OutputSink` yang tidak menyimpan apa pun: untuk pemanasan yang tabelnya tidak diperlukan (`run_until`). |
+| `Simulation<'p>` | struct `Clone` (sejak 1.1) | Seluruh keadaan run di antara dua hari: proyek, opsi, jam, cuaca, HRU (`land`), jaringan (`network`), akumulator periode, status bersama `Saved` (dan `hru_saved`, salinan per HRU pada `--fix-swat`), kumpulan thread `pool`, serta posisi loop (`curyr`, `in_year`, `next_jday`, `year_last`, `last_day`). Lihat 5.3.6. |
 
 #### 5.2.1  `HruWeather::default`
 
@@ -1930,6 +1963,8 @@ Perbedaan struktural dengan Fortran: `command.f90` menjalankan semua objek (HRU,
 - **Tujuan:** laporan kemajuan: simulasi akan memulai hari ke-`done + 1` dari `total`. Setelah selesai dipanggil sekali lagi dengan `done = total`.
 - **Masukan dan keluaran:** `done`, `total` (jumlah hari `time.sim`), `day`. Tidak ada keluaran. Modul WebAssembly meneruskannya ke `env.swat_progress` pada setiap persen bulat (docs `runner.md`).
 - **Kebiasaan SWAT+ / catatan port:** dipanggil untuk setiap hari, termasuk tahun pemanasan dan hari yang tidak dicetak.
+
+Sejak 1.1 ada dua method lagi, `cha_hyd` dan `wants_cha_hyd` (5.2.2.20), sehingga jumlahnya 21.
 
 #### 5.2.2.2  `hru_day`
 
@@ -2046,6 +2081,13 @@ Perbedaan struktural dengan Fortran: `command.f90` menjalankan semua objek (HRU,
 - **Padanan SWAT+:** `basin_recall_output.f90` (`basin_psc_*`).
 - **Tujuan:** jumlah semua objek *recall* cekungan.
 
+#### 5.2.2.20  `cha_hyd` dan `wants_cha_hyd`
+
+- **Lokasi:** `run.rs`, `fn cha_hyd(&mut self, day: Day, ich: usize, gis_id: i32, name: &str, h: &ChHyd)` dan `fn wants_cha_hyd(&self) -> bool`, keduanya dengan bawaan (kosong dan `false`). Sejak 1.1.
+- **Padanan SWAT+:** tidak ada; tabel `channel_hyd_day.txt` bukan tabel SWAT+ (H1 di `docs/roadmap.md`, `docs/channel-hydraulics.md`).
+- **Tujuan:** hidraulika satu saluran SWAT-DEG pada hari tercetak (`ChHyd`, Bab 12): kedalaman, lebar, luas, keliling basah, kecepatan, dan waktu tempuh pada debit keluar rata-rata, debit masuk, dan puncak taksiran; tampungan saluran dan dataran banjir; ukuran *bankfull*; serta kedalaman, kecepatan, dan lebar menurut rumus Manning.
+- **Cara kerja:** pada hari `printing`, bila `wants_cha_hyd()` benar, `run_day` meminta `Network::channel_hyds()` lalu memanggil `cha_hyd` per saluran. Hidraulika hanya dihitung bila diminta, karena biayanya tidak kecil; routing tidak membacanya, sehingga tabel SWAT+ tidak berubah.
+
 #### 5.2.3  `PrintGate::new`
 
 - **Lokasi:** `run.rs`, `fn new(print: &PrintSettings, clock: &Clock) -> Self` (privat).
@@ -2078,7 +2120,7 @@ Perbedaan struktural dengan Fortran: `command.f90` menjalankan semua objek (HRU,
 - **Tujuan:** apakah hari ini dicetak menurut jendela dan interval.
 - **Kebiasaan SWAT+ / catatan port:** di `run_with` hasilnya masih di-AND-kan dengan `yrs > nyskip`, karena tahun pemanasan tidak pernah mencetak.
 
-### 5.3  Fungsi simulasi `run.rs`: `run`, `run_with`, `regions`, `lapse_rates`
+### 5.3  Fungsi simulasi `run.rs`: `run`, `run_with`, `Simulation`, `regions`, `lapse_rates`
 
 #### 5.3.1  `run`
 
@@ -2093,14 +2135,15 @@ Perbedaan struktural dengan Fortran: `command.f90` menjalankan semua objek (HRU,
 - **Lokasi:** `run.rs`, `pub fn run_with(project: &Project, out: &mut dyn OutputSink, opts: RunOptions) -> Result<RunReport, String>`.
 - **Padanan SWAT+:** `time_control.f90` seluruhnya, ditambah bagian `command.f90` yang memanggil `hru_control` dan rutin keluaran, `cli_lapse.f90`, `cli_read_atmodep.f90` (indeks awal), `cli_atmodep_time_control.f90`, `plant_all_init.f90` (urutan tanaman cekungan), serta awal `hru_control.f90` (penerapan *lapse rate*).
 - **Tujuan:** loop tahun dan hari. Urutan lengkapnya ada di 5.1.1; berikut rincian yang penting bagi hasil.
-- **Masukan dan keluaran:** `Project` (semua masukan yang sudah dibaca), `opts.fixes`. Keluaran lewat `out`; `Err(String)` hanya bila pembacaan/pembangkitan cuaca gagal (`precip_control` atau `climate_control`), sedangkan bagian yang belum diport tidak menghentikan run tetapi dicatat di `RunReport`.
+- **Sejak 1.1:** `run_with` tinggal tiga baris: `Simulation::new(project, opts)?`, `while sim.step(out)? {}`, `Ok(sim.finish(out))`. Langkah 1 sampai 10 di bawah dikerjakan `Simulation::set_up` (5.3.6), langkah 11 oleh `start_year`, langkah 12 oleh `run_day` yang dipanggil `step` (5.3.7), langkah 13 oleh `end_year`, dan langkah 14 oleh `finish` (5.3.8). Penjelasan di bawah tetap berlaku untuk isi langkah-langkah itu.
+- **Masukan dan keluaran:** `Project` (semua masukan yang sudah dibaca), `opts.fixes`, `opts.threads`. Keluaran lewat `out`; `Err(String)` hanya bila pembacaan/pembangkitan cuaca gagal (`precip_control` atau `climate_control`), sedangkan bagian yang belum diport tidak menghentikan run tetapi dicatat di `RunReport`.
 - **Cara kerja:**
   1. **Jam dan cuaca.** `Clock::new(&project.time)`, `total_days = project.time.days().len()`, `Weather::new(project, &mut clock)` (pembaca suhu dapat mengubah `clock.ndays`, lihat 5.4).
   2. **Stasiun dan lapse HRU.** Daftar nama stasiun dibuat; untuk setiap objek `Hru` di `hru.con`, `ist = search(nama_stasiun, o.weather_station)` dengan bawaan 1 bila tidak ditemukan (SWAT+ membiarkan `ob%wst` bernilai awal 1), lalu `lapse_rates(project, &weather, ist, o.elev)`. Lapse aktif bila `codes.bsn` `lapse == 1`.
   3. **Generator per HRU.** `wgn_of[j]` = indeks WGN (berbasis 0) stasiun HRU itu, dipakai `init_hrus`.
-  4. **Fase lahan.** `init_hrus(project, &wgn_of, &weather.wgn, clock.step, &clock.ndays)`. Bila jumlah HRU dari `hru-data.hru` berbeda dengan `hru.con`, alasan “*n* HRUs in hru-data.hru, *m* in hru.con” dicatat; bila `Err`, pesan galatnya dicatat; `land = None`.
-  5. **Jaringan.** Hanya bila `land` ada: `Network::new(project, &station_names, &tconc, &ovn_km, opts.fixes)` dengan waktu konsentrasi dan (`ovn`, `km`) setiap HRU. `Ok(None)` berarti proyek tanpa objek routing.
-  6. **Status lain.** `hru_wb[j] = [snomlt, surq_gen, latq, wateryld]` (mm, untuk unit routing yang membaca neraca HRU), `HruBasin::new(project).with_fixes(opts.fixes)`, `Saved` (benih acak kondisi dan opsi septik), pemetaan stasiun cuaca → stasiun deposisi atmosfer dengan `search`.
+  4. **Fase lahan.** `init_hrus(project, cal, &wgn_of, &weather.wgn, clock.step, &clock.ndays)`, dengan `cal` kalibrasi proyek (`Calibration::of`) atau kalibrasi dari memori (sejak 1.1). Bila jumlah HRU dari `hru-data.hru` berbeda dengan `hru.con`, alasan “*n* HRUs in hru-data.hru, *m* in hru.con” dicatat; bila `Err`, pesan galatnya dicatat; `land = None`.
+  5. **Jaringan.** Hanya bila `land` ada: `Network::new(project, cal, &station_names, &tconc, &ovn_km, opts.fixes)` dengan waktu konsentrasi dan (`ovn`, `km`) setiap HRU. `Ok(None)` berarti proyek tanpa objek routing.
+  6. **Status lain.** `hru_wb[j] = [snomlt, surq_gen, latq, wateryld]` (mm, untuk unit routing yang membaca neraca HRU), `HruBasin::new(project).with_fixes(opts.fixes)`, `Saved` (benih acak kondisi dan opsi septik), pemetaan stasiun cuaca → stasiun deposisi atmosfer dengan `search`. Sejak 1.1, dengan `fixes`: `hru_saved` (satu salinan `Saved` per HRU, benih acak HRU ke-*j* dimajukan *j* × 10⁶ tarikan dengan `aunif_skip`, 5.5.7), jumlah thread (`opts.threads`, 0 = `available_parallelism`; selalu 1 di WebAssembly), dan kumpulan thread rayon `pool` bila lebih dari satu thread, dibuat sekali per run.
   7. **Indeks deposisi awal** (meniru `cli_read_atmodep`): untuk deret tahunan (`timestep == "yr"`) cari `iyr` dengan `yr_init + iyr − 1 = yrc_start`; untuk bulanan (`"mo"`) jalankan bulan-tahun dari (`yr_init`, `mo_init`) sebanyak `num` langkah sampai cocok dengan tahun dan bulan awal simulasi, lalu `atmo_ts = 12·(yrc0 − yr_init) + imo`. Bila ditemukan, `atmo_first = false`.
   8. `clock.before_loop()`; `weather.precip_control(0, &clock)?`.
   9. **Akumulator.** `PrintGate::new`, `PrintYears::default()`, `HruAcc` per HRU; `RuAcc`, `ChaAcc`, `AquAcc`, `ResAcc`, `RecAcc` dibuat malas (diperbesar dengan `resize` saat objek ke-*k* pertama muncul). `basin_on = lsu_elems.len() > 1` (padanan `db_mx%lsu_elem > 0`; elemen indeks 0 tampaknya pengisi agar indeks berbasis 1). `RegionAcc::new(false)` untuk cekungan, `RegionAcc::new(true)` per unit lanskap.
@@ -2110,12 +2153,12 @@ Perbedaan struktural dengan Fortran: `command.f90` menjalankan semua objek (HRU,
       - `output = yrs > nyskip`; `printing = output && gate.prints()`; `end_sim = end_yr && yrs == nbyr` (memanggil `prt.end_sim`).
       - `PeriodDay`: `end_mo = (day == ndays[mo])`, `end_yr`, `end_sim`, `mon_days = ndays[mo] − ndays[mo−1]`, `day_end_yr`, `yrs_prt`, `days_prt`.
       - **Deposisi atmosfer harian.** Bila masih `atmo_first`, indeks menjadi 1 ketika tahun (dan bulan, untuk deret bulanan) mencapai awal deret. Selain itu indeks maju 1 pada akhir tahun (deret tahunan) atau akhir bulan (deret bulanan). Nilai hari ini: untuk `"aa"` elemen pertama; untuk `"mo"`/`"yr"` elemen `atmo_ts − 1` bila `1 ≤ atmo_ts ≤ num`, dengan deposisi kering dibagi jumlah hari bulan (bulanan) atau 365 (tahunan dan rata-rata tahunan) agar menjadi kg/ha/hari. Di luar jangkauan: `None`.
-      - **HRU dalam urutan perintah.** `hru_order` dari jaringan bila panjangnya cocok, kalau tidak urutan 0..n. Untuk HRU *j*: salin cuaca stasiun, terapkan lapse (lihat persamaan di bawah), naikkan angin ke 0,01 m/s bila `basin.pet == 1`, isi `DayCtx` (antara lain `tmp_an`, `phutot`, `daylmn`, `dormhr = daylth` dari WGN HRU, `tave` dan panjang hari stasiun, hujan setengah jam maksimum, `end_yr = (day == day_end_yr)`, `runon`), panggil `h.day(&w, &ctx, &basin, &mut saved)`.
+      - **HRU dalam urutan perintah.** `hru_order` dari jaringan bila panjangnya cocok, kalau tidak urutan 0..n. Untuk HRU *j*: salin cuaca stasiun, terapkan lapse (lihat persamaan di bawah), naikkan angin ke 0,01 m/s bila `basin.pet == 1`, isi `DayCtx` (antara lain `tmp_an`, `phutot`, `daylmn`, `dormhr = daylth` dari WGN HRU, `tave` dan panjang hari stasiun, hujan setengah jam maksimum, `end_yr = (day == day_end_yr)`, `runon`), panggil `h.day(&w, &ctx, &basin, &mut saved)`. Pada `--fix-swat` bagian ini diganti gelombang paralel (5.3.13).
       - **Panen.** Untuk setiap `(ipl, y)` di `d.harvests`: `bsn_yld[k].area += area_ha`, `bsn_yld[k].yld += y·area_ha/1000` (kg/ha × ha / 1000 = t).
       - `h.close_day(&mut d.wb, printing)` bila `output`; `n.set_hru(j, &d.hd, &d.hhsurfq)`; simpan `hru_wb[j]`.
       - **Keluaran HRU** dalam urutan nomor: `hru_day` bila mencetak; bila `output`: `hru_acc[j].day(...)` dengan cuaca `[tmax, tmin, tave, solrad, windsp, rhum]`, `day_rows[j] = region_values(...)`. Pada `end_sim`: `crop_yld_aa` per tanaman (rata-rata per panen bila `harv_num > 0`; padanan penulisan di `hru_output.f90`).
       - `regions(...)` bila `output` dan ada fase lahan.
-      - **Jaringan.** Bentuk `NetDay` (cuaca semua stasiun, `daylth` per stasiun dari WGN-nya, pengukur suhu per stasiun bila dari berkas, `hru_wb`, tanggal, `print = yrs > nyskip`) dan panggil `n.day(&nd)`. Bila `output`: lihat langkah 2.4.11 di 5.1.1.
+      - **Jaringan.** Bentuk `NetDay` (cuaca semua stasiun, `daylth` per stasiun dari WGN-nya, pengukur suhu per stasiun bila dari berkas, `hru_wb`, tanggal, `print = yrs > nyskip`) dan panggil `n.day(&nd, threads, pool)` (Bab 12). Bila `output`: lihat langkah 2.4.11 di 5.1.1.
       - Hari 181: `midyear` setiap HRU.
   13. **Akhir tahun.** Untuk setiap tanaman cekungan *k*: bila `yrs > nyskip`, kirim baris tahunan dengan `t_ha = yld/(area + 10⁻⁶)` lalu tambahkan ke `bsn_yld_aa`; nolkan `bsn_yld[k]` (selalu, juga di tahun pemanasan); pada tahun terakhir kirim baris rata-rata tahunan dengan `area/yrs_prt`, `yld/yrs_prt`, dan `t_ha` yang dihitung **sebelum** pembagian. Lalu `h.end_year(basin.cswat, opts.fixes)` dan `clock.yrc += 1`.
   14. `progress(days_done, total_days, …)` terakhir; `Ok(report)`.
@@ -2134,7 +2177,7 @@ P_{hru} = \max\left(0,\; P_{st} + \Delta P\right), \qquad T_{max,hru} = T_{max,s
   - Indeks deposisi dimajukan setelah bendera akhir bulan/tahun hari ini ditetapkan, sehingga hari terakhir bulan atau tahun sudah memakai deposisi bulan/tahun berikutnya (komentar sumber; meniru `cli_atmodep_time_control` yang dipanggil setelah pemeriksaan `end_mo`/`end_yr`).
   - `basin_reservoir_output` menolkan `in_d` dan `out_d` reservoir setelah dicetak; port meniru ini hanya bila `output`. Ini sudah diperiksa dan setara: di `command.f90` semua pemanggilan keluaran, termasuk `reservoir_output` dan `basin_reservoir_output`, ada di dalam `if (time%yrs > pco%nyskip)`, dan `res_control` mengisi `res_in_d`/`res_out_d` hanya pada kondisi yang sama.
   - Baris rata-rata tahunan tanaman cekungan memakai `t_ha` dari jumlah sebelum dibagi `yrs_prt`, persis urutan `time_control`.
-  - Pada `--fix-swat`, `opts.fixes` diteruskan ke `HruBasin`, `Network::new`, dan `Hru::end_year`; `run_with` sendiri tidak mengandung koreksi.
+  - Pada `--fix-swat`, `opts.fixes` diteruskan ke `HruBasin`, `Network::new`, dan `Hru::end_year`; `run_with` sendiri tidak mengandung koreksi. Satu-satunya perbedaan di loop ini adalah jalur paralel (`hru_saved`, `hru_wave`), yang tidak dipakai run setia.
 
 #### 5.3.3  `regions`
 
@@ -2171,6 +2214,92 @@ R_d = \sum_{i} f_i \cdot H_{i,d}, \qquad f_i = \texttt{bsn\_frac}_i \text{ (ceku
 Di sini `z_obj` adalah elevasi objek, `z_ref,P` elevasi WGN bila hujan disimulasikan (`Source::Sim`) atau elevasi pengukur hujan (`Source::Gage(i)`), dan `z_ref,T` serupa untuk suhu.
 
 - **Kebiasaan SWAT+ / catatan port:** tanda pada ΔT dibalik terhadap ΔP (referensi dikurangi objek), sama dengan Fortran; dengan `tlaps` positif, objek yang lebih tinggi menjadi lebih dingin. Koreksi dihitung sekali sebelum loop, hanya untuk HRU (objek lain tidak memerlukannya di port ini).
+
+#### 5.3.5  `run_with_calibration`
+
+- **Lokasi:** `run.rs`, `pub fn run_with_calibration(project: &Project, out: &mut dyn OutputSink, opts: RunOptions, cal: &Calibration) -> Result<RunReport, String>`. Sejak 1.1.
+- **Padanan SWAT+:** run SWAT+ dari salinan proyek yang `calibration.cal`-nya (dan `cal_parms.cal`-nya) ditulis dengan isi `cal`.
+- **Tujuan:** `run_with` dengan kalibrasi dari memori sebagai ganti kalibrasi proyek (M1, Lampiran B.2). Dipakai `run --set`, `--calibration`, `--cal-parms` (Bab 16).
+- **Cara kerja:** `Simulation::with_calibration(project, opts, cal)?`, `step` sampai habis, `finish`.
+- **Catatan port:** uji `tests/calibration.rs` (`a_calibration_in_memory_is_the_calibration_written_to_its_files`): run dengan kalibrasi di memori identik byte demi byte dengan run salinan Ames\_sub1 yang berkas kalibrasinya ditulis, dan salinan itu cocok dengan SWAT+ Fortran.
+
+#### 5.3.6  `Simulation`: `new`, `with_calibration`, `set_up`
+
+- **Lokasi:** `run.rs`, `pub struct Simulation<'p>`; `pub fn new(project: &'p Project, opts: RunOptions) -> Result<Self, String>`, `pub fn with_calibration(project, opts, cal: &Calibration) -> Result<Self, String>`, `fn set_up(project, opts, cal) -> Result<Self, String>`. Sejak 1.1 (E1 di `docs/roadmap.md`).
+- **Padanan SWAT+:** seluruh persiapan sebelum `do curyr` di `time_control.f90` beserta rantai `proc_*` di `main.f90`.
+- **Tujuan:** `time_control` dengan loop tahun dan harinya "dibalik ke luar": semua yang di Fortran berupa variabel lokal loop atau variabel modul menjadi field `Simulation`, sehingga pemanggil dapat berhenti di antara dua hari, melihat keadaan, menyalinnya, lalu melanjutkan. `run_with` tersusun dari langkah-langkah ini, sehingga run bertahap adalah run yang sama.
+- **Cara kerja:**
+  1. `new` memanggil `set_up` dengan `Calibration::of(project)`.
+  2. `with_calibration` menolak lebih dulu perubahan yang parameternya tidak ada di `cal.parms` (`Calibration::unknown`, Bab 3), lalu memanggil `set_up`; bila HRU tidak dapat disimulasikan dengan kalibrasi itu (`report.hru_skipped`), ia mengembalikan `Err` daripada menjalankan run tanpa HRU.
+  3. `set_up` mengerjakan langkah 1 sampai 10 `run_with` (5.3.2) dan mengisi field: jam, cuaca, laporan, daftar HRU dengan stasiun dan koreksi lapse, `land`, `network`, `HruBasin`, `Saved`, `hru_saved`, `threads`, `pool`, deposisi atmosfer, `PrintGate`, `PrintYears`, semua akumulator, data tanaman cekungan, dan posisi awal (`curyr = 1`, `in_year = false`, `last_day = None`).
+- **Catatan port:** `Simulation` diturunkan `Clone`. Semua data proyek dipinjam (`&'p Project`), tidak disalin; yang disalin oleh `clone` hanyalah keadaan yang berubah selama run. Kumpulan thread dibungkus `Arc`, karena `rayon::ThreadPool` tidak dapat disalin: salinan simulasi memakai kumpulan yang sama.
+
+#### 5.3.7  `Simulation::step`, `start_year`, `run_day`, `end_year`
+
+- **Lokasi:** `run.rs`, `pub fn step(&mut self, out: &mut dyn OutputSink) -> Result<bool, String>`, dan method privat `start_year(&mut self)`, `run_day(&mut self, jday: i32, out) -> Result<(), String>`, `end_year(&mut self, out)`.
+- **Padanan SWAT+:** satu putaran `do julian_day` di `time_control`, didahului awal tahun (`do curyr`) dan diikuti akhir tahun bila hari itu yang pertama atau terakhir tahunnya.
+- **Tujuan:** menjalankan hari berikutnya. `Ok(false)` bila simulasi sudah selesai.
+- **Cara kerja:**
+  1. Bila `curyr > nbyr`: `Ok(false)`.
+  2. Bila tahun belum dimulai (`!in_year`): `start_year` (langkah 11 di 5.3.2: `clock.start_year`, `prt.start_year`, `start_balance` HRU pada tahun tercetak pertama; `next_jday = day_start`, `year_last = day_end_yr`).
+  3. Bila masih ada hari (`next_jday ≤ year_last`): `run_day(jday)` (langkah 12 di 5.3.2), catat `last_day`, dan bila hari itu yang terakhir panggil `end_year` (langkah 13: hasil tanaman cekungan, `Hru::end_year`, `yrc += 1`, `curyr += 1`). `Ok(true)`.
+  4. Tahun tanpa hari tetap diakhiri (`end_year`), lalu loop mencoba tahun berikutnya.
+- **Catatan port:** uji `tests/step_api.rs` (`stepped_run_is_the_same_run`): run bertahap memberi tabel yang sama byte demi byte dengan `run_with`, setia maupun `--fix-swat`.
+
+#### 5.3.8  `Simulation::finish`
+
+- **Lokasi:** `run.rs`, `pub fn finish(self, out: &mut dyn OutputSink) -> RunReport`.
+- **Tujuan:** laporan progres terakhir (`progress(days_done, total_days, …)`) dan `RunReport`, seperti langkah 14 `run_with`.
+
+#### 5.3.9  `Simulation::run_until`
+
+- **Lokasi:** `run.rs`, `pub fn run_until(&mut self, out: &mut dyn OutputSink, year: i32, jday: i32) -> Result<bool, String>`. Sejak 1.1 (E2 di `docs/roadmap.md`, bagian pertama).
+- **Padanan SWAT+:** tidak ada; SWAT+ hanya mengenal *hot start* lewat berkas.
+- **Tujuan:** menjalankan hari demi hari sampai dan termasuk hari `jday` tahun `year`: pemanasan, atau keadaan pada suatu tanggal untuk dijadikan titik awal.
+- **Cara kerja:** cari posisi hari itu di `project.time.days()`; bila tidak ada, atau sudah lewat (`days_done > k`), `Ok(false)`. Selain itu `step` sampai `days_done > k`.
+- **Catatan port:** dengan `NoOutput` tabel hari-hari itu tidak dibuat. Bersama `checkpoint` ini adalah *hot start* di memori: jalankan sampai tanggal sekali, simpan salinan, dan mulai setiap run (siklus prakiraan, anggota ensemble, skenario) dari salinan.
+
+#### 5.3.10  `Simulation::checkpoint`
+
+- **Lokasi:** `run.rs`, `pub fn checkpoint(&self) -> Simulation<'p>`.
+- **Tujuan:** salinan simulasi sebagaimana adanya (`clone`), yang melanjutkan persis seperti aslinya.
+- **Catatan port:** uji `a_copied_simulation_goes_on_as_the_original` dan `a_checkpoint_starts_the_rest_of_the_run` (`tests/step_api.rs`). Menyimpan keadaan ke berkas belum dibuat (rencana fitur opsional).
+
+#### 5.3.11  `Simulation::calibrate`
+
+- **Lokasi:** `run.rs`, `pub fn calibrate(&mut self, cal: &Calibration) -> Result<(), String>`. Sejak 1.1 (studi spin-up, Lampiran B.7.1).
+- **Padanan SWAT+:** tidak ada. SWAT+ menerapkan `calibration.cal` sekali, sebelum hari pertama; method ini melayani kalibrasi dan studi, bukan run yang dibandingkan dengan SWAT+.
+- **Tujuan:** menerapkan perubahan `cal` pada simulasi yang sedang berjalan, di antara dua hari: parameter HRU dan akuifer berubah, air, tanaman, dan nutriennya tetap.
+- **Cara kerja:**
+  1. Tolak parameter yang tidak ada di `cal.parms` (`unknown`).
+  2. Tolak perubahan yang menyiapkan keadaan ulang alih-alih mengubah parameter: `z`, `bd`, `awc` (menghitung ulang air tanah lewat `soil_awc_init`), `sp_yld`, `flo_init_mm`, `dep_wt_init`, `cbn_init`, `no3_init`, `minp_init` (keadaan awal akuifer), dan `surlag` (diterapkan dari nilai proyek, bukan dari nilai saat itu).
+  3. HRU: `cal_conditions(project, cal, land)`; jaringan: `Network::calibrate(cal)` → `calibrate_aquifers` (Bab 14). Keduanya fungsi yang sama dengan penyiapan.
+- **Catatan port:** perubahan datang sesudah kalibrasi proyek (seperti `--set`). Uji `tests/calibration.rs`: perubahan yang diterapkan sebelum hari pertama memberi tabel run yang disiapkan dengan perubahan itu; perubahan di tengah run tidak mengubah hari-hari sebelumnya; `awc` di tengah run ditolak.
+
+#### 5.3.12  Method baca `Simulation`
+
+| Method | Kegunaan |
+| --- | --- |
+| `is_finished(&self) -> bool` | semua hari sudah dijalankan (`curyr > nbyr`) |
+| `days(&self) -> (usize, usize)` | hari yang sudah dijalankan dan jumlah seluruhnya |
+| `date(&self) -> Day` | hari terakhir yang dijalankan (sebelum hari pertama: hari mulai). Sejak 1.1 juga benar di akhir tahun, ketika jam sudah pindah ke tahun berikutnya |
+| `clock(&self) -> &Clock` | jam (`time`) |
+| `hrus(&self) -> Option<&[Hru]>` | HRU, bila fase lahannya disimulasikan |
+| `network(&self) -> Option<&Network>` | objek di luar HRU, bila disimulasikan |
+| `report(&self) -> &RunReport` | apa yang sudah dilakukan run selain keluaran |
+
+#### 5.3.13  `hru_wave` dan `WaveAcc`
+
+- **Lokasi:** `run.rs`, `fn hru_wave(land: &mut [Hru], saved: &mut [Saved], days: &mut [Option<HruDay>], jobs: &[(usize, HruWeather, DayCtx)], basin: &HruBasin, output: bool, printing: bool, pool: Option<&rayon::ThreadPool>, acc: Option<WaveAcc>)` dan `struct WaveAcc<'a> { acc, rows, emit, pday }`. Sejak 1.1, hanya dengan `--fix-swat`.
+- **Padanan SWAT+:** tidak ada; SWAT+ menjalankan HRU satu per satu (`command`).
+- **Tujuan:** satu gelombang HRU di beberapa thread. Gelombang berasal dari `Network::hru_waves` (Bab 12): sebuah HRU berada di gelombang sesudah semua HRU yang airnya ia terima hari itu. Tanpa routing antar-HRU, semua HRU satu gelombang (Batanghari: 1.858 HRU sekaligus).
+- **Masukan dan keluaran:** untuk setiap HRU gelombang, cuaca dan `DayCtx`-nya (`jobs`, disusun `run_day` dengan cara yang sama dengan loop setia); keluaran `days[j]`, dan bila `output`, jumlah periode HRU (`HruAcc::day`) ke `emit[j]` serta baris wilayah ke `rows[j]`.
+- **Cara kerja:**
+  1. Pasangkan setiap HRU dengan `Saved`-nya sendiri, tempat hasil harinya, dan akumulatornya (`WaveAcc`), sehingga setiap thread hanya menyentuh milik HRU-nya.
+  2. Untuk setiap HRU: `h.day(w, ctx, basin, s)`; bila `output`, `close_day`; bila `acc` ada, `HruAcc::day` dan `region_values` di thread itu juga.
+  3. Bila ada `pool` dan paling sedikit 8 HRU: `pool.install(|| work.into_par_iter().with_min_len(4).for_each(…))`; selain itu berurutan di thread utama.
+  4. Sesudah gelombang, `run_day` mengerjakan di thread utama, dalam urutan gelombang, apa yang di loop setia mengikuti hari HRU: hasil tanaman cekungan dan `Network::set_hru`. Keluaran HRU tetap ditulis di thread utama dalam urutan nomor HRU, dari `emit`.
+- **Catatan port:** hasil satu HRU tidak bergantung pada thread yang menjalankannya atau HRU di sebelahnya, dan semua penjumlahan dilakukan dalam urutan tetap, sehingga tabel sama untuk berapa pun jumlah thread (uji `tests/parallel.rs`; ke-37 skenario dengan 1 dan 3 thread). Versi pertama memulai thread dua kali sehari dan membuat baris harian HRU walau tidak dicetak: di laptop Windows ARM 12 inti percepatannya paling banyak 1,21×. Sejak kumpulan thread dibuat sekali per run dan jumlah periode HRU dihitung di thread-nya, percepatannya 1,67× pada 12 thread (`docs/parallel.md`).
 
 ### 5.4  Jam simulasi (`clock.rs`)
 
@@ -2334,7 +2463,15 @@ z = \sqrt{-2\,\ln r_1}\;\cos(6.283185\, r_2)
   5. Bila `list[nn] > find`: `nl = nn`; bila `list[nn] < find`: `nf = nn`.
 - **Kebiasaan SWAT+ / catatan port:** fungsi ini menganggap daftar terurut. Pada daftar tak terurut, nama yang ada bisa tidak ditemukan (pengujian: di `["b","c","a"]`, `"a"` tidak ditemukan), dan nama bisa ditemukan hanya bila probe pertama kebetulan mengenainya. Dalam SWAT+ ini membuat stasiun yang berkas pengukurnya tidak ditemukan beralih ke data simulasi (docs `swat-quirks.md`: “Station files are found by binary search”; contoh Ames\_sub1 yang stasiunnya menyebut `ames.tem` sedangkan daftar berisi `ames.tmp`). Batas 25 iterasi cukup untuk daftar sampai sekitar 2²⁵ nama (komentar Fortran: “max for 100,000,000”).
 
-#### 5.5.7  Pengujian dalam `fortran.rs`
+#### 5.5.7  `aunif_skip`
+
+- **Lokasi:** `fortran.rs`, `pub fn aunif_skip(seed: i32, n: u64) -> i32`. Sejak 1.1.
+- **Padanan SWAT+:** tidak ada.
+- **Tujuan:** benih yang ditinggalkan `aunif` setelah `n` tarikan dari `seed`, tanpa menariknya satu per satu. Dipakai `--fix-swat` untuk memberi tabel keputusan setiap HRU aliran bilangan acaknya sendiri: HRU ke-*j* mulai dari benih bersama yang dimajukan *j* × 10⁶ tarikan.
+- **Cara kerja:** generator Park–Miller adalah perkalian modular, sehingga setelah *n* tarikan benihnya s₀ · 16807ⁿ mod (2³¹ − 1). Pangkat dihitung dengan pengkuadratan berulang dalam `u64`; tidak ada luapan karena kedua faktor kurang dari 2³¹.
+- **Catatan port:** uji `aunif_skip_is_aunif_drawn`: untuk empat benih, `aunif_skip(s, n)` sama dengan `aunif` yang ditarik `n` kali, untuk `n` = 0 sampai 1999.
+
+#### 5.5.8  Pengujian dalam `fortran.rs`
 
 | Fungsi | Lokasi | Kegunaan |
 | --- | --- | --- |
@@ -2342,6 +2479,7 @@ z = \sqrt{-2\,\ln r_1}\;\cos(6.283185\, r_2)
 | `binary_search_quirks` | `fortran.rs`, `mod tests` | Daftar terurut ditemukan semua; nama tak ada → `None`; kasus Ames\_sub1; daftar tak terurut yang ditemukan dan yang terlewat. |
 | `padded_comparison` | `fortran.rs`, `mod tests` | Kesetaraan dengan spasi pengisi dan urutan spasi < `!`. |
 | `atri_stays_in_bounds` | `fortran.rs`, `mod tests` | 1000 nilai `atri(0.2, 0.6, 0.9)` semuanya dalam (0, 1). |
+| `aunif_skip_is_aunif_drawn` | `fortran.rs`, `mod tests` | Lompatan benih sama dengan tarikan satu per satu (5.5.7). |
 
 ### 5.6  Hidrograf (`hyd.rs`)
 
@@ -2719,7 +2857,53 @@ SW_{ave} = \frac{SW_{init} + SW_{final}}{2}, \qquad SNO_{pack} = \frac{SNO_{init
 
 #### 5.8.21  Daftar periksa kelengkapan bab
 
-Fungsi yang didokumentasikan dalam bab ini: `run.rs` 27 (`HruWeather::default`, 19 method `OutputSink`, 3 method `PrintGate`, `run`, `run_with`, `regions`, `lapse_rates`); `clock.rs` 7; `fortran.rs` 6 ditambah 4 uji; `hyd.rs` 9 ditambah 1 uji; `periods.rs` 29. Jumlah: 78 fungsi produksi dan 5 fungsi uji. `lib.rs` tidak berisi fungsi.
+Fungsi yang didokumentasikan dalam bab ini: `run.rs` 50 (`HruWeather::default`, 21 method `OutputSink`, `NoOutput::hru_day`, 3 method `PrintGate`, `run`, `run_with`, `run_with_calibration`, 18 method `Simulation` (`new`, `with_calibration`, `set_up`, `step`, `start_year`, `run_day`, `end_year`, `finish`, `run_until`, `calibrate`, `checkpoint` dan tujuh method baca), `hru_wave`, `regions`, `lapse_rates`); `clock.rs` 7; `fortran.rs` 7 ditambah 5 uji; `hyd.rs` 9 ditambah 1 uji; `periods.rs` 29; `batch.rs` 10 (5.9). Jumlah: 112 fungsi produksi dan 6 fungsi uji unit. `lib.rs` tidak berisi fungsi.
+
+### 5.9  Banyak run sekaligus (`batch.rs`)
+
+Modul ini ditambahkan di 1.1 (M2 dan studi spin-up, Lampiran B.3 dan B.7). Kalibrasi menjalankan proyek yang sama ratusan kali dengan set parameter berbeda, dan run-run itu tidak saling bergantung. Cara tercepat adalah satu run per inti, dengan setiap run hanya menyimpan deret yang dibandingkan dengan pengamatan. Tidak ada padanan SWAT+: program kalibrasi SWAT+ menulis berkas dan menjalankan program berkali-kali.
+
+| Tipe | Isi |
+| --- | --- |
+| `Series` | yang disimpan satu run untuk setiap hari tercetak: `days`, nomor saluran pilihan `channels` (1-based, nomor di `channel_sd`), debit keluar per saluran `flo` (m³/s, `flo_out` di `channel_sd_day`), bila diminta kedalaman `dep_out` (kurva rating SWAT+) dan `dep_mann` (rumus Manning), serta hujan `precip` dan ET `et` rata-rata DAS (mm, dibobot luas HRU) |
+| `SeriesSink` | `OutputSink` yang mengisi `Series` dan membuang tabel lain; bobot luas setiap HRU, jumlah harian hujan dan ET dalam f64, dan posisi setiap saluran di `series.channels` |
+| `BatchResult` | `Result<(Series, RunReport), String>`: hasil satu run, atau alasan gagal |
+
+#### 5.9.1  `SeriesSink::new`, `close_day`, `finish`
+
+- **Lokasi:** `crates/swat-engine/src/batch.rs`, `pub fn new(project: &Project, channels: &[usize], depth: bool) -> SeriesSink`, `fn close_day(&mut self)`, `pub fn finish(self) -> Series`.
+- **Tujuan:** `new` menghitung bobot setiap HRU (luasnya dibagi luas semua HRU, f64) dan tempat setiap saluran pilihan. `close_day` menutup hari: jumlah hujan dan ET ditambahkan ke deret lalu dinolkan. `finish` menutup hari terakhir dan mengembalikan deret.
+
+#### 5.9.2  Method `OutputSink` milik `SeriesSink`
+
+- **`hru_day`:** HRU pertama membuka hari baru (`close_day` hari sebelumnya, lalu tanggal dicatat). Setiap HRU menambah `bobot × precip` dan `bobot × et` dari neraca airnya; tanpa fase lahan hanya hujan cuaca.
+- **`cha_day`:** bila saluran `ich` dipilih, `hout.flo` (m³/s) ditambahkan ke deretnya.
+- **`cha_hyd`** dan **`wants_cha_hyd`:** bila kedalaman diminta (`depth`), `h.out.dep` dan `h.manning_out.0` ditambahkan; `wants_cha_hyd` mengembalikan `depth`, sehingga hidraulika hanya dihitung bila perlu.
+- **Catatan:** uji `tests/batch.rs` (`the_series_are_what_the_tables_print`): deret sama dengan angka yang dicetak `channel_sd_day`, `channel_hyd_day`, dan `basin_wb_day` dalam presisi cetaknya.
+
+#### 5.9.3  `run_one`
+
+- **Lokasi:** `batch.rs`, `pub fn run_one(project: &Project, opts: RunOptions, cal: &Calibration, channels: &[usize], depth: bool) -> BatchResult`.
+- **Tujuan:** satu run: `Simulation::with_calibration`, `step` sampai habis ke `SeriesSink`, `finish`.
+
+#### 5.9.4  `run_batch`
+
+- **Lokasi:** `batch.rs`, `pub fn run_batch(project, opts, cals: &[Calibration], channels, depth, threads: usize, progress: &(dyn Fn(usize) + Sync)) -> Vec<BatchResult>`.
+- **Tujuan:** menjalankan proyek sekali per kalibrasi di `cals`, `threads` run sekaligus (0 = sebanyak inti), hasil dalam urutan `cals`.
+- **Cara kerja:**
+  1. Jumlah pekerja = `min(threads, jumlah kalibrasi)`; setiap run berjalan dengan `opts.threads = 1`, karena inti lebih berguna dibagi antar-run.
+  2. Di dalam `std::thread::scope`, setiap pekerja mengambil nomor run berikutnya dari penghitung atomik, menjalankan `run_one`, menyimpan hasilnya di tempatnya (`Mutex<Vec<Option<BatchResult>>>`), dan memanggil `progress(jumlah selesai)`.
+  3. Run yang tidak selesai tercatat `Err("the run did not finish")`.
+- **Catatan:** deret satu run tidak bergantung pada run lain yang berjalan bersamaan atau urutannya (uji `a_run_gives_the_same_series_whatever_runs_beside_it`); run yang gagal dilaporkan di tempatnya tanpa menghentikan yang lain (`a_failed_run_is_reported_in_its_place`). Batanghari, empat run: 69,7 detik satu per satu, 35,7 detik dua sekaligus di dua inti.
+
+#### 5.9.5  `run_batch_shared`
+
+- **Lokasi:** `batch.rs`, `pub fn run_batch_shared(project, opts, base: &Calibration, sets: &[Vec<CalUpdate>], year: i32, channels, depth, threads, progress) -> Result<Vec<BatchResult>, String>`. Sejak studi spin-up (Lampiran B.7.2).
+- **Tujuan:** `run_batch` dari satu pemanasan bersama: proyek dengan kalibrasinya sendiri `base` dijalankan sekali sampai hari terakhir tahun `year` (dalam praktik tahun-tahun pemanasan, yang tidak dicetak), lalu setiap run mulai dari salinan keadaan itu dengan perubahannya sendiri.
+- **Cara kerja:**
+  1. `Simulation::with_calibration(project, opts, base)`, lalu `run_until(&mut NoOutput, year, 365 atau 366)`; bila hari itu tidak ada di periode simulasi, `Err`.
+  2. Pekerja seperti `run_batch`. Untuk set ke-*i*: `spun.checkpoint()`, `calibrate(&Calibration { parms: base.parms, updates: set })` (Bab 5.3.11), `step` sampai habis ke `SeriesSink`, `finish`.
+- **Catatan:** pemanasan setiap run memakai parameter proyek, bukan parameternya sendiri. Uji `tests/batch.rs`: set tanpa perubahan memberi run proyek sendiri hari demi hari; set dengan perubahan dekat dengan, tetapi tidak sama dengan, run dengan pemanasannya sendiri. Studi B.7 menunjukkan bahwa pada Pessel peringkat set parameter berubah (korelasi peringkat 0,77), sehingga kalibrasi tetap memakai pemanasan masing-masing run dan `--shared-spinup` hanya untuk eksplorasi cepat.
 
 ## Bab 6  Iklim: cuaca terukur, generator cuaca, dan evapotranspirasi potensial
 
@@ -3513,10 +3697,10 @@ Penyiapan dibagi menjadi tiga tahap yang meniru urutan program utama SWAT+: (a) 
 
 #### 7.2.1  `init_hrus`
 
-- **Lokasi:** `crates/swat-engine/src/hru/mod.rs`, `pub fn init_hrus(project, wgn: &[usize], wgns: &[WgnState], step: i32, ndays: &[i32; 13]) -> Result<Vec<Hru>, String>`
+- **Lokasi:** `crates/swat-engine/src/hru/mod.rs`, `pub fn init_hrus(project, cal: &Calibration, wgn: &[usize], wgns: &[WgnState], step: i32, ndays: &[i32; 13]) -> Result<Vec<Hru>, String>` (parameter `cal` sejak 1.1)
 - **Padanan SWAT+:** `proc_hru.f90` (dengan `hrudb_init`, `topohyd_init`, `soils_init`, `soil_phys_init`, `plant_init`, `cn2_init`, `hydro_init`), `time_conc_init.f90`, `cal_conditions.f90`, dan `soil_nutcarb_init`
 - **Tujuan:** Membangun seluruh vektor `Hru` dalam keadaan yang sama dengan keadaan SWAT+ sesaat sebelum hari simulasi pertama, atau menolak dengan alasan bila masukan memerlukan bagian SWAT+ yang belum di-port.
-- **Masukan dan keluaran:** proyek, indeks generator cuaca per HRU (`wgn`, berbasis-0), status generator (`wgns`), jumlah langkah waktu per hari (`step`), dan jumlah hari kumulatif per bulan (`ndays`). Keluaran vektor HRU atau `Err`.
+- **Masukan dan keluaran:** proyek, kalibrasi yang diterapkan (`cal`: milik proyek, atau dari memori; diteruskan ke `cal_conditions`), indeks generator cuaca per HRU (`wgn`, berbasis-0), status generator (`wgns`), jumlah langkah waktu per hari (`step`), dan jumlah hari kumulatif per bulan (`ndays`). Keluaran vektor HRU atau `Err`.
 - **Cara kerja:**
   1. Validasi kode: `cswat` harus 0 atau 2; Green-Ampt (`gampt` != 0) menuntut langkah sub-harian (`step` > 1); `step` maksimum 96; `pet` 0–3; `crk` (aliran retakan) dan `gwflow` harus 0. Pelanggaran menghasilkan `Err` dengan alasan.
   2. Baca `ffcb` (bawaan 0) dan `surlag` (bawaan 4) dari `parameters.bsn`.
@@ -3760,9 +3944,9 @@ v = \begin{cases} val & \text{absval} \\ cur + val & \text{abschg} \\ (1 + val/1
 
 #### 7.4.5  `cal_conditions`
 
-- **Lokasi:** `hru/mod.rs`, `fn cal_conditions(project, hrus: &mut [Hru]) -> Result<(), String>`
+- **Lokasi:** `hru/mod.rs`, `pub(crate) fn cal_conditions(project, cal: &Calibration, hrus: &mut [Hru]) -> Result<(), String>` (parameter `cal` dan visibilitas `pub(crate)` sejak 1.1)
 - **Padanan SWAT+:** `cal_conditions.f90` (dipanggil dari `proc_cal`)
-- **Tujuan:** Menerapkan setiap baris `calibration.cal` ke parameter HRU, tanah, dan DAS.
+- **Tujuan:** Menerapkan setiap baris `cal.updates` (isi `calibration.cal`, atau kalibrasi dari memori) ke parameter HRU, tanah, dan DAS. Dipanggil `init_hrus` saat penyiapan dan, sejak 1.1, `Simulation::calibrate` di tengah run (Bab 5.3.11); uraian lengkapnya di Bab 14.6.5.
 - **Cara kerja:**
   1. Untuk setiap pembaruan, ambil `cal_parm`. Jenis objek selain `hru`, `sol`, `bsn`, `aqu` dan jenis perubahan selain `absval`, `abschg`, `pctchg`, `relchg` ditolak.
   2. `aqu` dilewati (diterapkan saat akuifer disiapkan).
@@ -4342,7 +4526,7 @@ Model tanaman SWAT+ menyimpan keadaan dalam beberapa array modul Fortran (`pcom(
 | `cvm` | ln(`usle_c`) |
 | `fracs` | fraksi metabolik/struktural/lignin residu di atas dan di bawah tanah (`PartFracs`, model karbon) |
 
-**`Plant`** — tanaman yang sedang tumbuh di HRU, gabungan `pcom(j)%plcur(ipl)`, `plg`, `plm`, `plstr` dan `pl_mass(j)` untuk tanaman itu: `db` (salinan `PlantDb`), `cpnm` (nama di `plant.ini`, dirujuk operasi), `yield_tot` dan `harv_num` (hasil kumulatif dan jumlah panen), `gro` dan `idorm` (sedang tumbuh, dorman), `phuacc`/`phuacc_p` (fraksi heat unit terkumpul musim ini dan seumur perennial), `phumat`/`phumat_p` (heat unit menuju matang, °C·hari), `curyr_mat`, `lai_pot`, `harv_idx`, `epco`, `leaf_tov`; dari `plg`: `lai`, `olai` (LAI saat penurunan dimulai), `dphu`, `d_senes`, `cht` (m), `laimxfr`, `root_dep` (mm), `root_frac`, `rtfr` (fraksi akar per lapisan), `hi_adj`, `hi_prev`, `plet`, `plpet` (mm); dari `plm`: `n_fr`, `p_fr`; dari `plstr`: `strsw`, `strst`, `strsn`, `strsp`, `strsa`, `strss` (faktor stres 0–1, 1 = tanpa stres), `reg`, dan akumulator musiman `sum_w`, `sum_tmp`, `sum_n`, `sum_p`, `sum_a` untuk `mgt_out.txt`; dari `pl_mass`: `tot`, `ab_gr`, `leaf`, `stem`, `seed`, `root` (semuanya `OrgMass`), `rsd` (residu permukaan milik tanaman) dan `soil_rsd` (residu per lapisan tanah); serta `par` (radiasi yang diintersepsi hari ini, MJ/m²).
+**`Plant`** — tanaman yang sedang tumbuh di HRU, gabungan `pcom(j)%plcur(ipl)`, `plg`, `plm`, `plstr` dan `pl_mass(j)` untuk tanaman itu: `db` (`Arc<PlantDb>` sejak 1.1: data `plants.plt` tanaman itu, dibagi dan hanya dibaca selama run; sebelumnya salinan `PlantDb` yang ikut tersalin tiga kali sehari ketika rutin harian meminjam tanaman), `cpnm` (nama di `plant.ini`, dirujuk operasi), `yield_tot` dan `harv_num` (hasil kumulatif dan jumlah panen), `gro` dan `idorm` (sedang tumbuh, dorman), `phuacc`/`phuacc_p` (fraksi heat unit terkumpul musim ini dan seumur perennial), `phumat`/`phumat_p` (heat unit menuju matang, °C·hari), `curyr_mat`, `lai_pot`, `harv_idx`, `epco`, `leaf_tov`; dari `plg`: `lai`, `olai` (LAI saat penurunan dimulai), `dphu`, `d_senes`, `cht` (m), `laimxfr`, `root_dep` (mm), `root_frac`, `rtfr` (fraksi akar per lapisan), `hi_adj`, `hi_prev`, `plet`, `plpet` (mm); dari `plm`: `n_fr`, `p_fr`; dari `plstr`: `strsw`, `strst`, `strsn`, `strsp`, `strsa`, `strss` (faktor stres 0–1, 1 = tanpa stres), `reg`, dan akumulator musiman `sum_w`, `sum_tmp`, `sum_n`, `sum_p`, `sum_a` untuk `mgt_out.txt`; dari `pl_mass`: `tot`, `ab_gr`, `leaf`, `stem`, `seed`, `root` (semuanya `OrgMass`), `rsd` (residu permukaan milik tanaman) dan `soil_rsd` (residu per lapisan tanah); serta `par` (radiasi yang diintersepsi hari ini, MJ/m²).
 
 **`PlantBasin`** — nilai basin yang dibaca rutin tanaman: `co2` (ppm), `n_updis`, `p_updis` (parameter distribusi serapan N dan P), `nfixmx` (fiksasi N maksimum, kg/ha/hari), `nostress` (kode `codes.bsn`), `water_norm`, `n_norm`, `p_norm` (penormal distribusi serapan), dan `fixes` (mode `--fix-swat`).
 
@@ -4350,7 +4534,7 @@ Model tanaman SWAT+ menyimpan keadaan dalam beberapa array modul Fortran (`pcom(
 
 **`PlantWeather`** — cuaca dan kalender: `tave`, `tmin` (°C), `solrad` (MJ/m²), `station_tave` (suhu rata-rata stasiun tanpa penyesuaian), `daylength` dan `daylmn` (jam; panjang hari dan minimum tahunan generator), `dormhr` (ambang dormansi, jam), `tmp_an`, `end_yr`.
 
-**`Saved`** — variabel yang di Fortran bertahan antar-panggilan dan dibagi semua HRU (`SAVE` implisit atau array modul): `rndseed_cond`, `delg_p`, array permintaan per nomor tanaman `uno3d`, `uapd`, `un2`, `up2` (21 elemen, indeks 1-basis; SWAT+ `mpc` = 20), `fr_orgp`, `fr_actmin`, `fr_stamin`, `c_microb_sed`, `enratio`, `septic_opt`. Hanya `delg_p` dan empat array permintaan yang dipakai di bab ini; sisanya milik bab nutrien/sedimen/septik.
+**`Saved`** — variabel yang di Fortran bertahan antar-panggilan dan dibagi semua HRU (`SAVE` implisit atau array modul): `rndseed_cond`, `delg_p`, array permintaan per nomor tanaman `uno3d`, `uapd`, `un2`, `up2` (21 elemen, indeks 1-basis; SWAT+ `mpc` = 20), `fr_orgp`, `fr_actmin`, `fr_stamin`, `c_microb_sed`, `enratio`, `septic_opt`. Hanya `delg_p` dan empat array permintaan yang dipakai di bab ini; sisanya milik bab nutrien/sedimen/septik. Run setia memakai satu `Saved` untuk semua HRU, dalam urutan perintah, seperti SWAT+. Sejak 1.1, `--fix-swat` memberi setiap HRU salinannya sendiri (`hru_saved`, dengan benih acak yang dimajukan `aunif_skip`, Bab 5.5.7), sehingga HRU tidak lagi bergantung pada urutan dan dapat berjalan paralel; koreksi ini tercatat di `docs/swat-fixes.md` dan Bab 17.6 (F20).
 
 #### 8.1.1  `exp_w`
 
@@ -7176,7 +7360,7 @@ Koreksi `--fix-swat` yang menyentuh bab ini: koefisien evaporasi lahan basah mil
 
 Bab ini menjelaskan bagian engine yang membawa air dan muatannya dari HRU ke luar DAS: jaringan objek dan loop perintah (`command`), routing lanskap dari satu HRU ke HRU lain, unit routing (*routing unit*, RU) beserta *delivery ratio*-nya, hidrograf sub-harian (unit hidrograf, `tsin`), serta saluran SWAT-DEG (`sd_channel`): kurva rating, routing tampungan (Muskingum atau *variable storage coefficient*), sedimen dataran banjir dan erosi tebing, rembesan dan penguapan, kualitas air QUAL2E, dan suhu air sungai. Dua file Rust dicakup seluruhnya: `crates/swat-engine/src/route.rs` (struct `Network`) dan `crates/swat-engine/src/channel.rs` (struct `Channels`), ditambah ringkasan `docs/routing.md`. Fungsi akuifer di `route.rs` (`aqu_1d_control`, `AquDay::columns`, `AquDay::columns_as`, `Network::aquifers`, dan bagian `aqu_initial` di `Network::new`) hanya disebut di sini; uraiannya ada di Bab 14. Reservoir dan objek *recall* (point source) diimplementasikan di `res.rs`; bab ini hanya menjelaskan bagaimana loop perintah memanggil keduanya.
 
-Posisi dalam alur simulasi harian: setelah cuaca dibangkitkan, HRU dijalankan dalam urutan perintah SWAT+ (`Network::hru_order`); HRU yang menerima air HRU lain mendapat *runon* lewat `Network::hru_runon` sebelum evapotranspirasinya sendiri, lalu hidrograf HRU dicatat ke jaringan dengan `Network::set_hru`. Setelah semua HRU selesai, `Network::day` menjalankan objek-objek selebihnya (unit routing, akuifer, saluran SWAT-DEG, reservoir, recall, outlet) dalam urutan perintah, masing-masing menerima jumlah hidrograf dari objek pengirimnya. Padanan Fortran utama: `hyd_connect.f90`, `hyd_read_connect.f90`, `command.f90`, `ru_control.f90`, `dr_ru.f90`, `time_conc_init.f90`, `unit_hyd.f90`, `unit_hyd_ru_hru.f90`, `flow_hyd_ru_hru.f90`, `hru_hyds.f90`, `rls_routesurf.f90`, `rls_routesoil.f90`, `sd_hydsed_init.f90`, `sd_rating_curve.f90`, `sd_channel_control3.f90`, `sd_channel_sediment3.f90`, `ch_rtmusk.f90`, `ch_watqual4.f90`, `ch_temp.f90`, `rcurv_interp_flo.f90`, `qman.f90`, `theta.f90`, `wq_semianalyt.f90`, `wq_k2m.f90`, `ch_read_nut.f90`.
+Posisi dalam alur simulasi harian: setelah cuaca dibangkitkan, HRU dijalankan dalam urutan perintah SWAT+ (`Network::hru_order`); HRU yang menerima air HRU lain mendapat *runon* lewat `Network::hru_runon` sebelum evapotranspirasinya sendiri, lalu hidrograf HRU dicatat ke jaringan dengan `Network::set_hru`. Setelah semua HRU selesai, `Network::day` menjalankan objek-objek selebihnya (unit routing, akuifer, saluran SWAT-DEG, reservoir, recall, outlet) dalam urutan perintah, masing-masing menerima jumlah hidrograf dari objek pengirimnya. Sejak 1.1, dengan `--fix-swat` dan lebih dari satu thread, objek-objek itu dipotong menjadi bagian per sub-DAS yang dirouting bersamaan (`make_plan`, `run_part`; 12.4.5 sampai 12.4.7), dengan tabel yang sama untuk berapa pun jumlah thread. Kode saluran juga dipisah: pengaturan bersama (`ChanCfg`), nilai yang di SWAT+ terbawa dari satu saluran ke saluran berikutnya (`Carry`), dan suhu udara tertunda per pengukur (`AirLags`); kurva rating dan interpolasinya menjadi fungsi bebas (`rating_curve`, `interp_flo`), dan hidraulika harian saluran dapat dicetak ke tabel tambahan `channel_hyd_day.txt` (12.6.4 sampai 12.6.6). Padanan Fortran utama: `hyd_connect.f90`, `hyd_read_connect.f90`, `command.f90`, `ru_control.f90`, `dr_ru.f90`, `time_conc_init.f90`, `unit_hyd.f90`, `unit_hyd_ru_hru.f90`, `flow_hyd_ru_hru.f90`, `hru_hyds.f90`, `rls_routesurf.f90`, `rls_routesoil.f90`, `sd_hydsed_init.f90`, `sd_rating_curve.f90`, `sd_channel_control3.f90`, `sd_channel_sediment3.f90`, `ch_rtmusk.f90`, `ch_watqual4.f90`, `ch_temp.f90`, `rcurv_interp_flo.f90`, `qman.f90`, `theta.f90`, `wq_semianalyt.f90`, `wq_k2m.f90`, `ch_read_nut.f90`.
 
 Semua operasi hidrograf memakai tipe `Hyd` (Bab tentang `hyd.rs`): `plus` (`hydout_add`, jumlah massa; suhu dirata-rata tertimbang debit), `minus`, `scale(k, h)` (`hydout_mult_const`), `times` (`hydout_mult`, perkalian komponen demi komponen), `over` (pembagian dengan konstanta) dan `add_const`. Satuan di hidrograf objek: debit `flo` dalam m3 per hari, massa (sedimen dalam ton, nutrien dalam kg), suhu dalam °C.
 
@@ -7209,13 +7393,13 @@ Struct privat dan publik di `route.rs`:
 | `RuElem` | elemen RU: indeks objek, apakah HRU, fraksi `frac` dan *delivery ratio* `dr` (sebuah `Hyd` faktor pengali) |
 | `Ru` | RU: indeks objek, luas `da_km2` (km2), elemen, waktu konsentrasi `tc` (jam, `ru_tc`) |
 | `AquDay`, `Aqu` | keadaan akuifer harian (Bab 14) |
-| `Network` | seluruh jaringan: `obs`, urutan perintah `order` (tanpa HRU) dan `hru_order`, `rus`, peta `ru_of`/`aqu_of`/`chan_of`/`res_of`/`rec_of` dari indeks objek ke indeks per jenis, `ru_d` (keluaran harian RU), `fixes`, `channels: Option<Channels>`, `chan_in` (asal inflow tiap saluran untuk suhu air), `channel_skipped` (alasan saluran tidak dirouting), `reservoirs`, `recalls`, `step` (langkah per hari), `ga` (Green-Ampt), `dtm` (menit per langkah), `tconc` (waktu konsentrasi HRU, jam), `hhsurfq` (limpasan HRU per langkah, mm) |
+| `Network` | seluruh jaringan: `obs`, urutan perintah `order` (tanpa HRU) dan `hru_order`, jumlah HRU `n_hru` (HRU selalu di awal `obs`), rencana routing paralel `plan` (sejak 1.1, 12.4.6), `rus`, peta `ru_of`/`aqu_of`/`chan_of`/`res_of`/`rec_of` dari indeks objek ke indeks per jenis, `ru_d` (keluaran harian RU), `fixes`, `channels: Option<Channels>`, `chan_in` (asal inflow tiap saluran untuk suhu air), `channel_skipped` (alasan saluran tidak dirouting), `reservoirs`, `recalls`, `step` (langkah per hari), `ga` (Green-Ampt), `dtm` (menit per langkah), `tconc` (waktu konsentrasi HRU, jam), `hhsurfq` (limpasan HRU per langkah, mm) |
 | `NetDay` | masukan harian loop perintah: cuaca per stasiun `weat`, panjang hari `daylth` (jam), pengukur suhu `tgage`, neraca air HRU `hru_wb` (salju leleh, limpasan permukaan, aliran lateral, *water yield*; mm), `yrs`, `jday`, `yrc`, `mo`, `day_mo`, `print` |
 | `ChannelDay` | alias tuple untuk baris `channel_sd_day`: nomor, GIS id, nama, `ChWat`, tampungan, inflow, outflow, suhu air |
 
 #### 12.1.1  `Network::new`
 
-- **Lokasi:** `crates/swat-engine/src/route.rs`, `pub fn new(project: &Project, stations: &[String], tconc: &[f32], ovn_km: &[(f32, f32)], fixes: bool) -> Result<Option<Network>, String>`
+- **Lokasi:** `crates/swat-engine/src/route.rs`, `pub fn new(project: &Project, cal: &Calibration, stations: &[String], tconc: &[f32], ovn_km: &[(f32, f32)], fixes: bool) -> Result<Option<Network>, String>` (parameter `cal` sejak 1.1: kalibrasi akuifer yang diterapkan)
 - **Padanan SWAT+:** `hyd_connect.f90` (larik objek, keluaran/masukan, urutan perintah `cmd_next`), `hyd_read_connect.f90` (`day_max`, alokasi `hyd_flo`, `tsin`, `uh`), `ru_read_elements.f90`, `time_conc_init.f90` (waktu konsentrasi RU), `dr_ru.f90` (*delivery ratio*), `aqu_initial.f90` dan `cal_conditions.f90` untuk akuifer (Bab 14), `sd_channel_read.f90`/`sd_hydsed_init.f90` (lewat `Channels::new`), `res_read`/`res_initial`/`recall_read` (lewat `res.rs`), `unit_hyd_ru_hru.f90`.
 - **Tujuan:** membangun seluruh jaringan objek di luar HRU satu kali sebelum simulasi: siapa mengirim apa ke siapa, urutan eksekusi, parameter RU, akuifer, saluran, reservoir, recall, dan unit hidrograf.
 - **Masukan dan keluaran:** `project` (tabel input yang sudah dibaca), nama stasiun cuaca, `tconc` per HRU (jam), `ovn_km` per HRU (n Manning lahan, luas km2). Mengembalikan `Ok(None)` bila proyek hanya berisi HRU (tidak ada jaringan), `Err(teks)` yang menamai fitur yang belum diporting, atau `Ok(Some(Network))`.
@@ -7244,7 +7428,7 @@ DR = \min\left(1,\ \left(\frac{t_{c,HRU}}{t_{c,RU}}\right)^{0.5}\right)
 
 Rasio ini disimpan sebagai `Hyd` yang semua komponennya `DR` kecuali `flo = 1` (air tidak dikurangi, hanya muatan). Nama `full` atau `1`: semua komponen 1. Nama lain (tabel `delratio.del`) belum diporting → `Err`. Pangkat memakai `rpow` (padanan `**` Fortran).
 
-7. **Akuifer** (`aqu_initial`) dan kalibrasinya: lihat Bab 14.
+7. **Akuifer** (`aqu_initial`) dan kalibrasinya (`calibrate_aquifers(aqus, obs, cal)`): lihat Bab 14.
 8. **Urutan perintah** (`cmd_next` di `hyd_connect`). Dilakukan beberapa lintasan atas larik objek; pada setiap lintasan, objek yang belum jalan, yang seluruh pengirimnya sudah jalan (`rcv_sum == rcv_tot`) dan, untuk RU, seluruh elemennya sudah jalan (`dfn_sum == dfn_tot`), ditandai jalan; penghitung penerima dan RU-nya dinaikkan *di dalam lintasan yang sama*, sehingga objek berikutnya dalam larik bisa langsung jalan pada lintasan itu. HRU masuk ke `hru_order`, objek lain ke `order`. Lebih dari 5000 lintasan → `Err` ("infinite loop"), sama dengan batas SWAT+.
 9. **Saluran SWAT-DEG.** `Channels::new` dipanggil dengan pointer data (`props`) tiap saluran. Bila gagal, alasannya disimpan di `channel_skipped` dan saluran bertindak sebagai objek penerus (outflow = inflow). Untuk setiap saluran juga dicatat, per inflow, apakah ia berasal dari saluran SWAT-DEG dan RU mana saja yang menjadi inflow (untuk `ch_temp`).
 10. **Reservoir dan recall**: dibuat lewat `res::Reservoir::new` dan `res::Recall::new`; reservoir dengan `lapse` = 1 ditolak.
@@ -7321,9 +7505,9 @@ Q_{d}(k) \mathrel{+}= U_1(k)\,S_q, \qquad Q_{d+1}(k) = U_2(k)\,S_q
 - **Cara kerja:** HRU dan RU: `day_cur += 1`; jenis lain: `day_cur = 2`. Bila melebihi `day_max`, kembali ke 1.
 - **Kebiasaan SWAT+ / catatan port:** objek non-HRU/RU dengan `day_max` = 2 (saluran, outlet) selalu berada di hari 2, sedangkan saluran menulis keluarannya di slot hari 1 (`ch_rtmusk` mengosongkan seluruh hidrograf lalu mengisi hari pertama) dan pembacanya mengambil slot hari 1 juga. Port mereproduksi konvensi ini apa adanya.
 
-#### 12.2.5  `Network::sum_tsin`
+#### 12.2.5  `sum_tsin`
 
-- **Lokasi:** `route.rs`, `fn sum_tsin(&mut self, icmd: usize)`.
+- **Lokasi:** `route.rs`, `fn sum_tsin(cfg: &Cfg, part: &Part, seen: &[Option<&Ob>], k: usize) -> Vec<f32>` (sejak 1.1 fungsi bebas atas objek ke-`k` sebuah bagian, 12.4.7; sebelumnya method `Network::sum_tsin(&mut self, icmd)`).
 - **Padanan SWAT+:** bagian `tsin` di `command.f90`.
 - **Tujuan:** menjumlahkan inflow per langkah (`tsin`, m3 per langkah) objek `icmd` dari seluruh pengirimnya.
 - **Masukan dan keluaran:** `ins` objek, hidrograf dan `hyd_flo` pengirim; keluaran `obs[icmd].tsin`.
@@ -7404,11 +7588,11 @@ Q_{cur}(k) \mathrel{+}= \frac{hhsurfq(k)\cdot 10\,A}{dtm}\cdot 60, \qquad t_{inc
 
 #### 12.4.1  `Network::day`
 
-- **Lokasi:** `route.rs`, `pub fn day(&mut self, nd: &NetDay)`.
+- **Lokasi:** `route.rs`, `pub fn day(&mut self, nd: &NetDay, threads: usize, pool: Option<&rayon::ThreadPool>)` (parameter `threads` dan `pool` sejak 1.1).
 - **Padanan SWAT+:** `command.f90` (bagian setelah HRU), dengan panggilan ke `ru_control`, `aqu_1d_control`, `sd_channel_control3`, `res_control`, dan pembacaan recall (`recall_*` di `command`).
 - **Tujuan:** menjalankan satu hari semua objek di luar HRU dalam urutan perintah.
 - **Masukan dan keluaran:** `NetDay` (cuaca per stasiun, panjang hari, pengukur suhu, neraca air HRU, tanggal); mengubah `hd`, `hin`, `hyd_flo`, `tsin` setiap objek serta keadaan RU, akuifer, saluran, reservoir, dan recall.
-- **Cara kerja:** untuk setiap objek `icmd` di `order`:
+- **Cara kerja (sejak 1.1):** `threads` dipakai hanya bila `fixes` (selain itu 1). Rencana (`Plan`, 12.4.6) dibuat bila belum ada atau jumlah thread berubah. Setiap objek di luar HRU dipasangkan dengan keadaan jenisnya (`St`). Bila rencana memiliki lebih dari satu bagian, semua bagian kecuali yang terakhir dirouting bersamaan oleh `run_part` (di `pool.scope` bila ada kumpulan thread, selain itu `std::thread::scope`); objeknya lalu menjadi hanya-baca (`seen`), dan bagian terakhir dirouting di thread utama. Dengan satu bagian, semua objek dirouting di thread utama dalam urutan perintah. Pada run setia, nilai yang terbawa antar-saluran (`Carry`) diteruskan ke bagian itu persis seperti SWAT+. Isi loop atas satu bagian adalah langkah berikut, untuk setiap objek `icmd` dalam urutan perintah:
 
 1. Inflow harian: untuk setiap `In` dalam urutan, `ht1 = frac · hd_from(ihtyp)`; `hin = Σ ht1` dengan `Hyd::plus` (suhu tercampur tertimbang debit); setiap `ht1` disimpan di `hin_d` (padanan `ob%hin_d`).
 
@@ -7427,9 +7611,9 @@ H_{in} = \sum_{i \in ins} f_i \cdot H_{from_i}^{(ihtyp_i)}
 
 - **Kebiasaan SWAT+ / catatan port:** reservoir tanpa inflow tidak dijalankan sama sekali (sesuai `command`). Ketika saluran tidak diporting untuk proyek tertentu (lihat `channel_skipped`), saluran SWAT-DEG menjadi penerus murni, perilaku yang sama dengan saluran SWAT+ yang panjangnya kurang dari 1 m.
 
-#### 12.4.2  `Network::ru_control`
+#### 12.4.2  `ru_control`
 
-- **Lokasi:** `route.rs`, `fn ru_control(&mut self, iru: usize)`.
+- **Lokasi:** `route.rs`, `fn ru_control(cfg: &Cfg, part: &mut Part, seen: &[Option<&Ob>], k: usize, iru: usize)` (sejak 1.1 fungsi bebas atas objek ke-`k` sebuah bagian, 12.4.7; elemen HRU dibaca lewat `src`).
 - **Padanan SWAT+:** `ru_control.f90`.
 - **Tujuan:** menjumlahkan hidrograf elemen-elemen RU (HRU), dikalikan *delivery ratio* dan fraksi, menjadi lima hidrograf RU; menghitung `ru_d` untuk keluaran `ru_day`; dan hidrograf sub-harian RU.
 - **Masukan dan keluaran:** elemen (`frac`, `dr`), `hd` setiap HRU elemen, `hhsurfq`; keluaran `obs[ru].hd` (5 hidrograf), `ru_d[iru]`, `obs[ru].hyd_flo`.
@@ -7466,7 +7650,7 @@ Setelah itu hari besok dikosongkan dan hidrograf digeser dengan waktu konsentras
 | --- | --- | --- |
 | `AquDay::columns` | `route.rs` | 17 kolom `aquifer_day.txt` dengan label asli SWAT+ — Bab 14 |
 | `AquDay::columns_as` | `route.rs` | idem, label `cbn`/`orgn` terkoreksi bila `fixes` — Bab 14 |
-| `Network::aqu_1d_control` | `route.rs` | `aqu_1d_control.f90`: recharge, aliran balik resesi, rembesan, revap, nitrat — Bab 14 |
+| `aqu_1d_control` | `route.rs` | `aqu_1d_control.f90`: recharge, aliran balik resesi, rembesan, revap, nitrat — Bab 14 |
 | `Network::aquifers` | `route.rs` | iterator (nomor, GIS id, nama, `AquDay`) untuk keluaran — Bab 14 |
 
 Bagian `aqu_initial` dan kalibrasi akuifer (`cal_conditions`) di dalam `Network::new` juga diuraikan di Bab 14.
@@ -7481,6 +7665,45 @@ Bagian `aqu_initial` dan kalibrasi akuifer (`cal_conditions`) di dalam `Network:
 | `Network::channel_steps` | `route.rs` | untuk run sub-harian: keluaran per langkah tiap saluran (`hyd_flo(1,:)`, m3 per langkah) untuk `channel_sd_subday.txt` |
 | `Network::routing_units` | `route.rs` | iterator (nama, `ru_d`) untuk `ru_day` |
 
+#### 12.4.5  `Network::hru_waves`
+
+- **Lokasi:** `route.rs`, `pub fn hru_waves(&self) -> Vec<Vec<usize>>`. Sejak 1.1.
+- **Padanan SWAT+:** tidak ada; dasar HRU paralel `--fix-swat` (Bab 5.3.13).
+- **Tujuan:** membagi HRU (0-based) ke dalam gelombang yang dapat berjalan bersamaan tanpa mengubah apa yang dibaca setiap HRU.
+- **Cara kerja:** dengan `pos[j]` posisi HRU dalam `hru_order`, telusuri HRU dalam urutan perintah:
+  1. `level[j]` paling rendah `floor[j]`, dan paling sedikit `level[s] + 1` untuk setiap HRU pengirim `s` yang lebih awal dalam urutan (HRU `j` membaca air `s` hari ini, jadi harus sesudahnya).
+  2. Untuk setiap HRU pengirim `s` yang **lebih akhir** dalam urutan (HRU `j` membaca air `s` kemarin), `floor[s] ≥ level[j]`, sehingga `s` tidak berjalan sebelum `j` membaca.
+  3. HRU dikumpulkan per `level` dalam urutan perintah.
+- **Catatan:** tanpa routing antar-HRU semua HRU berada di satu gelombang.
+
+#### 12.4.6  `make_plan`, `Plan`, `Network::plan`, `Network::parts`
+
+- **Lokasi:** `route.rs`, `fn make_plan(order: &[usize], ins: &[Vec<usize>], threads: usize) -> Plan`; `struct Plan { threads, parts, part_of, at }`; `fn plan(&self, threads) -> Plan`; `pub fn parts(&self, threads) -> Vec<usize>`. Sejak 1.1 (M5, Lampiran B.6).
+- **Padanan SWAT+:** tidak ada; SWAT+ menjalankan objek satu per satu dalam urutan `cmd_next`.
+- **Tujuan:** memotong objek di luar HRU menjadi bagian (*part*) yang tidak saling membutuhkan, untuk dirouting bersamaan, ditambah satu bagian terakhir (sisanya, kebanyakan saluran utama dekat outlet) yang dirouting sesudahnya dalam urutan perintah.
+- **Cara kerja:**
+  1. **Apa yang harus lebih dulu.** Untuk objek di posisi `k` dan setiap pengirimnya di posisi `s`: bila `s < k` (air hari ini), `s` harus sebelum `k`; bila `s > k` (air kemarin), `k` harus sebelum `s`.
+  2. **Leluhur.** Untuk setiap objek, himpunan semua yang harus berjalan sebelumnya, sebagai *bit set* (`u64` per 64 objek); ukurannya `size(k)`.
+  3. **Kelompok.** Dari outlet ke hulu (posisi menurun), objek pertama yang bersama leluhurnya berukuran paling banyak `⌈m / (2·threads)⌉` memulai kelompok berisi semuanya. Kelompok yang berbagi leluhur (misalnya akuifer yang menerima dari dua sub-DAS) digabung dengan *union-find*. Kelompok lalu tidak membutuhkan apa pun di luar dirinya.
+  4. **Bagian.** Kelompok dibagikan ke `threads` bagian, terbesar dulu, masing-masing ke bagian yang paling ringan; isi setiap bagian diurutkan menurut urutan perintah. Objek tanpa kelompok menjadi bagian terakhir.
+  5. `part_of[i]` dan `at[i]` mencatat bagian setiap objek dan tempatnya di bagian itu (`u32::MAX` untuk HRU).
+  6. Dengan satu thread, atau pada run setia, hanya ada satu bagian berisi semua objek dalam urutan SWAT+.
+- **Catatan:** rencana dibuat sekali dan disimpan di `Network::plan`, dibuat ulang hanya bila jumlah thread berubah. Pada 12 thread, Batanghari (612 objek) terbagi 45 sampai 47 objek per bagian dan 55 objek (9 %) untuk thread utama; Pessel (3.162 objek) 249 sampai 252 per bagian dan 156 (5 %) untuk thread utama. Uji `a_plan_keeps_every_object_after_what_it_needs` memeriksa pada jaringan buatan bahwa setiap bagian memiliki semua yang dibutuhkannya.
+
+#### 12.4.7  `run_part`, `src`, `Cfg`, `St`, `Part`
+
+- **Lokasi:** `route.rs`, `fn run_part(cfg: &Cfg, part: &mut Part, seen: &[Option<&Ob>], nd: &NetDay)` dan `fn src<'b>(part: &'b Part, seen: &'b [Option<&Ob>], i: usize) -> Option<&'b Ob>`. Sejak 1.1.
+- **Padanan SWAT+:** loop `do while (icmd /= 0)` di `command.f90` atas objek satu bagian.
+- **Tujuan:** loop perintah atas satu bagian, dengan semua yang dibaca objek dari luar bagiannya hanya-baca.
+- **Struktur:** `Cfg` berisi apa yang dibaca setiap objek dari jaringan (RU, peta `ru_of`/`aqu_of`/`chan_of`, asal inflow saluran, `fixes`, `step`, `ga`, `dtm`, `hhsurfq`, pengaturan saluran `ChanCfg`). `St` adalah keadaan jenis yang dimiliki sebuah objek (`Ru(&mut Hyd)`, `Aqu(&mut Aqu)`, `Ch(&mut SdCh)`, `Res`, `Rec`, atau `None`). `Part` berisi nomor objeknya `ids`, objek beserta keadaannya `own`, nomor bagian `me`, rencana, nilai bawaan saluran `carry` (hanya run setia) dan suhu udara tertunda `lags`.
+- **Cara kerja:** sama dengan 12.4.1 langkah 1 sampai 3, dengan dua perbedaan: objek pengirim dibaca lewat `src` (milik bagian ini bila `part_of[i] == me`, selain itu dari `seen`, yaitu HRU dan objek bagian yang sudah selesai), dan RU, akuifer, serta saluran dijalankan oleh fungsi bebas `ru_control(cfg, part, seen, k, iru)`, `aqu_1d_control(ob, a, pet)` dan `ChanCfg::control(c, carry, lags, …)` yang hanya menyentuh milik bagian itu.
+- **Catatan:** `src` mengembalikan `None` hanya untuk objek bagian yang dirouting pada saat yang sama, dan rencana menjamin hal itu tidak terjadi.
+
+#### 12.4.8  `Network::calibrate`
+
+- **Lokasi:** `route.rs`, `pub(crate) fn calibrate(&mut self, cal: &Calibration) -> Result<(), String>`. Sejak 1.1.
+- **Tujuan:** menerapkan perubahan akuifer `cal` pada jaringan yang sedang berjalan (`Simulation::calibrate`, Bab 5.3.11), dengan fungsi yang sama dengan penyiapan, `calibrate_aquifers` (Bab 14.2.2).
+
 ### 12.5  Saluran SWAT-DEG: struktur data dan fungsi bantu (`channel.rs`)
 
 `channel.rs` memporting saluran SWAT-DEG (`chandeg.con`, `channel-lte.cha`, `hyd-sed-lte.cha`, `nutrients.cha`) dengan algoritma `sd_channel_control3`: kurva rating empat kedalaman, routing tampungan (Muskingum bila `codes.bsn` `rte` = 1, *variable storage coefficient* bila `rte` = 0), deposisi dataran banjir dan erosi tebing, rembesan dan penguapan, kualitas air QUAL2E, serta suhu air sungai. Pestisida, patogen, garam/konstituen, gwflow, dan alokasi air (`wallo`) tidak diporting. Struct utamanya:
@@ -7494,7 +7717,12 @@ Bagian `aqu_initial` dan kalibrasi akuifer (`cal_conditions`) di dalam `Network:
 | `ChanCtx` (publik) | konteks hari: cuaca stasiun, panjang hari `daylth` (jam), pengukur suhu `tgage`, `yrs`, `jday`, `hru_wb` |
 | `ChanInflows` (publik) | asal inflow untuk `ch_temp`: `from_chandeg` (per inflow), `hin_d`, `rus` |
 | `Basin` | `rte`, `qual2e`, `evrch` (koef. penguapan saluran, default 0,6), `scoef` (default 1), `fixes` |
-| `Channels` (publik) | semua saluran `chs`, `b`, `gra` (laju tumbuh alga yang tersimpan antarpanggilan, atribut *save* Fortran), `wtemp` (satu nilai untuk semua saluran), `ru_hrus` dan `ru_elem_is_hru` (pandangan `ch_temp` terhadap RU), `step`, `dtm`, `inflo` (inflow langkah tersimpan, atribut *save*) |
+| `Channels` (publik) | sejak 1.1: semua saluran `chs`, pengaturan `cfg: ChanCfg`, nilai terbawa `carry: Carry`, dan `air_lags: AirLags` |
+| `ChanCfg` | pengaturan yang sama untuk semua saluran: `b` (`Basin`), `ru_hrus` dan `ru_elem_is_hru` (pandangan `ch_temp` terhadap RU), `step`, `dtm`. Method-nya `control`, `ch_watqual4`, `ch_temp` hanya membaca pengaturan ini dan mengubah saluran yang diberikan |
+| `Carry` | yang di SWAT+ terbawa dari hari satu saluran ke saluran berikutnya: `gra` (laju tumbuh alga `ch_watqual4`, atribut *save*), `inflo` (inflow langkah `ch_rtmusk`, atribut *save*), `wtemp` (variabel modul, satu nilai untuk semua saluran). Run setia memakai satu `Carry` untuk semua saluran dalam urutan perintah; `--fix-swat` memakai `Carry` lokal per saluran dengan `gra` milik saluran itu (`SdCh::gra`), sehingga tidak ada saluran yang membaca nilai saluran lain (F21, F22 di Bab 17.6) |
+| `AirLags` | `Vec<(alamat pengukur, yrs, jday, [f32; 4])>`: suhu udara rata-rata selama jeda permukaan, lateral, airtanah, dan salju untuk hari itu, per pengukur suhu. Nilainya hanya bergantung pada pengukur dan hari, sehingga dihitung sekali per pengukur, tidak sekali per saluran (sejak 1.1; hasil sama) |
+| `RcChannel` (publik) | yang dibaca `sd_rating_curve` dari saluran: `chw`, `chd` (m), `chs` (m/m), `chl` (km), `chn`, `chss`, `fps`, `fpn` |
+| `ChHyd` (publik) | hidraulika harian satu saluran (sejak 1.1, 12.6.6): titik kurva `out`, `inflow`, `peak` dan `peak_flo`; tampungan `vol_ch`, `vol_fp`; `bankfull_dep`, `bankfull_wid`; `manning_out` (kedalaman, kecepatan, lebar) |
 
 #### 12.5.1  `Rc::scale`
 
@@ -7590,7 +7818,7 @@ m = \frac{c_k - c_1\,e^{-t_2/t_1}}{t_1\left(1 - e^{-t_2/t_1}\right)} - \frac{c_2
 2. Untuk saluran ke-`ich` (1-based): baris data `dat = sd_channel_data[props]`, baris hidraulik `hyd-sed-lte.cha` dicari dengan nama `dat.hyd`. Baris QUAL2E dicari dari nama `nut` milik baris data **bernomor `ich`**, dan `db_chw`, `db_chd` dari baris `hyd-sed-lte.cha` ke-`ich` (kuirk `sd_dat(ich)`, `sd_chd(ich)`).
 3. Field `chw, chd, chs, chl, chn, chk, cov, sinu, vcr_coef, ch_clay, ch_bd, n_conc, p_conc, p_bio` dibaca; `sed_nut.cha` tidak dibaca sehingga default tipe berlaku: `pk_rto` 1, `n_sol_part` 0,01, `p_sol_part` 0,01, `n_dep_enr` 0,5, `p_dep_enr` 0,5, `wash_bed_fr` 0,1.
 4. Batas bawah: `chs < 1e-9 → 1e-6`, `chn < 0,01 → 0,01`, `sinu < 1,05 → 1,05`. Kemiringan dataran banjir `fps` dibatasi `≤ chs` lalu `≥ 1e-5` (bila ≤ 1e-6); `fpn` adalah n Manning dataran banjir; `chss` kemiringan sisi.
-5. **Kurva rating dalam alur** (`sd_rating_curve`). Lebar dasar `b = chw − 2·chd·z`; bila ≤ 0 maka `b = max(0, 0,5·chw)` dan `z = (chw − b)/(2·chd)`. Untuk kedalaman `d = 0,1·chd` (titik 1) dan `d = chd` (titik 2, *bankfull*):
+5. **Kurva rating dalam alur** (`sd_rating_curve`; sejak 1.1 fungsi bebas `rating_curve`, 12.6.4, yang juga mengerjakan langkah 6). Lebar dasar `b = chw − 2·chd·z`; bila ≤ 0 maka `b = max(0, 0,5·chw)` dan `z = (chw − b)/(2·chd)`. Untuk kedalaman `d = 0,1·chd` (titik 1) dan `d = chd` (titik 2, *bankfull*):
 
 ```latex
 \text{asli: } P = b + 2\sqrt{d^2\left(1 + \frac{1}{z^2}\right)},\quad A = b\,d + \frac{d}{z} \qquad \text{koreksi: } P = b + 2d\sqrt{1+z^2},\quad A = b\,d + z\,d^2
@@ -7633,9 +7861,9 @@ ketiganya dinormalisasi dengan jumlahnya sehingga `C_1 + C_2 + C_3 = 1`.
 
 - **Kebiasaan SWAT+ / catatan port:** (a) Luas penampang alur `b·d + d/z` dan keliling basah yang memperlakukan z sebagai vertikal/horizontal (asli) versus trapesium benar (`--fix-swat`); di Bh\_land koreksi menaikkan tampungan dan rembesan beberapa persen, debit outlet berubah < 0,1 %. (b) Di atas bankfull lebar alir memakai lebar dasar `b` (asli) versus lebar atas `chw` (koreksi). (c) Pada run harian, koefisien Muskingum dihitung untuk sub-langkah stabil, tetapi `ch_rtmusk` merouting hari itu dalam satu langkah dengan koefisien tersebut. (d) Sebelum ada aliran, titik keluaran terakhir menyimpan waktu tempuh titik terdangkal, yang menentukan koefisien tampungan hari pertama. (e) Saluran penerus SWAT+ (panjang < 1 m) belum diporting: seluruh jaringan saluran lalu menjadi penerus (lihat 12.4.1).
 
-#### 12.6.2  `Channels::interp_flo`
+#### 12.6.2  `interp_flo`
 
-- **Lokasi:** `channel.rs`, `fn interp_flo(&self, ich: usize, flo_rate: f32) -> Rc`.
+- **Lokasi:** `channel.rs`, `pub fn interp_flo(e: &[Rc; 4], flo_rate: f32) -> Rc` (sejak 1.1 fungsi bebas atas kurva `e`; sebelumnya method `Channels::interp_flo(&self, ich, flo_rate)`).
 - **Padanan SWAT+:** `rcurv_interp_flo.f90`.
 - **Tujuan:** mencari titik kurva rating (kedalaman, luas, kecepatan, waktu tempuh, dsb.) untuk debit `flo_rate` (m3/s).
 - **Cara kerja:** cari titik pertama `k` dengan `Q < Q_k`:
@@ -7653,11 +7881,38 @@ ketiganya dinormalisasi dengan jumlahnya sehingga `C_1 + C_2 + C_3 = 1`.
 | `Channels::output` | `channel.rs` | tampungan `ch_stor`, inflow `ch_in`, outflow `ch_out` (debit dalam m3/s) dan `ChWat` saluran untuk `channel_sd_day` |
 | `Channels::wtemp_of` | `channel.rs` | suhu air yang dicetak: mode asli satu nilai `wtemp` untuk semua saluran (estimasi berbasis udara dari saluran terakhir); `--fix-swat` suhu sungai saluran itu sendiri |
 
+#### 12.6.4  `rating_curve` dan `channel_geom`
+
+- **Lokasi:** `channel.rs`, `pub fn rating_curve(ch: &RcChannel, fixes: bool) -> ([Rc; 4], f32, f32)` dan `fn channel_geom(bw: f32, chss: f32, dep: f32, fixes: bool) -> (f32, f32)`. Sejak 1.1 sebagai fungsi bebas dengan uji unit (H1 di `docs/roadmap.md`); sebelumnya bagian dari `Channels::new`.
+- **Padanan SWAT+:** `sd_rating_curve.f90`.
+- **Tujuan:** kurva rating empat titik (0,1 dan 1 kali kedalaman *bankfull* di alur; 1,2 dan 2 kali di atas dataran banjir), dengan lebar dasar dan kemiringan sisi yang dipakai. Rumusnya di 12.6.1 langkah 5 dan 6; `channel_geom` memberi keliling basah dan luas trapesium (asli atau terkoreksi).
+- **Catatan:** `Channels::new` memanggil `rating_curve` dan menyimpan `RcChannel` beserta lebar dasar dan kemiringan sisinya (`rc_ch`) untuk `manning_depth`. Uji unit: `the_corrected_curve_is_a_trapezoid`, `swat_s_curve_keeps_its_area`, `the_curve_at_its_points`.
+
+#### 12.6.5  `manning_depth`
+
+- **Lokasi:** `channel.rs`, `pub fn manning_depth(ch: &RcChannel, bw: f32, chss: f32, flo_rate: f32) -> (f32, f32, f32)`. Sejak 1.1.
+- **Padanan SWAT+:** tidak ada. Rumus Manning ditulis seperti `qman`.
+- **Tujuan:** kedalaman (m), kecepatan (m/s), dan lebar atas (m) saat saluran mengalirkan `flo_rate` (m³/s), pada saluran sebagai trapesium sungguhan. Di atas *bankfull* penampang dibagi (Chow 1959): alur utama (trapesium sampai *bankfull* ditambah lebar atas di atasnya) dengan n saluran, dan dua baji dataran banjir (kemiringan `fps`) dengan n dataran banjir, debitnya dijumlah.
+- **Cara kerja:** dalam f64, debit sebagai fungsi kedalaman `Q(d)` dengan rumus di bawah (di alur, d ≤ `chd`: A = b·d + z·d², P = b + 2d·√(1 + z²); di atas `chd` alur utama ditambah dua baji dataran banjir). Batas atas dimulai dari `chd` dan digandakan sampai `Q(hi) ≥ Q` (paling tinggi 10⁴ m); lalu bagi dua 60 kali. Kecepatan `= Q/A`.
+
+```latex
+Q = \frac{A\,(A/P)^{0.6666}\sqrt{S}}{n + 0.001}
+```
+
+- **Catatan:** kurva SWAT+ hanya empat titik dengan garis lurus di antaranya; di bawah titik pertama semua besaran (juga lebar dan kedalaman) diskalakan dengan debit, dan di atas *bankfull* seluruh penampang memakai n dataran banjir, sehingga debitnya bisa turun saat kedalaman naik. `manning_depth` naik bersama debit di semua rentang (uji `manning_depth_meets_the_curve_up_to_bankfull`, `manning_depth_rises_with_the_flow_past_bankfull`). Tanpa debit, nol.
+
+#### 12.6.6  `Channels::hyd_of`, `rating_at`, `Network::channel_hyds`
+
+- **Lokasi:** `channel.rs`, `pub fn hyd_of(&self, ich: usize) -> ChHyd` dan `fn rating_at(e: &[Rc; 4], flo_rate: f32) -> Rc`; `route.rs`, `pub fn channel_hyds(&self) -> Vec<ChHyd>`. Sejak 1.1.
+- **Padanan SWAT+:** tidak ada; tabel `channel_hyd_day.txt` (Bab 15).
+- **Tujuan:** hidraulika hari terakhir yang dirouting untuk saluran `ich`, dihitung ketika diminta: kurva pada debit keluar dan masuk rata-rata hari itu (`rating_at`: `interp_flo`, atau nol tanpa debit), debit puncak taksiran dan titik kurvanya (satu-satunya yang disimpan saat routing, `SdCh::peak`), tampungan saluran dan dataran banjir, kedalaman dan lebar *bankfull*, dan `manning_depth` pada debit keluar. `channel_hyds` memberi semuanya dalam urutan `chandeg.con`.
+- **Catatan:** routing tidak membaca nilai-nilai ini, sehingga tabel SWAT+ sama dengan atau tanpa `--channel-hyd` (uji `tests/channel_hyd.rs`, `the_table_changes_nothing_else`).
+
 ### 12.7  Satu hari saluran: sedimen, routing tampungan, kehilangan air (`channel.rs`)
 
-#### 12.7.1  `Channels::control`
+#### 12.7.1  `Channels::control` dan `ChanCfg::control`
 
-- **Lokasi:** `channel.rs`, `pub fn control(&mut self, ich: usize, hin: Hyd, area_ha: f32, ins: &ChanInflows, cx: &ChanCtx, tsin_in: &[f32], hyd_flo: &mut Vec<f32>) -> Hyd`.
+- **Lokasi:** `channel.rs`, `pub fn control(&mut self, ich: usize, hin: Hyd, area_ha: f32, ins: &ChanInflows, cx: &ChanCtx, tsin_in: &[f32], hyd_flo: &mut Vec<f32>) -> Hyd`. Sejak 1.1 ini pembungkus `ChanCfg::control(&self, c: &mut SdCh, shared: Option<&mut Carry>, lags: &mut AirLags, hin, area_ha, ins, cx, tsin_in, hyd_flo)`, yang dipanggil langsung oleh `run_part` (12.4.7). `shared` adalah `Carry` bersama pada run setia; dengan `--fix-swat` `None`, dan `control` memakai `Carry` lokal dengan `gra` milik saluran.
 - **Padanan SWAT+:** `sd_channel_control3.f90`, yang memanggil `sd_channel_sediment3.f90`, `ch_rtmusk.f90`, `rcurv_interp_flo.f90`, `ch_watqual4.f90` dan `ch_temp.f90`.
 - **Tujuan:** merouting satu hari inflow saluran `ich` (0-based): menambah hujan di permukaan air, deposisi dataran banjir dan erosi tebing, routing tampungan per langkah, rembesan dan penguapan, transformasi kualitas air, dan suhu air; mengembalikan hidrograf keluaran (`ob%hd(1)`).
 - **Masukan dan keluaran:** `hin` (inflow harian: m3, t, kg), `area_ha` (luas tangkapan objek saluran, ha), `ins` dan `cx` (untuk `ch_temp`), `tsin_in` (inflow per langkah, m3 per langkah; diabaikan pada run harian). Keluaran: hidrograf outflow (m3/hari dsb.), `hyd_flo` berisi outflow per langkah (m3), serta keadaan saluran (`ch_in`, `ch_out` dengan debit m3/s, tampungan, `wat`).
@@ -7717,7 +7972,7 @@ Beban erosi: `sed = E_t`, `orgn = E_t·n_conc/1000`, `sedp = (1−p_bio)·E_t·p
 - **Cara kerja (bagian C, `ch_rtmusk`):**
 
 6. `hyd_flo` disetel ulang ke `step` nol; `wat.evap = wat.seep = 0`. Pada run harian `substeps = nsteps = 1`, selain itu nilai dari inisialisasi. `dts = dtm/substeps·60` detik, `Δt = dts/3600` jam.
-7. Untuk setiap sub-langkah (penghitung `irtstep` naik setiap `substeps` sub-langkah): bila `Q_in > 1e-6`, `I = tsin(irtstep)/substeps` (disimpan di `Channels::inflo`) dan tampungan menerima bagian inflow yang sebanding, `tot_stor += min(1, max(0, I/Q_in))·ht1`. Titik rating inflow `in2 = interp_flo(I/86400)`.
+7. Untuk setiap sub-langkah (penghitung `irtstep` naik setiap `substeps` sub-langkah): bila `Q_in > 1e-6`, `I = tsin(irtstep)/substeps` (disimpan di `Carry::inflo`) dan tampungan menerima bagian inflow yang sebanding, `tot_stor += min(1, max(0, I/Q_in))·ht1`. Titik rating inflow `in2 = interp_flo(I/86400)`.
 8. Bila `tot_stor.flo < 1e-6`: `in1`, `out1` dan `in1_vol`, `out1_vol` di-nol-kan. Selain itu, outflow O (m3) dihitung:
 
 ```latex
@@ -7759,12 +8014,12 @@ dan serupa untuk P (`p_sol_part`, sedp/solp).
 
 ### 12.8  Kualitas air QUAL2E di saluran (`channel.rs`)
 
-#### 12.8.1  `Channels::ch_watqual4`
+#### 12.8.1  `ChanCfg::ch_watqual4`
 
-- **Lokasi:** `crates/swat-engine/src/channel.rs`, `fn ch_watqual4(&mut self, ich: usize, ht1: &Hyd, ht2: &mut Hyd, rc_prev: Rc, cx: &ChanCtx)`.
+- **Lokasi:** `crates/swat-engine/src/channel.rs`, `fn ch_watqual4(&self, c: &mut SdCh, cr: &mut Carry, ht1: &Hyd, ht2: &mut Hyd, rc_prev: Rc, cx: &ChanCtx)` (method `ChanCfg` sejak 1.1).
 - **Padanan SWAT+:** `ch_watqual4.f90` (QUAL2E: Brown dan Barnwell 1987; formulasi SWAT di Neitsch et al. 2011 bab 7:3), memakai `theta.f90`, `wq_semianalyt.f90`, `wq_k2m.f90`.
 - **Tujuan:** mengubah konsentrasi inflow (N organik, P sedimen/organik, NO3, P terlarut, klorofil-a, NH3, NO2, CBOD, oksigen terlarut) selama waktu tempuh, menghasilkan massa keluaran di `ht2`.
-- **Masukan dan keluaran:** `ht1` (inflow: massa kg, air m3), `rc_prev` (titik rating untuk waktu tempuh), cuaca (`tave`, `solrad` MJ/m2, panjang hari jam); keluaran field nutrien/alga/CBOD/DO dan `temp` di `ht2`; `Channels::gra` (laju tumbuh alga tersimpan).
+- **Masukan dan keluaran:** `ht1` (inflow: massa kg, air m3), `rc_prev` (titik rating untuk waktu tempuh), cuaca (`tave`, `solrad` MJ/m2, panjang hari jam); keluaran field nutrien/alga/CBOD/DO dan `temp` di `ht2`; `Carry::gra` (laju tumbuh alga tersimpan; dengan `--fix-swat` milik saluran itu, `SdCh::gra`).
 - **Cara kerja:**
 
 1. Koefisien suhu tetap: θ tumbuh/respirasi alga 1,047; `rs1` 1,024; `rs2`, `rs3` 1,074; `rs4`, `rs5` 1,024; `bc2`, `bc3`, `bc4` 1,047 (`bc1` 1,083 dideklarasikan tetapi tak dipakai); `rk1` 1,047; `rk2`, `rk3` 1,024; `rk4` 1,060.
@@ -7816,9 +8071,9 @@ c_{solP} \mathrel{+}= \left(\theta(bc_4)\,c_{OP} + \frac{\theta(rs_2)}{chd_{db}}
 
 ### 12.9  Suhu air sungai (`channel.rs`)
 
-#### 12.9.1  `Channels::ch_temp`
+#### 12.9.1  `ChanCfg::ch_temp`
 
-- **Lokasi:** `crates/swat-engine/src/channel.rs`, `fn ch_temp(&mut self, ich: usize, hd1: Hyd, ht2: Hyd, ins: &ChanInflows, cx: &ChanCtx) -> f32`.
+- **Lokasi:** `crates/swat-engine/src/channel.rs`, `fn ch_temp(&self, c: &mut SdCh, cr: &mut Carry, lags: &mut AirLags, hd1: Hyd, ht2: Hyd, ins: &ChanInflows, cx: &ChanCtx) -> f32` (method `ChanCfg` sejak 1.1), dengan fungsi bantu `fn air_lags(g: &Gage, cx: &ChanCtx, lag0s: [f32; 4]) -> [f32; 4]`.
 - **Padanan SWAT+:** `ch_temp.f90` (model suhu air dengan kontribusi aliran lahan bersuhu udara tertunda dan pertukaran panas menuju suhu kesetimbangan).
 - **Tujuan:** menghitung suhu air saluran (°C) dari suhu air hulu, kontribusi air lokal dari RU (salju leleh, limpasan, aliran lateral) dengan suhu udara tertunda, dan pertukaran panas permukaan selama waktu tempuh.
 - **Masukan dan keluaran:** `hd1` (outflow), `ht2` (outflow hasil routing), inflow (`ins`), cuaca (`tave`, `dewpt`, `windsp` m/s, `solrad`, `solradmx` MJ/m2, `rhum`), pengukur suhu stasiun (`tgage`), `hru_wb` (mm). Keluaran: suhu akhir; menyetel `ch_stor.temp`, `Channels::wtemp`, `SdCh::wtemp`.
@@ -7826,7 +8081,7 @@ c_{solP} \mathrel{+}= \left(\theta(bc_4)\,c_{OP} + \frac{\theta(rs_2)}{chd_{db}}
 
 1. **Suhu hulu.** Mode asli: untuk setiap inflow secara berurutan, bila berasal dari saluran SWAT-DEG, suhu = rata-rata tertimbang debit dari inflow itu dan inflow **sebelumnya** (inflow pertama dipasangkan dengan hidrograf nol, karena Fortran membaca `hin_d(0)` di luar batas); bila bukan dari saluran, `5 + 0,75·T_ave`. Hanya inflow terakhir yang menentukan. Mode `--fix-swat`: rata-rata tertimbang debit semua inflow dari saluran SWAT-DEG (atau `5 + 0,75·T_ave` bila debitnya < 1e-6 m3/s).
 2. **Air lokal dari RU.** Untuk setiap RU yang menjadi inflow dan setiap elemennya (HRU), bila baris tabel elemen global bernomor **penghitung loop** bertipe `hru`: `q_sno += sno·frac`, `q_surf += surq`, `q_lat += latq`, `q_wyld += wyld` (mm; hanya salju yang dikali fraksi). `q_wyld = 0` menjadi 1e-6; `q_gw = 0`.
-3. **Suhu lokal.** Tanpa pengukur suhu: `T_loc = 5 + 0,75·T_ave`. Dengan pengukur: suhu udara rata-rata `(T_max + T_min)/2` selama jeda `lag` hari (salju 2, permukaan 5, lateral 10, airtanah 250; pada tahun simulasi pertama `lag = min(jday, lag_0)`; bila jendela melewati awal tahun dan sudah lebih dari satu tahun data, hari-hari akhir tahun sebelumnya dipakai; jumlahnya dibagi `lag`):
+3. **Suhu lokal.** Tanpa pengukur suhu: `T_loc = 5 + 0,75·T_ave`. Dengan pengukur: suhu udara rata-rata `(T_max + T_min)/2` selama jeda `lag` hari (salju 2, permukaan 5, lateral 10, airtanah 250; pada tahun simulasi pertama `lag = min(jday, lag_0)`; bila jendela melewati awal tahun dan sudah lebih dari satu tahun data, hari-hari akhir tahun sebelumnya dipakai; jumlahnya dibagi `lag`). Sejak 1.1 keempat rata-rata ini dihitung `air_lags` sekali per pengukur dan hari, lalu disimpan di `AirLags` untuk saluran lain yang memakai pengukur yang sama; urutan penjumlahannya sama, sehingga hasilnya sama. Pada Pessel 2015–2025 ini, bersama data tanaman yang dibagi (Bab 8), mempercepat run sekitar 10 %:
 
 ```latex
 T_{loc} = \frac{0.75\,T_{sno}\,q_{sno} + 0.75\,T_{gw}\,q_{gw} + 0.75\,T_{lat}\,q_{lat} + 0.75\,T_{surf}\,q_{surf}}{q_{wyld}}
@@ -7870,13 +8125,13 @@ W_f = \sqrt{\frac{2\,Q_{out}/v_c}{(chd/1.5)/chw}},\qquad D_f = \min\left(2\,chd,
 \Delta T = \frac{K_e\,(T_{eq} - T_{init})}{1000\cdot 4186\,D_f/86400}\cdot\frac{TT}{24},\qquad T_w = \max(0.001,\ T_{init} + \Delta T)
 ```
 
-8. `ch_stor.temp = T_w`; `Channels::wtemp = 5 + 0,75·T_ave`; `SdCh::wtemp` = `T_w` (koreksi) atau `wtemp` (asli). Kembalikan `T_w`.
+8. `ch_stor.temp = T_w`; `Carry::wtemp = 5 + 0,75·T_ave`; `SdCh::wtemp` = `T_w` (koreksi) atau `wtemp` (asli). Kembalikan `T_w`.
 
 - **Kebiasaan SWAT+ / catatan port:** (a) suhu hulu dari inflow terakhir dan inflow sebelumnya saja, termasuk pembacaan di luar batas untuk inflow pertama (asli; dikoreksi dengan `--fix-swat`); (b) elemen RU disaring dengan indeks penghitung loop ke tabel elemen global, bukan indeks elemen sebenarnya; (c) limpasan dan aliran lateral tidak dikali fraksi elemen, hanya salju; (d) `T_up·Q_up` (m3/s) dicampur dengan `q_wyld` (mm) seperti di Fortran; (e) koefisien default `w_temp(0)` dipakai karena `temperature.cha` tidak didukung (proyek dengan file itu ditolak `Channels::new`); (f) `vel` dan `rttime` adalah milik hari terakhir yang ada inflow; (g) pada mode asli hasilnya hanya mencapai `ch_stor.temp`, dan `channel_sd_day` mencetak satu nilai `wtemp` untuk semua saluran (di Bh_land, koreksi memberi 21–28 °C berbeda per saluran pada satu hari pertengahan tahun).
 
 ### 12.10  Inventaris fungsi Bab 12
 
-Semua 35 fungsi di kedua file (hasil `grep -n "fn "`), dengan subbab tempat uraiannya:
+Fungsi di kedua file (hasil `grep -n "fn "`, keadaan 1.1), dengan subbab tempat uraiannya:
 
 | Fungsi | File | Subbab |
 |---|---|---|
@@ -7891,9 +8146,14 @@ Semua 35 fungsi di kedua file (hasil `grep -n "fn "`), dengan subbab tempat urai
 | `Network::hru_runon` | route.rs | 12.3.1 |
 | `Network::set_hru` | route.rs | 12.3.2 |
 | `Network::day` | route.rs | 12.4.1 |
-| `Network::sum_tsin` | route.rs | 12.2.5 |
-| `Network::ru_control` | route.rs | 12.4.2 |
-| `Network::aqu_1d_control` | route.rs | 12.4.3 (Bab 14) |
+| `sum_tsin` | route.rs | 12.2.5 |
+| `ru_control` | route.rs | 12.4.2 |
+| `aqu_1d_control` | route.rs | 12.4.3 (Bab 14) |
+| `Network::hru_waves` | route.rs | 12.4.5 |
+| `make_plan`, `Network::plan`, `Network::parts` | route.rs | 12.4.6 |
+| `run_part`, `src` | route.rs | 12.4.7 |
+| `Network::calibrate`, `calibrate_aquifers` | route.rs | 12.4.8 (Bab 14) |
+| `Network::channel_hyds` | route.rs | 12.6.6 |
 | `Network::aquifers` | route.rs | 12.4.3 (Bab 14) |
 | `Network::channels` | route.rs | 12.4.4 |
 | `Network::reservoir_days` | route.rs | 12.4.4 |
@@ -7909,14 +8169,17 @@ Semua 35 fungsi di kedua file (hasil `grep -n "fn "`), dengan subbab tempat urai
 | `wq_k2m` | channel.rs | 12.5.6 |
 | `ChNut::new` | channel.rs | 12.5.7 |
 | `Channels::new` | channel.rs | 12.6.1 |
-| `Channels::interp_flo` | channel.rs | 12.6.2 |
+| `interp_flo` | channel.rs | 12.6.2 |
+| `rating_curve`, `channel_geom` | channel.rs | 12.6.4 |
+| `manning_depth` | channel.rs | 12.6.5 |
+| `Channels::hyd_of`, `rating_at` | channel.rs | 12.6.6 |
 | `Channels::output` | channel.rs | 12.6.3 |
 | `Channels::wtemp_of` | channel.rs | 12.6.3 |
-| `Channels::control` | channel.rs | 12.7.1 |
-| `Channels::ch_watqual4` | channel.rs | 12.8.1 |
-| `Channels::ch_temp` | channel.rs | 12.9.1 |
+| `Channels::control`, `ChanCfg::control` | channel.rs | 12.7.1 |
+| `ChanCfg::ch_watqual4` | channel.rs | 12.8.1 |
+| `ChanCfg::ch_temp`, `air_lags` | channel.rs | 12.9.1 |
 
-Ringkasan koreksi `--fix-swat` dalam bab ini (dari `docs/swat-fixes.md`): `ru_d` hanya tot + rhg; trapesium benar pada kurva rating dan waktu tampung Muskingum; lebar atas `chw` di atas bankfull; waktu tempuh QUAL2E pada debit inflow; outflow membawa suhu sungai yang dihitung; suhu hulu tertimbang debit semua saluran hulu; suhu per saluran di `channel_sd_day`.
+Ringkasan koreksi `--fix-swat` dalam bab ini (dari `docs/swat-fixes.md`): `ru_d` hanya tot + rhg; trapesium benar pada kurva rating dan waktu tampung Muskingum; lebar atas `chw` di atas bankfull; waktu tempuh QUAL2E pada debit inflow; outflow membawa suhu sungai yang dihitung; suhu hulu tertimbang debit semua saluran hulu; suhu per saluran di `channel_sd_day`; sejak 1.1 juga `inflo` dan `gra` milik setiap saluran (tidak lagi terbawa dari saluran sebelumnya), yang memungkinkan routing paralel.
 
 ## Bab 13  Reservoir, danau, dan aturan pelepasan
 
@@ -8441,7 +8704,7 @@ Konstruktor `Network::new` (dibahas utuh di Bab 12) memuat dua blok khusus akuif
 
 #### 14.2.1  Blok `aqu_initial` (bagian dari `Network::new`)
 
-- **Lokasi:** `crates/swat-engine/src/route.rs`, di dalam `pub fn new(project, stations, tconc, ovn_km, fixes) -> Result<Option<Network>, String>`, ditandai komentar `// aqu_initial`.
+- **Lokasi:** `crates/swat-engine/src/route.rs`, di dalam `pub fn new(project, cal, stations, tconc, ovn_km, fixes) -> Result<Option<Network>, String>`, ditandai komentar `// aqu_initial`.
 - **Padanan SWAT+:** `aqu_initial.f90` (dipanggil dari `proc_aqu.f90` setelah `aqu_read`). `aqu_read_init` dan `aqu_read_init_cs` tidak diport: keduanya hanya membaca `initial.aqu` untuk konstituen (pestisida, garam, cs), dan loop yang seharusnya memakai datanya di `aqu_read_init` kosong.
 - **Tujuan:** Membuat satu `Aqu` per objek akuifer, menyalin baris basis datanya, menghitung konstanta resesi dan peluruhan nitrat, dan mengisi status awal (`aqu_d`).
 - **Masukan dan keluaran:** objek akuifer dari `project.objects_of(ObjectKind::Aquifer)` (urutan larik objek, dimulai di `first[&Aquifer]`), `props` tiap objek (nomor baris `aquifer.aqu`), `project.aquifer_db`, luas objek (ha); keluaran vektor `aqus` dan peta `aqu_of` (indeks objek ke nomor akuifer).
@@ -8472,14 +8735,14 @@ dengan q0 = `flo` (mm), A = luas (ha); 10·mm·ha = m3, dan m3·ppm/1000 = kg.
   - Nitrat dan P awal dihitung dari *aliran* awal (`flo`, mm), bukan dari simpanan; ini perilaku SWAT+ apa adanya.
   - Perhitungan memakai `f32` dengan urutan operasi Fortran: `(10*flo*area) * no3 / 1000`.
 
-#### 14.2.2  Blok kalibrasi akuifer (bagian dari `Network::new`)
+#### 14.2.2  `calibrate_aquifers`
 
-- **Lokasi:** `crates/swat-engine/src/route.rs`, di dalam `Network::new`, tepat setelah blok `aqu_initial` (komentar `// cal_conditions: the aquifers' calibration`).
+- **Lokasi:** `crates/swat-engine/src/route.rs`, `fn calibrate_aquifers(aqus: &mut [Aqu], obs: &[Ob], cal: &Calibration) -> Result<(), String>`. Sampai 1.0.3 blok di dalam `Network::new`; sejak 1.1 fungsi tersendiri yang dipanggil `Network::new` tepat setelah blok `aqu_initial`, dan `Network::calibrate` saat kalibrasi di tengah run (`Simulation::calibrate`, Bab 5.3.11).
 - **Padanan SWAT+:** cabang `!!AQU` di `cal_parm_select.f90`, dipanggil dari `cal_conditions.f90` untuk parameter yang `ob_typ`-nya `aqu`.
 - **Tujuan:** Menerapkan baris `calibration.cal` yang parameternya milik akuifer, setelah akuifer diinisialisasi, dan menghitung ulang besaran turunan yang ikut dihitung ulang oleh SWAT+.
-- **Masukan dan keluaran:** `project.cal_upd` (perubahan), `project.cal_parms` (jenis objek dan batas), `aqus`; keluaran `aqus[*].db`, `alpha_e`, `nloss`, `d.stor`, `d.no3_st` yang diubah; `Err` untuk hal yang tidak didukung.
+- **Masukan dan keluaran:** `cal.updates` (perubahan), `cal.parms` (jenis objek dan batas), `aqus`, `obs` (luas objek akuifer); keluaran `aqus[*].db`, `alpha_e`, `nloss`, `d.stor`, `d.no3_st` yang diubah; `Err` untuk hal yang tidak didukung.
 - **Cara kerja:** untuk setiap perubahan `u` berurutan:
-  1. `p = cal_parm(project, u)`; lewati bila `p.ob_typ != "aqu"`.
+  1. `p = cal_parm(cal, u)`; lewati bila `p.ob_typ != "aqu"`.
   2. Bila `u` memiliki kondisi, kembalikan `Err("calibration of … with conditions (aquifer)")`. (Di SWAT+ kondisi akan diuji pada HRU yang bernomor sama dengan akuifer; port memilih menolak.)
   3. Untuk setiap elemen `e` dari `cal_elems(u, aqus.len())` (daftar objek, atau semua akuifer): ambil `aqus[e-1]` (galat bila di luar rentang), definisikan `chg(v) = chg_par(u, &p, v)`.
   4. Terapkan menurut nama parameter:
@@ -8507,12 +8770,12 @@ dengan q0 = `flo` (mm), A = luas (ha); 10·mm·ha = m3, dan m3·ppm/1000 = kg.
 
 ### 14.3  Simulasi harian akuifer
 
-#### 14.3.1  `Network::aqu_1d_control`
+#### 14.3.1  `aqu_1d_control`
 
-- **Lokasi:** `crates/swat-engine/src/route.rs`, `fn aqu_1d_control(&mut self, iaq: usize, pet: f32)`
+- **Lokasi:** `crates/swat-engine/src/route.rs`, `fn aqu_1d_control(o: &mut Ob, a: &mut Aqu, pet: f32)` (sejak 1.1 fungsi bebas atas objek akuifer dan keadaannya, dipanggil `run_part`, Bab 12.4.7; sebelumnya method `Network::aqu_1d_control(&mut self, iaq, pet)`)
 - **Padanan SWAT+:** `aqu_1d_control.f90`.
 - **Tujuan:** Satu hari neraca air dan nitrat sebuah akuifer dangkal: resapan masuk, aliran balik dengan resesi eksponensial, rembesan dalam, revap, transport nitrat, P mineral, dan pembagian aliran balik menurut tujuan.
-- **Masukan dan keluaran:** `iaq` (nomor akuifer 0-based); `pet` = PET harian stasiun cuaca objek (mm), diambil `Network::day` dari `nd.weat[wst].pet`; masukan air dari `obs[ob].hin` (jumlah hidrograf yang masuk hari ini: `flo` m3, `no3` kg); luas A (ha). Keluaran: `aqus[iaq].d` (status `AquDay`), `obs[ob].hd[0]` (aliran balik: `flo` m3, `no3` kg, `solp` kg) dan `obs[ob].hd[1]` (rembesan: `flo` m3, `no3` kg). Semua field hidrograf lain bernilai 0 (hidrograf dibuat dari `Hyd::default()`, padanan `ob%hd = hz`).
+- **Masukan dan keluaran:** `iaq` (nomor akuifer 0-based); `pet` = PET harian stasiun cuaca objek (mm), diambil `run_part` (dulu `Network::day`) dari `nd.weat[wst].pet`; masukan air dari `obs[ob].hin` (jumlah hidrograf yang masuk hari ini: `flo` m3, `no3` kg); luas A (ha). Keluaran: `aqus[iaq].d` (status `AquDay`), `obs[ob].hd[0]` (aliran balik: `flo` m3, `no3` kg, `solp` kg) dan `obs[ob].hd[1]` (rembesan: `flo` m3, `no3` kg). Semua field hidrograf lain bernilai 0 (hidrograf dibuat dari `Hyd::default()`, padanan `ob%hd = hz`).
 - **Cara kerja:**
   1. **Resapan** (mm) dari volume masuk:
 
@@ -8720,10 +8983,10 @@ x' = \begin{cases} v & \text{absval} \\ x + v & \text{abschg} \\ (1 + v/100)\,x 
 
 #### 14.6.2  `cal_parm`
 
-- **Lokasi:** `crates/swat-engine/src/hru/mod.rs`, `pub(crate) fn cal_parm(project: &Project, u: &CalUpdate) -> CalParm`
+- **Lokasi:** `crates/swat-engine/src/hru/mod.rs`, `pub(crate) fn cal_parm(cal: &Calibration, u: &CalUpdate) -> CalParm` (sejak 1.1 mencari di `cal.parms`, bukan `project.cal_parms`)
 - **Padanan SWAT+:** pencarian `num_db` di `cal_parmchg_read.f90` (loop `ical` yang mencari `cal_upd(i)%name == cal_parms(ical)%name`).
 - **Tujuan:** Mencari baris `cal_parms.cal` milik sebuah perubahan.
-- **Masukan dan keluaran:** proyek, perubahan; salinan `CalParm` yang cocok, atau `CalParm::default()` bila tidak ada.
+- **Masukan dan keluaran:** kalibrasi, perubahan; salinan `CalParm` yang cocok, atau `CalParm::default()` bila tidak ada.
 - **Cara kerja:** mencari baris pertama yang namanya sama menurut `fortran_eq` (perbandingan string gaya Fortran, mengabaikan spasi di akhir).
 
 #### 14.6.3  `cal_elems`
@@ -8752,13 +9015,13 @@ x' = \begin{cases} v & \text{absval} \\ x + v & \text{abschg} \\ (1 + v/100)\,x 
 
 #### 14.6.5  `cal_conditions`
 
-- **Lokasi:** `crates/swat-engine/src/hru/mod.rs`, `fn cal_conditions(project: &Project, hrus: &mut [Hru]) -> Result<(), String>`
+- **Lokasi:** `crates/swat-engine/src/hru/mod.rs`, `pub(crate) fn cal_conditions(project: &Project, cal: &Calibration, hrus: &mut [Hru]) -> Result<(), String>` (parameter `cal` dan visibilitas `pub(crate)` sejak 1.1)
 - **Padanan SWAT+:** `cal_conditions.f90` (dipanggil dari `proc_cal.f90`), cabang HRU, `sol` dan `bsn`.
 - **Tujuan:** Menerapkan setiap baris `calibration.cal` pada HRU/tanah/basin yang memenuhi kondisinya.
-- **Masukan dan keluaran:** proyek (`cal_upd`, `cal_parms`, parameter basin), HRU yang sudah disiapkan; HRU yang diubah, atau `Err` dengan pesan yang menyebut apa yang tidak diport.
+- **Masukan dan keluaran:** proyek (parameter basin), kalibrasi `cal` (`updates` dan `parms`: milik proyek, atau dari memori), HRU yang sudah disiapkan; HRU yang diubah, atau `Err` dengan pesan yang menyebut apa yang tidak diport.
 - **Cara kerja:** untuk setiap perubahan `u` berurutan:
-  1. `p = cal_parm(project, u)`. Bila `p.ob_typ` bukan `hru`, `sol`, `bsn` atau `aqu`: `Err("calibration of … (<ob_typ> parameter)")`. Bila `chg_typ` bukan salah satu dari empat jenis: `Err`.
-  2. `aqu`: dilewati (ditangani di `Network::new`).
+  1. `p = cal_parm(cal, u)`. Bila `p.ob_typ` bukan `hru`, `sol`, `bsn` atau `aqu`: `Err("calibration of … (<ob_typ> parameter)")`. Bila `chg_typ` bukan salah satu dari empat jenis: `Err`.
+  2. `aqu`: dilewati (ditangani `calibrate_aquifers`).
   3. `bsn`: bila `cal_cond_met(u, hrus, 1)` (kondisi diuji pada HRU 1), terapkan sekali. Satu-satunya parameter basin yang didukung adalah `surlag`: `surlag = chg(surlag)`, dengan `surlag` lokal yang diawali dari `params["surlag"]` (atau 4,0) dan memuat hasil perubahan sebelumnya, lalu untuk setiap HRU koefisien lag aliran permukaan dihitung ulang:
 
 ```latex
@@ -8774,6 +9037,7 @@ dengan t\_conc waktu konsentrasi HRU (jam). Parameter basin lain: `Err`.
   - Jenis parameter `plt` (`phu_mat`, `lai_pot`, `harv_idx`, …), `cli` (`precip`, `temp` per hari), `rdt` (tabel keputusan waduk), `hlt`, `cha`, `res`, `swq`, `gwf` dan lain-lain tidak diport dan ditolak.
   - Untuk `bsn`, port menerapkan perubahan tepat sekali dan mengabaikan daftar objek; di Fortran, `num_elem` bawaan untuk `bsn` adalah 1, sehingga sama untuk berkas biasa. Sejak 1.0.1 `cal_conditions` menyimpan `surlag` lokal yang diawali dari nilai basin, dan setiap perubahan dimulai dari hasil perubahan sebelumnya, seperti `bsn_prm%surlag` di Fortran: dua `pctchg` 50 lalu −20 membuat 4 hari menjadi 4,8. Divalidasi oleh **Ps\_edge** (Ps\_coast dengan `surlag` dikalibrasi dua kali dan setiap lahan basah bernomor ganjil tanpa baris `sediment.res`).
   - Pemeriksaan jenis objek dan jenis perubahan dilakukan untuk semua baris sebelum penerapan baris itu, sehingga proyek dengan kalibrasi yang tidak didukung gagal secara eksplisit, tidak diam-diam diabaikan.
+  - Sejak 1.1 fungsi ini juga dipanggil `Simulation::calibrate` di tengah run (Bab 5.3.11). Karena `surlag` diawali dari nilai basin proyek, bukan nilai saat itu, perubahan `surlag` di tengah run ditolak di sana, bersama perubahan yang menyiapkan keadaan ulang (`z`, `bd`, `awc` lewat `soil_awc_init`).
 
 #### 14.6.6  `cal_hru`
 
@@ -8848,18 +9112,20 @@ usle_{mult} = e^{-0.053\,rock_{1}}\; K_{1}\; P\; LS\; 11.8
 
 ### 14.7  Ringkasan, cakupan dan verifikasi
 
-**Daftar fungsi bab ini** (26 fungsi/metode, ditambah dua blok di dalam `Network::new`):
+**Daftar fungsi bab ini** (26 fungsi/metode, ditambah satu blok di dalam `Network::new`):
 
 | Kelompok | Fungsi | Subbab |
 | --- | --- | --- |
 | Tipe akuifer | `AquDay::columns`, `AquDay::columns_as`, `AquiferDb::default`, `read_aquifers` | 14.1 |
-| Inisialisasi | blok `aqu_initial`, blok kalibrasi akuifer (di `Network::new`) | 14.2 |
-| Harian | `Network::aqu_1d_control`, `Network::aquifers` | 14.3 |
+| Inisialisasi | blok `aqu_initial` (di `Network::new`), `calibrate_aquifers` | 14.2 |
+| Harian | `aqu_1d_control`, `Network::aquifers` | 14.3 |
 | Keluaran | `aqu_add`, `aqu_div`, `AquAcc::day`, `aqu_scaled`, `aqu_sum`, `OutputSink::aqu_day`, `OutputSink::aqu_period`, `OutputSink::basin_aqu` | 14.4 |
 | Data/pembacaan kalibrasi | `CalParm::default`, `define_unit_elements`, `read_cal_parms`, `read_calibration` | 14.5 |
 | Penerapan kalibrasi | `chg_par`, `cal_parm`, `cal_elems`, `cal_cond_met`, `cal_conditions`, `cal_hru`, `cal_soil`, `soil_awc_init` | 14.6 |
 
 **Alur data akuifer.** HRU mengirim hidrograf resapan (`rhg`, jenis 2) atau total ke akuifer menurut berkas sambungan (`*.con`); unit routing meneruskan resapan elemennya tanpa rasio pengantaran (Bab 12). Loop perintah menjumlahkan masukan menjadi `hin`, lalu `aqu_1d_control` menghasilkan `hd[0]` (aliran balik, biasanya ke kanal SWAT-DEG `sdc` dengan jenis `tot`) dan `hd[1]` (rembesan dalam, jenis `rhg`, yang hanya berpindah bila sambungan menyebut objek tujuan). Air yang meninggalkan sistem lewat revap tidak dikembalikan ke HRU; revap hanya mengurangi simpanan.
+
+**Kalibrasi di memori (sejak 1.1).** Kalibrasi yang sama dapat datang dari memori (`Calibration`, Bab 3.9) alih-alih dari `calibration.cal`: `Simulation::with_calibration` dan `run_with_calibration` (Bab 5) meneruskannya ke `init_hrus` → `cal_conditions` dan `Network::new` → `calibrate_aquifers`, sehingga run identik dengan run salinan proyek yang berkasnya ditulis. Perintah `run --set`, `--calibration`, `--cal-parms` dan `batch` memakainya (Bab 16). Studi spin-up (Lampiran B.7.5) memeriksa neraca akuifer Batanghari dan Pessel: akuifer dangkal seimbang, akuifer dalam (`aqu_deep…`) hanya terisi dan alirannya tidak dikirim ke mana pun (`out_tot` 0), dan semua parameter akuifer masih bawaan SWAT+ Editor.
 
 **Batas port.** Proyek dengan akuifer 2-D, gwflow, alokasi air dari akuifer, garam/konstituen, atau kalibrasi jenis selain `hru`/`sol`/`bsn`/`aqu` ditolak dengan pesan eksplisit, bukan dijalankan sebagian.
 
@@ -8885,6 +9151,7 @@ Padanan Fortran-nya tersebar: setiap tabel teks SWAT+ ditulis oleh subrutin `*_o
 | `ru` | `ru_*` | `ru_output.f90` |
 | `aquifer` | `aquifer_*` | `aquifer_output.f90` |
 | `channel_sd` | `channel_sd_*`, `channel_sd_subday.txt` | `sd_channel_output.f90` |
+| opsi `run --channel-hyd` (sejak 1.1; bukan baris `print.prt`) | `channel_hyd_day.txt` | tidak ada (bukan tabel SWAT+) |
 | `basin_wb`, `_nb`, `_ls`, `_pw` | `basin_*` (perlu `ls_unit.ele`) | `basin_output.f90` |
 | `lsunit_wb`, `_nb`, `_ls`, `_pw` | `lsunit_*` (perlu `ls_unit.def`) | `lsu_output.f90` |
 | `basin_aqu` | `basin_aqu_*` (perlu `aqu_catunit.ele`) | `basin_aquifer_output.f90` |
@@ -8902,7 +9169,7 @@ Baris harian mengikuti jendela cetak dan interval `print.prt`; periode dicetak s
 - `swatplus-rust inspect <TxtInOut>`, `swatplus-rust compare <tabel SWAT+> <tabel kita> [--abs 0.001] [--rel 1e-4]`, `swatplus-rust --version`.
 - Modul WebAssembly `swat_wasm.wasm` mengekspor `memory`, `swat_alloc(len) -> ptr`, `swat_free(ptr, len)`, dan `swat_run(ptr, len, flags) -> ptr`. Masukan adalah arsip tar berkas TxtInOut (dalam satu folder atau tanpa folder); `flags` 1 = Parquet, 2 = teks (keduanya bila tidak satu pun), 4 = `--fix-swat`. Keluaran: 4 bita panjang *little-endian* lalu arsip tar berisi tabel dan `run.json` (`{"version":…,"ok":…,"error":…,"notes":[…],"tables":[…]}`). Modul mengimpor `env.swat_progress(done, days)` yang dipanggil tiap persen bulat.
 - Catatan presisi WebAssembly: di wasm, fungsi matematika (`exp`, `ln`, `powf`, trigonometri) adalah port musl milik Rust, bukan glibc, sehingga beberapa hasil f32 dapat berbeda di bit terakhir. Pada Osu\_1hru selama 14 tahun, 17 dari 18 tabel identik; tabel rata-rata tahunan unit routing (dicetak dengan 9 digit bermakna) berbeda 1 dan 2 ULP f32 pada dua nilainya, masih dalam toleransi (keputusan K12).
-- Kecepatan: engine satu *thread*; seluruh Pessel (3.966 HRU, 1.454 kanal) 6,4 detik per tahun simulasi di satu inti, terhadap 16,7 detik untuk SWAT+ gfortran Release. Paralelisasi HRU tidak dapat memberi hasil SWAT+ karena beberapa variabel global membawa nilai satu HRU ke HRU berikutnya (bilangan acak tabel keputusan, permintaan hara tanaman, *enrichment ratio*, fraksi P sedimen, keadaan septik); itu menjadi wilayah mode `--fix-swat` kelak.
+- Kecepatan: run setia berjalan pada satu *thread*; seluruh Pessel (3.966 HRU, 1.454 kanal) 6,4 detik per tahun simulasi di satu inti pada 1.0, terhadap 16,7 detik untuk SWAT+ gfortran Release. Paralelisasi HRU tidak dapat memberi hasil SWAT+ karena beberapa variabel global membawa nilai satu HRU ke HRU berikutnya (bilangan acak tabel keputusan, permintaan hara tanaman, *enrichment ratio*, fraksi P sedimen, keadaan septik). Sejak 1.1, `--fix-swat --threads N` memberi setiap HRU salinannya sendiri dan menjalankan HRU serta routing di N thread (Bab 5.3.13, 12.4.6); di laptop Windows ARM 12 inti, proyek seukuran Batanghari 15,4 detik pada satu thread dan 9,2 detik pada dua belas (1,67×), dengan tabel yang sama. Run yang tidak mencetak tabel harian HRU juga tidak lagi menyusun barisnya (15.5.2): Batanghari satu thread 16,8 menjadi 13,7 detik.
 
 **Alur pemanggil (`main.rs`, fungsi `run`).** (1) Muat proyek; (2) susun judul tabel `format!(" {:<24} swatplus-rust {versi}", judul_file.cio)`; (3) bila JSON, pancarkan kejadian `start` dengan tanggal pertama dan terakhir; (4) buat `TextTables::new(&judul, DirStore::new(out), &project.print)`, set `fixes` dan `progress`; (5) `run_with`; (6) pancarkan `note` untuk bagian yang dilewati; (7) `tables.finish()` mengembalikan `DirStore`, yang `names()`-nya memberi daftar berkas; (8) untuk setiap berkas: bila Parquet diminta, buka `.txt`, panggil `text_to_parquet(BufReader, BufWriter, 1 << 20)`, pancarkan `table` dengan jumlah baris, hapus `.txt` bila teks tidak diminta; (9) pancarkan `done` dengan detik berlalu. Modul wasm (`run_inner`) melakukan hal yang sama dengan `MemStore` dan `tar`.
 
@@ -8965,6 +9232,7 @@ Baris harian mengikuti jendela cetak dan interval `print.prt`; periode dicetak s
 | `CHUNK` | `4 << 20` (4 MiB) | Ambang penyangga per berkas sebelum ditulis ke store. Komentar kode: tabel harian proyek besar mencapai gigabita. |
 | `SUBDAY_UNITS` | satu baris panjang berisi satuan (`m^3/s`, `tons`, `kg_N`, `kg_P`, `m`, `m/m`, `mm`, `m/s`) | Baris satuan yang ditulis SWAT+ di bawah header `channel_sd_subday.txt`. Menurut komentar kode, itu adalah baris satuan tabel kanal harian, bukan yang semestinya untuk tabel sub-harian; port menyalinnya apa adanya. |
 | `KEYS` | `"  jday   mon   day    yr    unit  gis_id  name            "` | Awal header untuk tabel berkunci objek (HRU, LSU, basin, akuifer, kanal, waduk). |
+| `CHANNEL_HYD` | 21 pasangan (nama, satuan), dari `flo_out` (`m^3/s`) sampai `wid_mann` (`m`) | Kolom `channel_hyd_day.txt` (sejak 1.1, 15.5.13). |
 | `WEATHER` | `["tmx", "tmn", "tmpav", "solarad", "wndspd", "rhum"]` | Nama kolom `hru_pw_day` saat HRU tidak disimulasikan (hanya cuaca). |
 | `TABLES` | 21 nama: `reservoir`, `basin_res`, `recall`, `basin_psc`, `hru_wb`, `hru_nb`, `hru_ls`, `hru_pw`, `ru`, `aquifer`, `channel_sd`, `basin_wb`, `basin_nb`, `basin_ls`, `basin_pw`, `lsunit_wb`, `lsunit_nb`, `lsunit_ls`, `lsunit_pw`, `basin_aqu`, `basin_sd_cha` | Baris `print.prt` yang dikenali port; bendera cetaknya dibaca di `new`. |
 
@@ -8981,6 +9249,7 @@ Baris harian mengikuti jendela cetak dan interval `print.prt`; periode dicetak s
 | `pub fixes: bool` | Mode `--fix-swat`: memperbaiki label kolom akuifer yang salah. |
 | `.crop_yld: String` | Bendera `crop_yld` dari `print.prt`: `y` hasil panen basin, `a` per HRU, `b` keduanya. |
 | `pub progress: Option<progress::Reporter>` | Pelapor progres JSON (15.9), bila diminta. |
+| `pub channel_hyd: bool` | Sejak 1.1: tulis `channel_hyd_day.txt` (`run --channel-hyd`). |
 
 Komentar struct mencatat perilaku saat HRU tidak disimulasikan (fitur di luar cakupan port): tabel neraca air harian hanya berisi presipitasi, tabel tanaman hanya cuaca, dan tabel HRU lain tidak ditulis.
 
@@ -9002,6 +9271,18 @@ v = \pm\, d_1.d_2d_3d_4 \times 10^{x} = \pm\, 0.d_1d_2d_3d_4 \times 10^{x+1}
 ```
 
 - **Catatan port:** pembulatan ke empat digit bermakna dilakukan sekali oleh formatter Rust pada nilai f32 eksak (bukan pada mantisa Fortran-style), jadi digit yang dihasilkan sama dengan pembulatan Fortran untuk semua nilai yang tidak tepat di titik tengah; untuk nilai yang tepat di titik tengah, aturan *tie-breaking* Rust dan gfortran belum diverifikasi di repo. Rentang f32 (|eksponen| ≤ 39) menjamin eksponen selalu dua digit, sehingga kasus Fortran tiga digit (huruf `E` dihilangkan) tidak pernah muncul. Sejak 1.0.1, NaN dan tak hingga dicetak seperti gfortran, rata kanan lebar 15: `NaN`, `Infinity`, `-Infinity`; sebelumnya fungsi ini mencetak `0.E+01`, karena `format!("{:.3e}")` menghasilkan `NaN`/`inf` tanpa huruf `e`. Uji `e15_4_as_gfortran` memeriksa kasus ini. Untuk `-0.0`, port mencetak tanpa tanda.
+
+#### 15.3.1a  `list_real4`
+
+- **Lokasi:** `text.rs`, `fn list_real4(v: f32) -> String`. Sejak 1.0.3.
+- **Padanan SWAT+:** keluaran *list-directed* gfortran (`write (u, *)`) untuk `REAL(4)`: format `1PG16.9E2`, didahului satu spasi pemisah butir.
+- **Tujuan:** menulis nilai tabel recall dan titik sumber persis seperti SWAT+, sampai digit terakhir.
+- **Cara kerja:**
+  1. NaN dan tak hingga: `NaN`, `Infinity`, `-Infinity`, rata kanan dalam 16.
+  2. Sembilan digit bermakna dibulatkan dari nilai tepat f32 (`{:.8e}` atas `f64::from(v)`, seperti `printf` yang dipakai gfortran), dengan eksponen *e*.
+  3. Bila nilai 0, atau −1 ≤ *e* ≤ 8 (0,1 sampai di bawah 10⁹ setelah pembulatan): bentuk titik tetap `F12.d` (`0.00000000` untuk nol; `0.ddddddddd` untuk *e* = −1; selain itu titik desimal sesudah digit ke-(*e*+1)), rata kanan 12, ditambah empat spasi tempat eksponen.
+  4. Selain itu: `1PE16.8E2`, satu digit, titik, delapan digit, `E±dd`.
+- **Catatan port:** sampai 1.0.2 port menulis bentuk desimal terpendek Rust (`{:>14e}`) dari f32 yang sama; nilainya terbaca ulang dengan selisih sampai 6e-8 (setengah jarak f32), satu-satunya selisih tak nol pada validasi 28 Oktober (Bh\_res, Bh\_rel, Bh\_nosed). Uji `list_real4_as_gfortran` memakai nilai dan bidang dari tabel recall SWAT+ Bh\_res (gfortran 13), misalnya `417.183960`, `8.34399983E-02`, `319887840.`.
 
 #### 15.3.2  `TextTables::new`
 
@@ -9102,7 +9383,7 @@ Lima method privat `TextTables` menulis baris untuk lima keluarga tabel. Semuany
 | HRU, LSU, basin (`_wb`, `_nb`, `_ls`, `_pw`) | `hru_rows` | `f12.3` | `hru_output.f90`: 100 `42f12.3`, 101 `25f12.3`, 104 `4f12.3,15f17.3`, 108 `12(1x,f16.3)`; `basin_output.f90`: 100/104; `lsu_output.f90`: 100/102/103 |
 | Unit routing `ru_*` | `ru_row` | ilmiah 9 digit bermakna, lebar 15 | `ru_output.f90`: *list-directed* `write (2600,*)` |
 | Kanal, waduk (`channel_sd`, `basin_sd_cha`, `reservoir`, `basin_res`) | `cha_row` | `e15.4` (`e15_4`), luas `f16.4` untuk basin | `sd_channel_output.f90` 100 `73e15.4`; `basin_sdchannel_output.f90` 100 `f16.4,59(1x,e14.4)`; `reservoir_output.f90` 100 `63e15.4`; `basin_reservoir_output.f90` 100 `f14.4,59(1x,e14.4)` |
-| Recall dan titik sumber basin (`recall`, `basin_psc`) | `rec_row` | eksponensial terpendek Rust | `recall_output.f90`, `basin_recall_output.f90`: *list-directed* |
+| Recall dan titik sumber basin (`recall`, `basin_psc`) | `rec_row` | `1PG16.9E2` gfortran (`list_real4`, sejak 1.0.3) | `recall_output.f90`, `basin_recall_output.f90`: *list-directed* |
 | Akuifer (`aquifer`, `basin_aqu`) | `aqu_row` | `f15.3` | `aquifer_output.f90` 100 `20f15.3`; `basin_aquifer_output.f90` 100 `17f15.3` |
 
 #### 15.4.1  `TextTables::hru_rows`
@@ -9146,10 +9427,10 @@ Lima method privat `TextTables` menulis baris untuk lima keluarga tabel. Semuany
 - **Padanan SWAT+:** `recall_output.f90` (`write (4600,*) …, ob(iob)%name, ob(iob)%typ, rec_d(irec)`) dan `basin_recall_output.f90` (`write (4500,*) …, bsn%name, brec_d`), header `header_write.f90` (`rec_hdr_time`, `hyd_hdr`).
 - **Tujuan:** menulis beban *recall* (titik sumber yang dibaca dari berkas) per objek atau dijumlahkan untuk basin (`basin_psc`).
 - **Cara kerja:**
-  1. Header baris 1: judul. Baris 2: `jday`, `mon`, `day`, `yr` lebar 12, spasi, `name` rata kiri 16, `type` rata kiri 8 bila ada, nama kolom `Hyd` lebar 14 + spasi.
+  1. Header baris 1: judul. Baris 2: `jday`, `mon`, `day`, `yr` lebar 12, spasi, `name` rata kiri 16 untuk tabel per objek (`ob%name`) atau 25 untuk tabel basin (`bsn%name`, sejak 1.0.3), `type` rata kiri 8 bila ada, nama kolom `Hyd` lebar 14 + spasi.
   2. Baris 3 (satuan): 65 spasi lalu 18 satuan lebar 14: `m^3/s`, `tons`, `kgN`, `kgP`, `kgN`, `kgP`, `kg`, `kgN`, `kgN`, `kg`, `kg`, enam `tons`, `degc`.
-  3. Baris data: tanggal lebar 12, nama, tipe (`recall` untuk tabel per objek), lalu setiap nilai sebagai `{v:>14e}` didahului spasi.
-- **Catatan port:** komentar kode menandai tabel ini *list-directed*: lebar 12 untuk bilangan bulat meniru keluaran list-directed gfortran untuk `integer(4)`. Nilai ditulis dengan format eksponensial **terpendek yang dapat dibaca ulang tepat** (`{:e}` Rust, misalnya `1.5e0`, `0e0`), sehingga nilai f32 internal tersimpan utuh. Berbeda dari tabel lain, baris satuan berisi satuan sungguhan (meniru header SWAT+), dan baris satuan itu dimulai dengan spasi lalu teks, sehingga dilewati oleh `text_to_parquet`.
+  3. Baris data: tanggal lebar 12, nama (lebar 16 atau 25), tipe (`recall` untuk tabel per objek), lalu setiap nilai dengan `list_real4` (17 karakter, 15.3.1a).
+- **Catatan port:** komentar kode menandai tabel ini *list-directed*: lebar 12 untuk bilangan bulat meniru keluaran list-directed gfortran untuk `integer(4)`. Sejak 1.0.3 nilai ditulis seperti gfortran (`1PG16.9E2`, sembilan digit bermakna), sehingga setiap baris data sama byte demi byte dengan SWAT+ (Bh\_res, 2015–2017). Sebelumnya port menulis eksponensial terpendek yang terbaca ulang tepat (`{:e}` Rust, misalnya `1.5e0`), yang nilainya sama tetapi tulisannya berbeda. Berbeda dari tabel lain, baris satuan berisi satuan sungguhan (meniru header SWAT+), dan baris satuan itu dimulai dengan spasi lalu teks, sehingga dilewati oleh `text_to_parquet`.
 
 #### 15.4.5  `TextTables::aqu_row`
 
@@ -9164,7 +9445,7 @@ Lima method privat `TextTables` menulis baris untuk lima keluarga tabel. Semuany
 
 ### 15.5  `text.rs` (3): implementasi `OutputSink for TextTables<S>`
 
-Trait `OutputSink` didefinisikan di `swat-engine/src/run.rs`; semua method-nya kecuali `hru_day` punya implementasi bawaan kosong, sehingga sink lain (misalnya sink uji) hanya perlu mengisi yang diperlukan. `TextTables` mengisi kesembilan belas method. Engine memanggilnya hanya untuk hari yang dicetak (jendela dan interval `print.prt`) dan untuk periode setelah tahun pemanasan; `TextTables` tinggal memeriksa bendera tabel. Tipe `Day { jday, mon, day, yr }` membawa tanggal; `Period` adalah `Mon`, `Yr`, atau `Aa`; `Region` adalah `Basin` atau `Lsu`.
+Trait `OutputSink` didefinisikan di `swat-engine/src/run.rs`; semua method-nya kecuali `hru_day` punya implementasi bawaan kosong, sehingga sink lain (misalnya sink uji) hanya perlu mengisi yang diperlukan. `TextTables` mengisi kesembilan belas method versi 1.0, ditambah `cha_hyd` dan `wants_cha_hyd` sejak 1.1 (15.5.13). Engine memanggilnya hanya untuk hari yang dicetak (jendela dan interval `print.prt`) dan untuk periode setelah tahun pemanasan; `TextTables` tinggal memeriksa bendera tabel. Tipe `Day { jday, mon, day, yr }` membawa tanggal; `Period` adalah `Mon`, `Yr`, atau `Aa`; `Region` adalah `Basin` atau `Lsu`.
 
 #### 15.5.1  `OutputSink::progress`
 
@@ -9181,6 +9462,7 @@ Trait `OutputSink` didefinisikan di `swat-engine/src/run.rs`; semua method-nya k
 - **Tujuan:** menulis baris harian keempat tabel HRU.
 - **Masukan dan keluaran:** cuaca HRU (`tmax`, `tmin`, `tave` °C; `solrad` MJ/m²; `windsp` m/s; `rhum` fraksi; `precip` mm); hasil hari HRU (`HruDay`) bila HRU disimulasikan.
 - **Cara kerja:**
+  0. Sejak 1.1: bila tidak satu pun dari `hru_wb`, `hru_nb`, `hru_ls`, `hru_pw` dicetak harian, kembali segera. Method ini dipanggil untuk setiap HRU setiap hari, dan menyusun baris yang tidak dicetak memakan sebagian besar waktu run proyek besar.
   1. Susun larik cuaca `[tmax, tmin, tave, solrad, windsp, rhum]`.
   2. Bila `h` ada: `hru_values(h, cuaca)` (di `swat-engine/src/periods.rs`) menghasilkan `(wb, nb, ls, pw)`; tulis lewat `hru_rows("hru", None, …, h.nutrients)`.
   3. Bila `h` kosong (HRU di luar cakupan port): bila `hru_wb` harian diminta, tulis header dengan satu kolom `precip` dan nilai presipitasi; bila `hru_pw` harian diminta, tulis header `WEATHER` dan enam nilai cuaca. Tabel `nb` dan `ls` tidak ditulis.
@@ -9275,6 +9557,17 @@ Trait `OutputSink` didefinisikan di `swat-engine/src/run.rs`; semua method-nya k
 - **Lokasi:** `text.rs`, `fn recall(&mut self, p: Option<Period>, d: Day, name: &str, h: &Hyd)`; `fn basin_psc(&mut self, p: Option<Period>, d: Day, name: &str, h: &Hyd)`.
 - **Padanan SWAT+:** `recall_output.f90` (unit 4600–4603) dan `basin_recall_output.f90` (unit 4500–4503, berkas `basin_psc_*.txt` menurut `header_write.f90`).
 - **Cara kerja:** `rec_row("recall", p, d, name, Some("recall"), h)` dan `rec_row("basin_psc", p, d, name, None, h)` (tabel basin tanpa kolom tipe).
+
+#### 15.5.13  `OutputSink::cha_hyd` dan `wants_cha_hyd`
+
+- **Lokasi:** `text.rs`, `fn cha_hyd(&mut self, d: Day, ich: usize, gis_id: i32, name: &str, h: &ChHyd)` dan `fn wants_cha_hyd(&self) -> bool`. Sejak 1.1.
+- **Padanan SWAT+:** tidak ada; `channel_hyd_day.txt` bukan tabel SWAT+ (`docs/channel-hydraulics.md`).
+- **Tujuan:** satu baris hidraulika harian per saluran SWAT-DEG, ditulis bila `channel_hyd` benar (`run --channel-hyd`) pada setiap hari di jendela cetak `print.prt`, terlepas dari apakah `channel_sd` dicetak harian.
+- **Cara kerja:**
+  1. `wants_cha_hyd` mengembalikan `channel_hyd`, sehingga engine hanya menghitung hidraulika bila tabel ini diminta.
+  2. Header: judul, `KEYS`, 21 nama kolom `CHANNEL_HYD` lebar 14 didahului spasi; baris kedua satuannya.
+  3. Baris: `keys`, lalu dengan `e15_4`: `flo_out`, `dep_out`, `wid_out`, `area_out`, `perim_out`, `vel_out`, `ttime_out` (kurva pada debit keluar), `flo_in`, `dep_in`, `vel_in` (debit masuk), `flo_peak`, `dep_peak`, `vel_peak` (puncak taksiran), `vol_ch`, `vol_fp` (m³), `dep_bf`, `wid_bf`; `overbank` sebagai bilangan bulat lebar 15 (1 bila `dep_out > dep_bf`); lalu `dep_mann`, `vel_mann`, `wid_mann` dari `manning_depth`.
+- **Catatan:** uji `tests/channel_hyd.rs`: semua tabel SWAT+ sama dengan atau tanpa tabel ini, dan nilainya membaca debit saluran yang benar.
 
 ### 15.6  `parquet.rs` (1): format Parquet yang ditulis tangan, kolom, dan protokol Thrift *compact*
 
@@ -9611,15 +9904,16 @@ p = \left\lfloor \frac{100 \cdot \text{done}}{\text{days}} \right\rfloor
 
 ### 15.10  Rekapitulasi bab
 
-Bab ini mencakup **84 fungsi** di enam berkas `crates/swat-output/src/`: `store.rs` 7 (trait method, 2 implementasi `append`, 4 fungsi kecil), `text.rs` 37 (3 fungsi format bebas `e15_4`/`period_index`/`suffix`, 3 bantu `header`/`keys`/`row`, 12 method `TextTables`, 19 method `OutputSink`), `parquet.rs` 29 (4 method `Column` + `plain`, 14 method `Compact`, `physical`, 4 method `ParquetWriter`, `parse_f32`, `text_to_parquet` beserta `infer` dan `push`, 2 uji), `tar.rs` 3 (`read`, `write`, 1 uji), `progress.rs` 7 (`quote`, `date`, `progress`, `text`, `Reporter::new`, `Reporter::day`, 1 uji), `lib.rs` 0. Closure lokal (`field` dan `octal` di `tar.rs`, `io` di `text_to_parquet`) dijelaskan di dalam entri induknya.
+Bab ini mencakup **87 fungsi** di enam berkas `crates/swat-output/src/`: `store.rs` 7 (trait method, 2 implementasi `append`, 4 fungsi kecil), `text.rs` 40 (4 fungsi format bebas `e15_4`/`list_real4`/`period_index`/`suffix`, 3 bantu `header`/`keys`/`row`, 12 method `TextTables`, 21 method `OutputSink`), `parquet.rs` 29 (4 method `Column` + `plain`, 14 method `Compact`, `physical`, 4 method `ParquetWriter`, `parse_f32`, `text_to_parquet` beserta `infer` dan `push`, 2 uji), `tar.rs` 3 (`read`, `write`, 1 uji), `progress.rs` 7 (`quote`, `date`, `progress`, `text`, `Reporter::new`, `Reporter::day`, 1 uji), `lib.rs` 0. Closure lokal (`field` dan `octal` di `tar.rs`, `io` di `text_to_parquet`) dijelaskan di dalam entri induknya.
 
 Hal yang perlu diingat saat membaca keluaran port:
 
-1. **Nilai tabel teks = nilai SWAT+, tata letak kolom tidak selalu.** Lebar kunci dan beberapa lebar nilai (misalnya `f17.3` tabel hara, `2i10` waduk) disederhanakan; pembanding dan konverter memisahkan kolom berdasarkan spasi. Port tidak pernah mencetak tanda bintang luapan; kolom melebar.
+1. **Nilai tabel teks = nilai SWAT+, tata letak kolom tidak selalu.** Sejak 1.0.3 tabel recall dan titik sumber sama juga dalam tulisannya (`list_real4`). Lebar kunci dan beberapa lebar nilai (misalnya `f17.3` tabel hara, `2i10` waduk) disederhanakan; pembanding dan konverter memisahkan kolom berdasarkan spasi. Port tidak pernah mencetak tanda bintang luapan; kolom melebar.
 2. **Kolom yang tidak dihitung port tidak dicetak** (tabel HRU tanpa hara, mode degradasi HRU, kolom teks `plant_cov`/`mgt_ops`).
 3. **Kebiasaan SWAT+ yang dipertahankan di keluaran:** label `orgn`/`orgp` pada kolom akuifer yang berisi karbon dan N organik (diperbaiki dengan `--fix-swat`), baris satuan kanal harian di bawah header `channel_sd_subday.txt`, label `m^3/s` untuk aliran sub-harian yang sebenarnya m³.
 4. **Parquet adalah turunan teks**: tipe kolom disimpulkan dari nama dan 1.000 baris pertama; nilai float adalah angka yang tercetak; NaN untuk NaN atau bintang.
 5. **Semua format biner ditulis tangan** (Thrift compact, PLAIN, ustar) tanpa dependensi, demi lisensi LGPL.
+6. **`channel_hyd_day.txt` (sejak 1.1) bukan tabel SWAT+**: tidak dibandingkan dengan Fortran, dan tidak memengaruhi tabel lain.
 
 ## Bab 16  Modul WebAssembly dan program baris perintah
 
@@ -9710,7 +10004,7 @@ Pemanggil wajib membebaskan penyangga itu dengan `swat_free(ptr, 4 + panjang)`.
   3. Susun judul tabel: spasi, judul `file.cio` tanpa titik dua di ujung, rata kiri 24 karakter, lalu `swatplus-rust <versi>`. Judul ini identik dengan yang dipakai program baris perintah, sehingga tabel WASM dan tabel *native* dapat dibandingkan bita demi bita.
   4. Buat `TextTables::new(judul, MemStore::new(), &project.print)`, set `tables.fixes = opts.fixes`.
   5. Pasang `progress::Reporter` dengan fungsi *emit* yang menerima baris JSON `{"event":"progress","done":…,"days":…,"date":…}`. Karena `Reporter` menghasilkan teks, *closure* `num(key)` membaca kembali dua angka dari teks itu: memotong string sesudah `"done":` atau `"days":`, mengambil awalan berdigit, mem-*parse* sebagai `usize` (0 bila gagal), lalu memanggil `progress(done, days)`.
-  6. `swat_engine::run::run_with(&project, &mut tables, RunOptions { fixes })?`.
+  6. `swat_engine::run::run_with(&project, &mut tables, RunOptions { fixes, threads: 1 })?`. Di WebAssembly HRU dan routing selalu berjalan pada satu thread (sejak 1.1 field `threads` ditulis eksplisit).
   7. Dari `RunReport`, ubah setiap alasan yang tidak `None` menjadi catatan: `HRU water balance not simulated (…)`, `channels not routed (…)`, `routing units and aquifers not simulated (…)`.
   8. `tables.finish()?` mengembalikan `MemStore`; untuk setiap pasangan (nama, teks) di `store.files`:
      - bila `parquet`: nama dasar = nama tanpa `.txt`; `text_to_parquet(teks, Vec::new(), 1 << 20)` (satu *row group* per 2^20 = 1.048.576 baris), simpan `<dasar>.parquet`; galat diberi awalan nama berkas;
@@ -9780,11 +10074,12 @@ Biner `swatplus-rust` adalah program yang dijalankan *runner* RustGIS dan penggu
 
 ```text
 swatplus-rust inspect <TxtInOut folder>
-swatplus-rust run <TxtInOut folder> [--out <folder>] [--fix-swat] [--format text|parquet|both] [--progress json] [--strict]
+swatplus-rust run <TxtInOut folder> [--out <folder>] [--fix-swat] [--format text|parquet|both] [--progress json] [--strict] [--channel-hyd] [--threads N] [--calibration <file>] [--cal-parms <file>] [--set <name> <absval|abschg|pctchg|relchg> <value>]...
+swatplus-rust batch <TxtInOut folder> --sets <sets.csv> --channels <n,n,...> --out <folder> [--threads N] [--fix-swat] [--depth] [--cal-parms <file>] [--shared-spinup]
 swatplus-rust compare <SWAT+ table> <our table> [--abs 0.001] [--rel 1e-4]
 ```
 
-Selain itu `--version` atau `-V` mencetak `swatplus-rust <versi>` (pada rilis ini `swatplus-rust 1.0.1`).
+Selain itu `--version` atau `-V` mencetak `swatplus-rust <versi>` (pada rilis 1.1.0: `swatplus-rust 1.1.0`). Perintah `batch` dan opsi `run` sesudah `--strict` ditambahkan di 1.1.
 
 **Opsi `run`.**
 
@@ -9795,6 +10090,11 @@ Selain itu `--version` atau `-V` mencetak `swatplus-rust <versi>` (pada rilis in
 | `--format text\|parquet\|both` | `text` | tabel teks SWAT+, Parquet, atau keduanya |
 | `--progress json` | mati | progres dan event sebagai baris JSON di *stdout*; tanpa ini pesan ke *stderr* |
 | `--strict` | mati | tulis tabel lengkap (juga Parquet), lalu keluar dengan kode 3 bila sebagian proyek tidak disimulasikan |
+| `--channel-hyd` | mati | sejak 1.1: tulis juga `channel_hyd_day.txt` (Bab 15.5.13); tabel SWAT+ tidak berubah |
+| `--threads N` | 0 (semua inti) | sejak 1.1: dengan `--fix-swat`, jumlah thread HRU dan routing; tanpa `--fix-swat` tidak berpengaruh |
+| `--calibration <berkas>` | — | sejak 1.1: `calibration.cal` lain sebagai ganti milik proyek, diterapkan di memori |
+| `--cal-parms <berkas>` | — | sejak 1.1: `cal_parms.cal` lain |
+| `--set <nama> <jenis> <nilai>` | — | sejak 1.1, boleh diulang: perubahan `nama` untuk semua objek jenisnya (`CalUpdate::all`), sesudah perubahan proyek; jenis `absval`, `abschg`, `pctchg`, atau `relchg` |
 
 **Kode keluar** (sesuai `docs/runner.md` dan kode):
 
@@ -9803,7 +10103,7 @@ Selain itu `--version` atau `-V` mencetak `swatplus-rust <versi>` (pada rilis in
 | 0 | selesai (`run`, `inspect`, `--version`); pada `compare`: semua nilai cocok |
 | 1 | galat: proyek tidak terbaca atau gagal dijalankan, folder atau tabel tidak dapat ditulis, berkas `compare` tidak terbuka; pada `compare` juga: ada ketidakcocokan, baris hilang/berlebih, urutan baris salah, atau tidak ada kolom yang dibandingkan |
 | 2 | argumen salah (perintah tak dikenal, opsi tak dikenal, nilai opsi hilang atau tidak valid) |
-| 3 | `run --strict`: sebagian proyek tidak disimulasikan |
+| 3 | `run --strict`: sebagian proyek tidak disimulasikan; `batch`: ada run yang gagal |
 
 **Event JSON** (`--progress json`), satu objek per baris di *stdout*:
 
@@ -9816,7 +10116,7 @@ Selain itu `--version` atau `-V` mencetak `swatplus-rust <versi>` (pada rilis in
 | `done` | `days`, `seconds` | terakhir, bila berhasil |
 | `error` | `text` | terakhir, bila gagal |
 
-**Struct `RunArgs<'a>`** (privat): `out: &str` (folder keluaran), `fixes: bool`, `text: bool` (pertahankan tabel teks), `parquet: bool` (tulis Parquet), `json: bool` (event JSON), `strict: bool`.
+**Struct `RunArgs<'a>`** (privat): `out: &str` (folder keluaran), `fixes: bool`, `text: bool` (pertahankan tabel teks), `parquet: bool` (tulis Parquet), `json: bool` (event JSON), `strict: bool`; sejak 1.1 juga `channel_hyd: bool`, `threads: usize`, `calibration: Option<&str>`, `cal_parms: Option<&str>`, `sets: Vec<CalUpdate>`.
 
 #### 16.2.1  `main`
 
@@ -9825,13 +10125,14 @@ Selain itu `--version` atau `-V` mencetak `swatplus-rust <versi>` (pada rilis in
 - **Tujuan:** mengurai argumen dan meneruskan ke `inspect`, `run`, atau `compare_cmd`.
 - **Masukan dan keluaran:** `std::env::args()` tanpa nama program → `ExitCode`.
 - **Cara kerja:**
-  1. Argumen dikumpulkan sebagai `Vec<&str>` lalu dicocokkan dengan pola *slice*: `["inspect", dir]`, `["run", dir, opts @ ..]`, `["compare", expected, actual, opts @ ..]`, `["--version"] | ["-V"]`; selain itu cetak `USAGE` ke *stderr* dan keluar 2. Catatan: `inspect` dengan argumen tambahan juga dianggap salah.
+  1. Argumen dikumpulkan sebagai `Vec<&str>` lalu dicocokkan dengan pola *slice*: `["inspect", dir]`, `["run", dir, opts @ ..]`, `["batch", dir, opts @ ..]` (sejak 1.1, 16.2.7), `["compare", expected, actual, opts @ ..]`, `["--version"] | ["-V"]`; selain itu cetak `USAGE` ke *stderr* dan keluar 2. Catatan: `inspect` dengan argumen tambahan juga dianggap salah.
   2. Untuk `run`, `RunArgs` diawali dengan `out = dir`, `text = true`, lainnya `false`. Iterator opsi diperiksa berpasangan (opsi saat ini, intipan nilai berikutnya lewat `it.clone().next()`):
      - `--out v`: `out = v`, lompati `v`;
      - `--fix-swat`: `fixes = true`;
      - `--format v` dengan `v` ∈ {text, parquet, both}: `text = (v != "parquet")`, `parquet = (v != "text")`, lompati `v`;
      - `--progress json`: `json = true`, lompati nilai;
      - `--strict`: `strict = true`;
+     - sejak 1.1: `--channel-hyd`; `--threads v` (bilangan bulat); `--calibration v` dan `--cal-parms v` (tidak diawali `--`); `--set nama jenis nilai` (tiga nilai berikutnya; jenis harus salah satu dari empat dan nilai harus angka, selain itu pesan khusus dan kode 2), menjadi `CalUpdate::all`;
      - selainnya (termasuk `--out` tanpa nilai, format tak dikenal, `--progress` selain `json`): cetak `USAGE`, keluar 2.
   3. Opsi boleh diulang; nilai terakhir yang menang (mis. dua `--format`).
 - **Catatan port:** sejak 1.0.1 `--out` hanya menerima nilai yang tidak diawali `--`, sehingga `--out --strict` tidak lagi memperlakukan `--strict` sebagai nama folder, melainkan ditolak sebagai argumen salah (kode 2).
@@ -9872,7 +10173,7 @@ Selain itu `--version` atau `-V` mencetak `swatplus-rust <versi>` (pada rilis in
   4. Hitung `days = project.time.days()`. Dalam mode JSON, kirim event `start` dengan tanggal hari pertama dan terakhir; tanggal dibentuk dari tahun dan hari Julian dengan `swat_engine::clock::xmon` atas tabel panjang bulan kabisat (`NDAYS_LEAP`) atau bukan (`NDAYS_NOLEAP`) sesuai `is_leap(tahun)`.
   5. Buat `TextTables::new(judul, DirStore::new(out), &project.print)` (tabel ditulis langsung ke berkas sambil berjalan), set `fixes`, dan dalam mode JSON pasang `progress::Reporter` dengan `emit` sebagai keluaran.
   6. Bila `--fix-swat`, kirim catatan bahwa bug SWAT+ dikoreksi dan hasil akan berbeda.
-  7. `run_with(&project, &mut tables, RunOptions { fixes })`:
+  7. `run_with(&project, &mut tables, RunOptions { fixes, threads })`, atau sejak 1.1 `run_with_calibration(…, &cal)` bila `--calibration`, `--cal-parms` atau `--set` diberikan (kalibrasi dari `calibration`, 16.2.6; galatnya → `fail`). Sebelumnya `tables.channel_hyd` diisi dari `--channel-hyd`:
      - galat → `fail`;
      - berhasil: kumpulkan alasan yang tidak `None` dari `hru_skipped`, `channel_skipped`, `routing_skipped`. Bila `--strict` dan ada alasan, simpan pesan "not simulated: …" (alasan digabung dengan ` ;  `); sejak 1.0.1 semua tabel tetap ditulis lengkap (juga Parquet), baru kemudian program mengirim `error` itu dan keluar **3**. Setiap alasan juga menjadi catatan: neraca air HRU tidak disimulasikan (`hru_wb_day.txt` hanya berisi presipitasi), saluran tidak dirutekan (meneruskan aliran masuknya), atau unit perutean dan akuifer tidak disimulasikan.
   8. `tables.finish()` menuntaskan tabel (mis. tabel rata-rata tahunan); gagal → `fail`. Ambil `store.names()`, lalu lepaskan `store` agar berkas tertutup sebelum dibaca ulang.
@@ -9884,7 +10185,7 @@ Selain itu `--version` atau `-V` mencetak `swatplus-rust <versi>` (pada rilis in
   - Dengan `--format parquet`, tabel teks tetap ditulis lebih dulu (pengonversi membaca teks), lalu dihapus. Akibatnya nilai Parquet adalah angka yang tercetak di tabel teks (presisi SWAT+), bukan nilai internal engine (lihat `docs/runner.md`).
   - Pada jalur `--strict` (kode 3), sejak 1.0.1 `tables.finish()` tetap dipanggil, sehingga tabel akhir periode dituntaskan dan Parquet dibuat sebelum event `error` dikirim; sebelumnya program keluar sebelum tabel dituntaskan.
   - Folder bawaan `--out` sama dengan folder masukan, seperti SWAT+; alur kerja validasi memakai `--out` terpisah agar tabel Fortran dan Rust tidak saling menimpa.
-  - Engine berjalan pada satu *thread*. `docs/runner.md` menjelaskan bahwa HRU tidak dapat dijalankan paralel tanpa mengubah hasil, karena beberapa variabel SWAT+ membawa nilai satu HRU ke HRU berikutnya pada hari yang sama (bilangan acak tabel keputusan, permintaan hara tanaman, *enrichment ratio*, fraksi fosfor sedimen, status sistem septik). Paralelisme hanya cocok untuk mode `--fix-swat` kelak.
+  - Run setia berjalan pada satu *thread*: HRU tidak dapat dijalankan paralel tanpa mengubah hasil, karena beberapa variabel SWAT+ membawa nilai satu HRU ke HRU berikutnya pada hari yang sama (bilangan acak tabel keputusan, permintaan hara tanaman, *enrichment ratio*, fraksi fosfor sedimen, status sistem septik). Sejak 1.1, `--fix-swat --threads N` menjalankan HRU dan routing di N thread dengan salinan per HRU dari keadaan itu (Bab 5.3.13 dan 12.4.6); tabelnya sama untuk berapa pun N.
 
 #### 16.2.5  `compare_cmd`
 
@@ -9897,6 +10198,31 @@ Selain itu `--version` atau `-V` mencetak `swatplus-rust <versi>` (pada rilis in
   2. Buka kedua berkas sebagai `BufReader`; gagal → `error: <path>: …`, kode 1.
   3. Label laporan = nama berkas `actual` tanpa folder.
   4. `compare(e, a, abs, rel, label)`: `Ok(true)` → 0; `Ok(false)` → 1; `Err` → pesan dan 1.
+
+#### 16.2.6  `calibration`
+
+- **Lokasi:** `crates/swatplus-rust/src/main.rs`, `fn calibration(project: &Project, o: &RunArgs) -> Result<Calibration, String>`. Sejak 1.1.
+- **Padanan SWAT+:** tidak ada; di SWAT+ kalibrasi lain berarti berkas lain.
+- **Tujuan:** kalibrasi yang diminta `--calibration`, `--cal-parms`, dan `--set`.
+- **Cara kerja:** mulai dari `Calibration::of(project)`; bila `--cal-parms`, `parms` dibaca dari berkas itu (`swat_io::cal::read_cal_parms`); bila `--calibration`, `updates` dibaca dari berkas itu (`read_calibration`); perubahan `--set` ditambahkan sesudahnya. Tanpa `cal_parms.cal` sama sekali: galat yang meminta `--cal-parms`.
+- **Catatan:** `run` memakai `run_with_calibration` hanya bila salah satu opsi ini diberikan, dan mencatat "calibration: *n* change(s) applied in memory; the project's files are unchanged". Tanpa opsi itu jalurnya tetap `run_with`.
+
+#### 16.2.7  Perintah `batch` (`crates/swatplus-rust/src/batch.rs`)
+
+Sejak 1.1 (M2, Lampiran B.3). `swatplus-rust batch <proyek> --sets <sets.csv> --channels <n,n,...> --out <folder> [--threads N] [--fix-swat] [--depth] [--cal-parms <berkas>] [--shared-spinup]` menjalankan satu proyek sekali per set parameter, berdampingan di inti komputer, dan hanya menyimpan deret yang dibutuhkan kalibrasi.
+
+**Struct `BatchArgs<'a>`:** `sets`, `channels` (nomor saluran di `channel_sd`), `out`, `threads` (run sekaligus; 0 = sebanyak inti), `fixes`, `depth` (kedalaman juga), `cal_parms`, `shared_spinup`.
+
+- **`read_sets(text: &str) -> Result<(Vec<String>, Vec<Vec<CalUpdate>>), String>`:** membaca CSV set parameter. Baris kepala berisi kolom `parameter:jenis` (`cn2:pctchg`, `esco:absval`; jenis salah satu dari empat), boleh diawali kolom `run` yang menamai setiap baris; baris kosong dan baris `#` dilewati. Setiap baris menjadi satu set `CalUpdate::all(nama, jenis, nilai)`; tanpa kolom `run` nama run `0001`, `0002`, …. Galat untuk kolom tanpa jenis, jenis tak dikenal, nilai bukan angka, atau jumlah nilai yang tidak sama dengan kolom. Uji `parameter_sets_are_read_from_csv`.
+- **`series_csv(s: &Series) -> String`:** deret satu run sebagai CSV: `date` (`yyyy-mm-dd`, dari `xmon`), `precip_mm`, `et_mm`, `flo_<n>` per saluran, dan bila ada kedalaman `dep_<n>`, `dep_mann_<n>`; nilai yang tidak ada ditulis NaN.
+- **`batch(dir: &str, a: &BatchArgs) -> ExitCode`:**
+  1. Wajib `--sets`, `--out`, dan paling sedikit satu saluran; muat proyek; baca set.
+  2. Kalibrasi dasar `Calibration::of(project)`, dengan `parms` dari `--cal-parms` bila diberikan; tanpa `parms`: galat.
+  3. Nomor saluran harus 1 sampai jumlah saluran SWAT-DEG.
+  4. Tanpa `--shared-spinup`: setiap set menjadi `Calibration { parms, updates: kalibrasi proyek ++ set }`, dijalankan `run_batch` (Bab 5.9.4) dengan `RunOptions { fixes, threads: 1 }`.
+  5. Dengan `--shared-spinup`: perlu `nyskip ≥ 1`; tahun terakhir pemanasan `yrc_start + nyskip − 1`; `run_batch_shared` (Bab 5.9.5).
+  6. Tulis `run_<nama>.csv` untuk setiap run yang berhasil dan ringkasan `runs.csv` (`run`, `status`, `mean_flo_<n>`; untuk run gagal alasannya). Kode keluar 3 bila ada run yang gagal, selain itu 0.
+- **Catatan:** progres ditulis ke *stderr* (`k/n runs done`). Pada Batanghari, empat run: 69,7 detik satu per satu, 35,7 detik dua sekaligus di dua inti.
 
 ### 16.3  Pembanding tabel dan toleransi K12 (`crates/swatplus-rust/src/compare.rs`)
 
@@ -10023,14 +10349,15 @@ Konsekuensi praktis:
 
 ### 16.5  Validasi dan rilis di GitHub Actions (`.github/workflows/*.yml`)
 
-Empat alur kerja menjaga kedua pintu di atas. Ringkasannya:
+Lima alur kerja menjaga kedua pintu di atas. Ringkasannya:
 
 | Alur kerja | Pemicu | Yang diperiksa atau dihasilkan |
 | --- | --- | --- |
 | `ci.yml` (CI) | *push* ke `main`, *pull request*, manual | format, lint, uji, build WASM, kesetaraan WASM vs *native*, Parquet, MSRV |
 | `validate.yml` (Validate against SWAT+) | *push* ke `main`, *pull request*, manual | menjalankan SWAT+ Fortran dan port pada puluhan skenario lalu `compare` setiap tabel |
 | `fortran.yml` (SWAT+ Fortran build) | manual, atau perubahan berkas alur itu sendiri | membangun SWAT+ Fortran acuan dan menyimpannya di cabang `fortran-bin` |
-| `release.yml` (Release) | *tag* `v*` | biner untuk empat target dan modul WASM, dipublikasikan sebagai *GitHub release* |
+| `release.yml` (Release) | *tag* `v*` | biner untuk enam target (empat sampai 1.0.1) dan modul WASM, dipublikasikan sebagai *GitHub release* |
+| `preview-build.yml` (Preview build, sejak 1.1) | *push* ke cabang `preview/**`, manual | biner Windows x86-64, Windows ARM64, dan Linux x86-64 untuk dicoba, sebagai artefak run, tanpa rilis; dikemas bersama Osu\_1hru, Ames\_sub1, dan `scripts/bench-threads.ps1` |
 
 #### 16.5.1  `ci.yml`
 
@@ -10040,18 +10367,20 @@ Semua *job* berjalan di `ubuntu-latest` dengan `RUSTFLAGS=-D warnings` (peringat
 2. **wasm** (WebAssembly build): bangun `swat_wasm.wasm` untuk `wasm32-unknown-unknown`; bangun biner *native*; kemas `Osu_1hru` menjadi tar; jalankan `node scripts/wasm-run.mjs … 3`; pastikan `run.json` berisi `"ok":true`; jalankan `swatplus-rust run` *native* ke folder lain. Setiap tabel `.txt` dibandingkan bita demi bita dengan `cmp`; tabel yang berbeda menghasilkan peringatan (bukan galat) dan harus lolos `swatplus-rust compare` dengan toleransi bawaan. *Job* gagal hanya bila ada tabel di luar toleransi.
 3. **parquet** (Parquet tables read by DuckDB and Arrow): salin `Osu_1hru`, ubah `print.prt` dengan `scripts/print-daily.sh` agar semua tabel utama dicetak harian, jalankan `run --format both --progress json`, lalu `scripts/check-parquet.py` membandingkan setiap tabel Parquet (dibaca DuckDB dan pyarrow) dengan tabel teksnya.
 4. **msrv**: `cargo build --workspace` dengan Rust 1.90 (versi minimum yang didukung).
+5. **calibration** (Calibration tools (Python), sejak 1.1): bangun `swatplus-rust` mode *release*, lalu `python -m pytest -q tests` di `calibration/` (paket `swatcal`, hanya numpy), termasuk uji yang menjalankan program lewat `batch`.
 
 #### 16.5.2  `validate.yml`
 
 Inilah pembuktian utama klaim bit-for-bit (dalam K12) terhadap SWAT+ Fortran.
 
-1. Ambil biner `swatplus-fortran` dari cabang `fortran-bin` (lihat 16.5.3) dan bangun `swatplus-rust` mode *release*.
+1. Ambil biner `swatplus-fortran` dari cabang `fortran-bin` (lihat 16.5.3) dan bangun `swatplus-rust` mode *release*. Sejak 1.0.3 skenario Batanghari dan Pessel (data milik Dinas SDA-BK Provinsi Sumatera Barat) tidak ada di repositori publik; alur kerja mengambilnya dari repositori privat dengan *secret* `TESTDATA_TOKEN`, dan tanpa *secret* itu melewati skenario tersebut dengan peringatan.
 2. Buat varian skenario: `scripts/make-variants.sh` (varian fase 2 dari `Ames_sub1`), `scripts/make-phase3-variants.py` (Batanghari dan `Bh_land`, dipotong sampai 2019), `scripts/make-pessel-variants.py` (dataran pantai Pessel 2015–2017 dan varian `Ps_*`, termasuk padi sawah `Ps_paddy`), `scripts/make-reservoir-variants.py` (Batanghari dengan waduk dan sumber titik: `Bh_res`, `Bh_rel`, Bh\_nosed), dan Pessel utuh untuk 2015 saja dengan pencetakan sejak hari pertama.
 3. Untuk setiap skenario dalam daftar (`Osu_1hru`, `Ames_sub1`, varian `Ames_*`, `Bh_land`, `Batanghari`, `Bh_res`, `Bh_rel`, `Bh_nosed`, varian `Ps_*`, dan `Pessel`): salin ke `runs/<skenario>/fortran`, ubah `print.prt` dengan `print-daily.sh` agar tabel yang dibandingkan dicetak harian, jalankan SWAT+ Fortran dan pastikan `success.fin` ada, lalu jalankan port pada folder yang sama dengan `--out runs/<skenario>/rust` (port tidak membaca keluaran SWAT+ sebagai masukan).
 4. Untuk setiap kombinasi tabel (`hru_wb`, `hru_pw`, `hru_nb`, `hru_ls`, `ru`, `aquifer`, `channel_sd`, `basin_*`, `lsunit_*`, `basin_sd_cha`, `reservoir`, `basin_res`, `recall`, `basin_psc`) dan periode (`day`, `mon`, `yr`, `aa`, `subday`) yang ditulis port: `swatplus-rust compare` dengan toleransi bawaan; hasil menjadi anotasi `::notice` atau `::error`. Tabel yang tidak ditulis port (misalnya tabel hara untuk HRU yang tidak disimulasikan penuh) dilewati.
 5. `scripts/compare-yields.py` membandingkan hasil panen tanaman.
 6. Tabel harian dan subharian dihapus setelah dibandingkan (tabel harian Batanghari bisa bergigabita).
 7. *Job* gagal bila ada satu saja tabel atau hasil panen yang tidak cocok; batas waktu 60 menit.
+8. Sejak 1.0.3: hasil perbandingan setiap skenario (jumlah dan selisih, tanpa nilai) disimpan sebagai artefak dan di cabang `validation-logs`, dengan ringkasan per skenario dari `scripts/validation-summary.py`; run 28 Oktober 2026 tersimpan di `docs/validation-results/`.
 
 #### 16.5.3  `fortran.yml`
 
@@ -10061,7 +10390,7 @@ Membangun SWAT+ Fortran pada commit acuan `6f515368525e7d84089ae0f9d33f4c9115de5
 
 Dipicu *tag* `v*`.
 
-1. **build** (matriks): `x86_64-unknown-linux-gnu` (ubuntu-latest), `aarch64-apple-darwin` (macos-latest), `x86_64-apple-darwin` (macos-13), `x86_64-pc-windows-msvc` (windows-latest). Masing-masing `cargo build --release --locked -p swatplus-rust --target …`, dikemas bersama `LICENSE`, `NOTICE`, `README.md`, dan `docs/runner.md` sebagai `.tar.gz` (atau `.zip` untuk Windows).
+1. **build** (matriks, `fail-fast: false` sejak 1.0.2 sehingga satu platform yang gagal tidak menghentikan yang lain): `x86_64-unknown-linux-gnu` dan `aarch64-unknown-linux-gnu` (ubuntu-latest, ARM64 dengan *cross linker* `aarch64-linux-gnu-gcc`), `aarch64-apple-darwin` dan `x86_64-apple-darwin` (keduanya macos-latest), `x86_64-pc-windows-msvc` dan `aarch64-pc-windows-msvc` (windows-latest). Target ARM64 Linux dan Windows ditambahkan di 1.0.2. Masing-masing `cargo build --release --locked -p swatplus-rust --target …`, dikemas bersama `LICENSE`, `NOTICE`, `README.md`, dan `docs/runner.md` sebagai `.tar.gz` (atau `.zip` untuk Windows).
 2. **wasm**: `cargo build --release --locked -p swat-wasm --target wasm32-unknown-unknown`; dikemas bersama `scripts/wasm-run.mjs`, `LICENSE`, `NOTICE`, dan `docs/runner.md`.
 3. **publish**: unduh semua artefak dan `gh release create <tag>` dengan catatan rilis dari `CHANGELOG.md`.
 
@@ -10084,6 +10413,8 @@ Catatan: rilis tidak menjalankan ulang validasi terhadap SWAT+; validasi bergant
 | `emit` | `swatplus-rust/src/main.rs` | 16.2.3 |
 | `run` | `swatplus-rust/src/main.rs` | 16.2.4 |
 | `compare_cmd` | `swatplus-rust/src/main.rs` | 16.2.5 |
+| `calibration` | `swatplus-rust/src/main.rs` | 16.2.6 |
+| `read_sets`, `series_csv`, `batch`, `tests::parameter_sets_are_read_from_csv` | `swatplus-rust/src/batch.rs` | 16.2.7 |
 | `Rows::new` | `swatplus-rust/src/compare.rs` | 16.3.1 |
 | `Rows::next_row` | `swatplus-rust/src/compare.rs` | 16.3.2 |
 | `compare` | `swatplus-rust/src/compare.rs` | 16.3.3 |
@@ -10091,7 +10422,7 @@ Catatan: rilis tidak menjalankan ulang validasi terhadap SWAT+; validasi bergant
 
 ## Bab 17  Validasi bit-for-bit dan katalog kebiasaan SWAT+
 
-Bab ini menjelaskan bagaimana engine Rust dibuktikan sama dengan SWAT+ Fortran commit `6f51536`, dan mengumpulkan di satu tempat seluruh kebiasaan (*quirk*) SWAT+ yang sengaja dipertahankan oleh port, koreksi yang tersedia lewat `--fix-swat`, fitur yang ditolak oleh engine 1.0, serta kinerja dan batas paralelisme. Berbeda dari bab lain, bab ini tidak terutama disusun per fungsi engine, melainkan per aspek validasi; meski demikian, fungsi-fungsi alat pembanding (`crates/swatplus-rust/src/compare.rs`, `compare_cmd` di `main.rs`) dan skrip validasi (`scripts/*.py`, `scripts/*.sh`) tetap dijelaskan satu per satu.
+Bab ini menjelaskan bagaimana engine Rust dibuktikan sama dengan SWAT+ Fortran commit `6f51536`, dan mengumpulkan di satu tempat seluruh kebiasaan (*quirk*) SWAT+ yang sengaja dipertahankan oleh port, koreksi yang tersedia lewat `--fix-swat`, fitur yang ditolak oleh engine 1.0, serta kinerja dan mode paralel (sejak 1.1). Berbeda dari bab lain, bab ini tidak terutama disusun per fungsi engine, melainkan per aspek validasi; meski demikian, fungsi-fungsi alat pembanding (`crates/swatplus-rust/src/compare.rs`, `compare_cmd` di `main.rs`) dan skrip validasi (`scripts/*.py`, `scripts/*.sh`) tetap dijelaskan satu per satu.
 
 File yang dicakup: `crates/swatplus-rust/src/compare.rs`, `crates/swatplus-rust/src/main.rs` (bagian `compare_cmd` dan pelaporan `run`), `scripts/make-variants.sh`, `scripts/make-phase3-variants.py`, `scripts/make-pessel-variants.py`, `scripts/make-reservoir-variants.py`, `scripts/print-daily.sh`, `scripts/compare-yields.py`, `scripts/check-parquet.py`, `scripts/wasm-run.mjs`, alur kerja `.github/workflows/validate.yml`, `ci.yml`, `fortran.yml`, `release.yml`, serta dokumen `docs/swat-quirks.md`, `docs/swat-fixes.md`, `docs/engine1.md`, `docs/routing.md`, `docs/subdaily.md`, `docs/reservoirs.md`, `docs/nutrients.md`, `docs/structures.md`, `docs/paddy.md`, `docs/atmo.md`, `docs/outputs.md`, `docs/phase2.md`, `docs/phase3.md` dan `docs/runner.md`. Pengecekan penolakan fitur diambil langsung dari kode (`swat-engine/src/hru/mod.rs`, `hru/mgt.rs`, `hru/wetland.rs`, `hru/septic.rs`, `hru/plant.rs`, `route.rs`, `channel.rs`, `res.rs`).
 
@@ -10102,7 +10433,7 @@ Posisi dalam alur: validasi berada di luar simulasi. Engine dijalankan dua kali 
 #### 17.1.1  Apa arti "bit-for-bit"
 
 - **Tujuan proyek** (README, keputusan K12 desain RustGIS): setiap keluaran harian sama dengan SWAT+ Fortran commit `6f51536` pada skenario acuan, dalam toleransi selisih relatif 1e-4 *atau* satu satuan pada desimal terakhir yang dicetak.
-- **Dalam praktik** hampir semua tabel identik tanpa memakai toleransi sama sekali. `docs/phase2.md` mencatat untuk tahap 2a: "Every column the port writes is identical to SWAT+'s on every day, with no tolerance used." Toleransi K12 berfungsi sebagai jaring pengaman untuk dua keadaan: (a) nilai yang dicetak dengan banyak digit (mis. tabel rata-rata tahunan unit routing dengan 9 digit bermakna) dan (b) perbedaan pustaka matematika antara platform (WebAssembly, macOS, Windows), lihat 17.4.3.
+- **Dalam praktik** hampir semua tabel identik tanpa memakai toleransi sama sekali. `docs/phase2.md` mencatat untuk tahap 2a: "Every column the port writes is identical to SWAT+'s on every day, with no tolerance used." Sejak 1.0.3 juga tabel recall dan titik sumber, yang sebelumnya satu-satunya sumber selisih tak nol pada validasi 28 Oktober 2026 (paling banyak 6e-8, karena bentuk tulisan angkanya; Bab 15.3.1a). Toleransi K12 berfungsi sebagai jaring pengaman untuk dua keadaan: (a) nilai yang dicetak dengan banyak digit (mis. tabel rata-rata tahunan unit routing dengan 9 digit bermakna) dan (b) perbedaan pustaka matematika antara platform (WebAssembly, macOS, Windows), lihat 17.4.3.
 - **Presisi.** SWAT+ menghitung hampir semua besaran dalam `real` 32-bit; port memakai `f32` di tempat yang sama dan menjaga urutan operasi, karena penjumlahan floating point tidak asosiatif. Dua contoh di mana satu bit pun berarti (dari `docs/swat-quirks.md`, bagian *Arithmetic*): gfortran melipat `Sin(Atan(x))` menjadi `x / Sqrt(x*x + 1)` sehingga port harus melakukan hal yang sama (tanpa itu dua dari 1.858 HRU Batanghari menyimpang sampai 2 % biomassa), dan `x ** 0.5` di gfortran adalah `powf`, bukan `sqrt`, sehingga port memanggil `fortran::rpow` yang menyembunyikan eksponen dari optimizer.
 - **Yang dibandingkan.** Semua tabel teks yang ditulis port: tabel HRU (`hru_wb`, `hru_pw`, `hru_nb`, `hru_ls`), unit routing (`ru`), akuifer (`aquifer`), kanal SWAT-DEG (`channel_sd`, termasuk `channel_sd_subday`), DAS (`basin_wb`, `basin_nb`, `basin_ls`, `basin_pw`, `basin_sd_cha`), unit lanskap (`lsunit_*`), waduk dan sumber titik (`reservoir`, `basin_res`, `recall`, `basin_psc`), untuk periode harian, bulanan, tahunan dan rata-rata tahunan, serta tabel hasil panen (`crop_yld_aa`, `basin_crop_yld_yr`, `basin_crop_yld_aa`).
 
@@ -10333,6 +10664,8 @@ P_t = R\left[\left(\tfrac{t+1}{T}\right)^{1/3} - \left(\tfrac{t}{T}\right)^{1/3}
   8. `compare-yields.py`; kegagalan juga menyetel status 1.
   9. Hapus `*_day.txt` dan `*_subday.txt` kedua sisi untuk menghemat ruang disk.
   10. Keluar dengan status gabungan; `trap ERR` menandai skenario tempat skrip berhenti.
+- **Sejak 1.0.3:** Batanghari, Pessel, dan variannya diambil dari repositori privat (*secret* `TESTDATA_TOKEN`; data milik Dinas SDA-BK Provinsi Sumatera Barat, hanya ringkasan angka yang boleh dipublikasikan); tanpa *secret*, skenario itu dilewati dengan peringatan. Hasil perbandingan setiap skenario (jumlah dan selisih, tanpa nilai) disimpan sebagai artefak dan di cabang `validation-logs`, dengan ringkasan `scripts/validation-summary.py`; run 28 Oktober 2026 ada di `docs/validation-results/`.
+- **Sejak 1.1:** setiap perubahan 1.1 divalidasi juga dengan cara ini; ke-37 skenario memberi tabel setia yang identik byte demi byte dengan 1.0.3. Untuk mode paralel, ke-37 skenario dijalankan dengan `--fix-swat` pada 1 dan 3 thread (627 tabel sama), Batanghari, Pessel, dan delapan variannya dengan 5 thread seperti dengan 1; uji `tests/parallel.rs` memeriksanya di CI pada Ames\_sub1.
 - **Catatan:** varian dibangun ulang pada setiap run dari `testdata/`, sehingga berkas varian tidak perlu disimpan di repo. Karena semua tabel selain harian tetap dibandingkan, agregasi bulanan, tahunan dan rata-rata tahunan (`docs/outputs.md`) ikut tervalidasi.
 
 #### 17.4.2  `ci.yml`: format, lint, uji, inspeksi
@@ -10352,7 +10685,7 @@ Job `wasm` membandingkan berkas byte demi byte (`cmp -s`). Tabel yang berbeda di
 
 #### 17.4.4  `release.yml`
 
-Saat tag `v*` didorong: bangun `swatplus-rust` (`--locked`) untuk `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`, `x86_64-apple-darwin`, `x86_64-pc-windows-msvc`, kemas bersama `LICENSE`, `NOTICE`, `README.md` dan `docs/runner.md`, serta modul WebAssembly, lalu terbitkan sebagai rilis GitHub. Rilis tidak menjalankan validasi ulang; validasi bergantung pada `validate.yml` di `main`.
+Saat tag `v*` didorong: bangun `swatplus-rust` (`--locked`) untuk `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`, `x86_64-apple-darwin`, `x86_64-pc-windows-msvc`, dan sejak 1.0.2 `aarch64-pc-windows-msvc` serta `aarch64-unknown-linux-gnu`, kemas bersama `LICENSE`, `NOTICE`, `README.md` dan `docs/runner.md`, serta modul WebAssembly, lalu terbitkan sebagai rilis GitHub. Rilis tidak menjalankan validasi ulang; validasi bergantung pada `validate.yml` di `main`.
 
 #### 17.4.5  Cara mengulang secara lokal
 
@@ -10714,7 +11047,7 @@ Katalog ini menggabungkan semua butir di `docs/swat-quirks.md` serta bagian *Qui
 
 ### 17.6  Koreksi `--fix-swat`
 
-Secara bawaan port mereproduksi SWAT+ termasuk bug-nya, karena itulah cara port divalidasi. Dengan `swatplus-rust run <dir> --fix-swat` (dalam kode `run_with(.., RunOptions { fixes: true })`, di WebAssembly flag 4) bug di bawah ini dikoreksi. Setiap koreksi dijaga bendera yang sama (`fixes`), sehingga run setia tidak berubah sedikit pun. Hasil terkoreksi berbeda dari SWAT+, jadi run terkoreksi harus dikalibrasi ulang, bukan dibandingkan dengan kalibrasi SWAT+. Program mencetak catatan "--fix-swat: SWAT+'s bugs corrected, results will differ from SWAT+". Kolom "Penjaga di kode" menyebut tempat bendera diuji (hasil pencarian `fixes` di `swat-engine`); kolom terakhir merujuk nomor butir katalog 17.5.
+Secara bawaan port mereproduksi SWAT+ termasuk bug-nya, karena itulah cara port divalidasi. Dengan `swatplus-rust run <dir> --fix-swat` (dalam kode `run_with(.., RunOptions { fixes: true, threads })`, di WebAssembly flag 4) bug di bawah ini dikoreksi. Setiap koreksi dijaga bendera yang sama (`fixes`), sehingga run setia tidak berubah sedikit pun. Hasil terkoreksi berbeda dari SWAT+, jadi run terkoreksi harus dikalibrasi ulang, bukan dibandingkan dengan kalibrasi SWAT+. Program mencetak catatan "--fix-swat: SWAT+'s bugs corrected, results will differ from SWAT+". Kolom "Penjaga di kode" menyebut tempat bendera diuji (hasil pencarian `fixes` di `swat-engine`); kolom terakhir merujuk nomor butir katalog 17.5.
 
 | No | Lokasi SWAT+ | Bug | Koreksi | Penjaga di kode | Butir katalog |
 | --- | --- | --- | --- | --- | --- |
@@ -10737,8 +11070,13 @@ Secara bawaan port mereproduksi SWAT+ termasuk bug-nya, karena itulah cara port 
 | F17 | `sd_channel_control3` / `ch_temp` | hidrograf keluar disalin sebelum suhu sungai dihitung, jadi keluar dengan suhu aliran masuk | aliran keluar membawa suhu terhitung | `channel.rs` | 116 |
 | F18 | `ch_temp` | suhu air hulu diambil dari aliran masuk terakhir dan sebelumnya, apa pun itu | rata-rata tertimbang debit semua kanal hulu | `channel.rs` | 116 |
 | F19 | `channel_sd_day` `water_temp` | satu variabel modul dicetak untuk semua kanal: perkiraan berbasis udara kanal terakhir | suhu sungai setiap kanal | `channel.rs` | 117 |
+| F20 (1.1) | variabel modul dan *save* (`Saved`) | yang ditinggalkan satu HRU di variabel bersama (larik permintaan hara `uno3d`, `uapd`, `un2`, `up2`; `delg_p`; fraksi P sedimen; karbon mikroba yang hilang bersama sedimen; rasio pengayaan; operasi tipe septik; benih acak tabel keputusan) dibaca HRU berikutnya dalam urutan perintah | setiap HRU memiliki salinannya sendiri, tabel keputusannya aliran bilangan acak sendiri (benih dimajukan 10⁶ tarikan per HRU, `aunif_skip`); HRU tidak lagi bergantung pada urutan dan dapat berjalan paralel | `run.rs` (`hru_saved`, `hru_wave`) | 42, 60, 97, 132, 203 |
+| F21 (1.1) | `ch_rtmusk` (`inflo`, variabel *save*) | kanal tanpa inflow pada suatu hari merouting inflow langkah terakhir yang dihitung, dari kanal mana pun yang berjalan sebelumnya: air yang tidak ada | tanpa inflow | `channel.rs` (`Carry`) | 166 |
+| F22 (1.1) | `ch_watqual4` (`gra`, variabel *save*) | bila alga terlalu padat untuk tumbuh (`algcon` ≥ 5.000), laju tumbuhnya adalah milik kanal sebelumnya dalam urutan perintah | laju kanal itu sendiri dari hari terakhirnya | `channel.rs` (`Carry`, `SdCh::gra`) | – (tidak ada butir tersendiri) |
 
 Dampak pada `Bh_land` (2015 sampai 2016) menurut `docs/swat-fixes.md`: debit unit routing menjadi separuh (air permukaan, lateral dan drainase ganda hilang); tampungan dan rembesan kanal naik beberapa persen karena luas trapesium lebih besar, debit outlet berubah kurang dari 0,1 %; suhu air kanal kini berbeda per kanal (21 sampai 28 derajat C pada satu hari pertengahan tahun, padahal SWAT+ mencetak satu nilai). Pada `Ps_paddy` koreksi F9 menaikkan hasil gabah dari 4,11 sampai 4,60 menjadi 4,12 sampai 4,73 t/ha per musim (`docs/paddy.md`).
+
+F20 sampai F22 ditambahkan di 1.1 untuk mode paralel. F20 mengubah tabel `--fix-swat` pada 4 dari 37 skenario (Ames\_cornf, Ps\_land, Ps\_paddy, Ps\_septic) paling banyak sekitar 1 % (terbesar: luapan lahan basah di Ps\_paddy); 33 skenario lainnya tidak berubah. F21 dan F22 tidak mengubah satu pun dari ke-37 skenario. Run setia tidak berubah sama sekali.
 
 Kebiasaan lain di 17.5 (misalnya stres suhu sinus, N termineralisasi yang hilang di `cbn_zhang2`, efluen septik yang tak pernah ada, recall tahunan) tidak dikoreksi `--fix-swat` pada engine 1.0; mode setia maupun terkoreksi mereproduksinya.
 
@@ -10835,12 +11173,13 @@ Parameter yang hanya dipakai SWAT+ saat penyiapan (`ovn`, `slope_len`, `field_le
 
 Ketidaksesuaian dokumen yang dulu dicatat di sini sudah dikoreksi di 1.0.1: `docs/reservoirs.md` kini menyebut bahwa opsi pelepasan danau, Hanasaki dan PLTA (`natlake`, `nonirr-h06`, `hydrop`) sudah diport dan merujuk ke `docs/engine1.md`, sesuai kode (`res.rs`). Demikian pula `swat-quirks.md` tidak lagi menulis bahwa `usgs_reg` belum diport (lihat `docs/nutrients.md`).
 
-### 17.8  Kinerja dan batas paralelisme
+### 17.8  Kinerja dan mode paralel
 
-- **Angka kinerja** (`docs/runner.md`): engine berjalan pada satu thread. Seluruh Pessel (3.966 HRU, 1.454 kanal) membutuhkan 6,4 detik per tahun simulasi pada satu inti, dibanding 16,7 detik untuk build Release SWAT+ dengan gfortran, yaitu 2,6 kali lebih cepat. `docs/phase3.md` (lebih awal) mencatat Pessel 2015 berjalan sekitar satu menit di port dan dua menit di SWAT+.
-- **Faktor pendukung:** tanpa dependensi eksternal (README); tabel dibaca dan dibandingkan sebagai aliran; tabel Parquet ditulis tanpa kompresi dengan satu *row group* per sejuta baris (`docs/runner.md`).
-- **Mengapa HRU tidak dijalankan paralel:** beberapa variabel SWAT+ membawa nilai satu HRU ke hari HRU berikutnya, sehingga urutan perhitungan menentukan hasil. `docs/runner.md` menyebut: bilangan acak tabel keputusan (butir 132), permintaan hara tanaman (butir 42), rasio pengayaan (butir 97), fraksi fosfor sedimen, dan status sistem septik (butir 203). Butir katalog lain dengan sifat serupa: `c_microb_sed` di `nut_orgnc2` (butir 60), PSP tersimpan `soil_nutcarb_init` dan hari tanam tersimpan `plant_init` saat inisialisasi (butir 188, 151), `inflo` dan `wtemp` kanal yang dipertahankan dari kanal terakhir (butir 166, 117), serta urutan penjumlahan aliran masuk dalam loop perintah (butir 92). Dalam port, keadaan semacam ini dipegang di struktur `Saved` dan dibaca serta ditulis dalam urutan yang sama dengan SWAT+ (`docs/phase2.md`, risiko *implicit SAVE*).
-- **Arah ke depan:** menurut `docs/runner.md`, run paralel termasuk mode terkoreksi (`--fix-swat`), setelah variabel-variabel tersebut dibuat per HRU. Pada engine 1.0 baru sebagian yang dikoreksi (F4, F5); bilangan acak `prob_unif`, status septik dan lainnya masih bersama, sehingga mode terkoreksi pun masih sekuensial.
+- **Angka kinerja** (`docs/runner.md`): run setia berjalan pada satu thread. Seluruh Pessel (3.966 HRU, 1.454 kanal) membutuhkan 6,4 detik per tahun simulasi pada satu inti, dibanding 16,7 detik untuk build Release SWAT+ dengan gfortran, yaitu 2,6 kali lebih cepat. `docs/phase3.md` (lebih awal) mencatat Pessel 2015 berjalan sekitar satu menit di port dan dua menit di SWAT+.
+- **Sejak 1.1** (`docs/performance.md`, `docs/parallel.md`): suhu udara tertunda `ch_temp` dihitung sekali per pengukur (Bab 12.9.1) dan data tanaman dibagi, bukan disalin (Bab 8), sehingga Pessel 2015–2025 sekitar 10 % lebih cepat dengan tabel yang sama; baris harian HRU tidak disusun bila tidak dicetak (Batanghari satu thread 16,8 menjadi 13,7 detik); pembaca list-directed memindai byte (Bab 4.2.7).
+- **Faktor pendukung:** dependensi eksternal hanya `rayon` (sejak 1.1, untuk mode paralel); tabel dibaca dan dibandingkan sebagai aliran; tabel Parquet ditulis tanpa kompresi dengan satu *row group* per sejuta baris (`docs/runner.md`).
+- **Mengapa run setia tidak dijalankan paralel:** beberapa variabel SWAT+ membawa nilai satu HRU ke hari HRU berikutnya, sehingga urutan perhitungan menentukan hasil. `docs/runner.md` menyebut: bilangan acak tabel keputusan (butir 132), permintaan hara tanaman (butir 42), rasio pengayaan (butir 97), fraksi fosfor sedimen, dan status sistem septik (butir 203). Butir katalog lain dengan sifat serupa: `c_microb_sed` di `nut_orgnc2` (butir 60), PSP tersimpan `soil_nutcarb_init` dan hari tanam tersimpan `plant_init` saat inisialisasi (butir 188, 151), `inflo` dan `wtemp` kanal yang dipertahankan dari kanal terakhir (butir 166, 117), serta urutan penjumlahan aliran masuk dalam loop perintah (butir 92). Dalam port, keadaan semacam ini dipegang di struktur `Saved` dan dibaca serta ditulis dalam urutan yang sama dengan SWAT+ (`docs/phase2.md`, risiko *implicit SAVE*).
+- **Mode paralel (sejak 1.1):** dengan `--fix-swat` variabel-variabel itu dibuat per HRU (F20) dan per kanal (F21, F22). HRU berjalan per gelombang (`Network::hru_waves`, Bab 12.4.5; `hru_wave`, Bab 5.3.13) dan objek di luar HRU per sub-DAS (`make_plan`, Bab 12.4.6) pada kumpulan thread rayon yang dibuat sekali per run. Tabelnya sama untuk berapa pun jumlah thread. Diukur dengan `scripts/bench-threads.ps1` di laptop 12 inti (Snapdragon X Elite, Windows 11 ARM) pada proyek seukuran Batanghari (2.360 HRU, 2015–2025): 15,4 detik pada 1 thread, 10,5 pada 4, 9,2 pada 12 (1,67×). Yang tetap di thread utama (cuaca, penjumlahan cekungan dan unit lanskap, saluran utama, tabel) membatasi percepatan; run yang sedikit mencetak, seperti run kalibrasi, paling diuntungkan. Untuk kalibrasi, cara yang lebih efektif adalah satu run per inti (`batch`, Bab 5.9): Batanghari empat run 69,7 detik satu per satu, 35,7 detik dua sekaligus di dua inti.
 - **Batas determinisme lintas platform:** hasil bit-for-bit dijamin hanya untuk program native Linux dengan glibc (sama dengan acuan). WebAssembly dan macOS/Windows dapat berbeda di bit terakhir fungsi matematika presisi tunggal, tetapi tetap dalam toleransi K12 (17.4.3).
 - **Batas sumber daya CI:** tabel harian Batanghari mencapai gigabita, sehingga `validate.yml` menghapus tabel harian setelah dibandingkan, memotong periode Batanghari dan `Bh_land` ke 2015 sampai 2019 dan Pessel ke 2015, dan mematikan diagnostik karbon harian (`hru_cb`); job dibatasi 60 menit.
 
@@ -10888,6 +11227,7 @@ Glosarium ini menghimpun istilah teknis dari Bab 3–17: nama file dan variabel 
 | basin\_crop\_yld | Luas panen (ha), hasil (t), dan t/ha setiap tanaman di tingkat cekungan per tahun dan rata-rata tahunan. | 5 |
 | basin\_prm\_default | Subrutin SWAT+ yang mengganti parameter basin bernilai nol atau kosong (< 1e-6) dengan nilai bawaan operasional; ditiru port oleh `BasinParams::complete`. | 3, 4 |
 | basin\_sw\_init | Rutin yang menetapkan air tanah dan salju awal pada tahun tercetak pertama. | 5 |
+| batch (perintah) | Perintah `swatplus-rust batch` (sejak 1.1): satu proyek dijalankan sekali per set parameter dari `sets.csv`, beberapa run berdampingan di inti komputer, masing-masing hanya menyimpan deret debit (dan kedalaman) saluran pilihan serta hujan dan ET DAS. | 5, 16 |
 | Benih (`rndseed`, seed) | Bilangan bulat keadaan generator bilangan acak; setiap generator cuaca punya sepuluh. | 6 |
 | Berat isi tanah (bulk density, `bd`, `avbd`) | Kerapatan isi tanah (g/cm3); `avbd` adalah rata-rata profil. | 7, 14 |
 | Bh\_land | Batanghari dengan PET Hargreaves dan HRU perkotaan/lahan basah diganti hutan, untuk validasi fase lahan dan routing. | 17 |
@@ -10917,14 +11257,17 @@ Glosarium ini menghimpun istilah teknis dari Bab 3–17: nama file dan variabel 
 | cal\_group | Label grup kalibrasi pada tata guna lahan HRU. | 14 |
 | cal\_parm\_select | Subrutin SWAT+ yang memilih field menurut nama parameter dan menghitung ulang turunannya. | 14 |
 | cal\_parms.cal (`CalParm`) | Berkas daftar parameter yang dapat dikalibrasi, jenis objeknya dan batas mutlaknya. | 14 |
+| Calibration | Struct kalibrasi keras satu run (sejak 1.1): `parms` (isi `cal_parms.cal`) dan `updates` (isi `calibration.cal`), dari berkas proyek atau dibentuk di memori oleh program kalibrasi. | 3, 5, 14 |
 | calibration.cal (`CalUpdate`) | Berkas daftar perubahan parameter dengan jenis perubahan, nilai, kondisi, lapisan dan objek. | 14 |
 | CBOD | Kebutuhan oksigen biokimia karbon (mg/L) pada limpasan dan air saluran; di kanal meluruh orde satu dan mengendap. | 7, 12 |
 | cbod / dox | Kebutuhan oksigen biokimia karbon dan oksigen terlarut (kg), tidak diproses di reservoir. | 13 |
 | cdn (β\_denit) | Koefisien laju denitrifikasi. | 9 |
 | cdylib | Jenis crate Rust yang menghasilkan pustaka dinamis/modul dengan ABI C, dipakai untuk `.wasm`. | 16 |
 | Celeritas (`celerity_bf`) | Kecepatan rambat gelombang banjir di saluran, diambil 5/3 kecepatan aliran menurut Manning. | 11, 12 |
+| channel\_hyd\_day.txt | Tabel tambahan (sejak 1.1, `run --channel-hyd`; bukan tabel SWAT+): hidraulika harian setiap saluran SWAT-DEG dari kurva ratingnya dan rumus Manning. | 12, 15, 16 |
 | channel\_sd\_subday.txt | Tabel aliran keluar kanal SWAT-DEG per langkah waktu sub-harian. | 15 |
 | check-parquet.py | Skrip CI yang memeriksa tabel Parquet dengan pyarrow dan DuckDB terhadap tabel teksnya. | 16, 17 |
+| checkpoint | Salinan `Simulation` di antara dua hari yang melanjutkan persis seperti aslinya; bersama `run_until` menjadi hot start di memori (sejak 1.1). | 5 |
 | Checksum tar | Jumlah bita header dengan field checksum dianggap 8 spasi, ditulis oktal. | 15 |
 | chem\_app.ops (`surf_frac`) | Metode aplikasi pupuk; fraksi yang tinggal di lapisan permukaan. | 10 |
 | chg\_par | Fungsi SWAT+ yang menghitung nilai parameter baru dan membatasinya. | 14 |
@@ -11057,6 +11400,7 @@ Glosarium ini menghimpun istilah teknis dari Bab 3–17: nama file dan variabel 
 | --- | --- | --- |
 | Gage | File stasiun terukur untuk satu variabel iklim (hujan, suhu, radiasi, kelembapan, atau angin) yang ditempatkan ke larik harian; nama `sim` berarti variabel itu disimulasikan. | 4, 6 |
 | Garis miring (`/`) | Pengakhir masukan list-directed; variabel sisanya tidak diubah. | 4 |
+| gelombang HRU (wave) | Kelompok HRU yang dapat dijalankan bersamaan pada mode paralel `--fix-swat`: setiap HRU berada di gelombang sesudah HRU yang airnya ia terima hari itu (`Network::hru_waves`). | 5, 12 |
 | Generator cuaca (weather generator, WGN, `weather-wgn.cli`) | Model stokastik yang membangkitkan cuaca harian dari parameter statistik iklim bulanan per stasiun bila data terukur tidak ada atau hilang; juga sumber elevasi rujukan lapse bila data disimulasikan. | 3, 4, 5, 6 |
 | gfortran | Kompiler Fortran GNU yang dipakai membangun biner rujukan SWAT+; memanggil libm (glibc) untuk fungsi matematika. | 5 |
 | glibc | Pustaka C GNU di Linux; libm-nya dipakai biner native dan acuan Fortran. | 16, 17 |
@@ -11180,6 +11524,7 @@ Glosarium ini menghimpun istilah teknis dari Bab 3–17: nama file dan variabel 
 | Konduktivitas hidraulik jenuh (`k`, Ksat) | Laju aliran air melalui lapisan tanah jenuh (mm/jam). | 3, 14 |
 | Konstanta psikrometrik (γ) | Parameter yang menghubungkan tekanan uap dan suhu udara (kPa/°C). | 6 |
 | Konstanta resesi aliran dasar (`alpha`) | Konstanta (1/hari) yang menentukan laju penurunan aliran balik dari akuifer dangkal; dipakai sebagai `alpha_e = exp(-alpha)`. | 3, 14 |
+| kumpulan thread (thread pool) | Sejumlah thread yang dibuat sekali per run (rayon) dan dipakai ulang setiap hari oleh HRU dan routing paralel; memulai thread setiap hari lebih mahal daripada HRU proyek kecil. | 5, 12 |
 | Kurva rating (rating curve, kurva debit, `rcurv`, `Rc`) | Tabel empat titik kedalaman kanal SWAT-DEG (0,1 bankfull, bankfull, 1,2 dan 2 kali bankfull) berisi debit, luas, volume, kecepatan, dan waktu tempuh. | 12, 17 |
 | Kurva volume–luas (`br1`, `br2`) | Hubungan pangkat A = br1·V^br2 antara volume tampungan (m3) dan luas permukaan (ha). | 13 |
 | Kurva-S (`ascrv`, `leaf1`, `leaf2`) | Fungsi f(x) = x/(x + exp(a − b x)) yang koefisiennya ditentukan dari dua titik; dipakai untuk LAI, RUE–CO₂ dan fraksi N/P. | 8 |
@@ -11300,6 +11645,7 @@ Glosarium ini menghimpun istilah teknis dari Bab 3–17: nama file dan variabel 
 | Pelimpah utama (*principal spillway*, `pvol`, `psa`) | Ketinggian muka air normal; `pvol` volume (ha-m di file, m3 di model) dan `psa` luas (ha) pada ketinggian itu. | 13 |
 | Peluang hari basah (`pr_wd`, `pr_ww`, `wet_dry`, `wet_wet`) | Peluang hari basah setelah hari kering, P(W\|D), dan setelah hari basah, P(W\|W), dalam bulan tertentu; parameter rantai Markov orde satu generator cuaca. | 3, 6 |
 | Pelumpuran (puddling, `puddle.ops`) | Pengolahan tanah sawah di bawah genangan (`mgt_newtillmix_wet`) yang juga mengubah konduktivitas lapisan atas dan sedimen air. | 9, 10, 17 |
+| pemanasan bersama (shared spin-up) | Satu pemanasan dengan parameter proyek yang dipakai semua set parameter sebuah kalibrasi (`batch --shared-spinup`); studi spin-up menunjukkan peringkat set bisa berubah, sehingga tidak dipakai bawaan. | 5, 16, Lampiran B |
 | Pembelahan lapisan (`layersplit`) | Penyisipan batas lapisan baru pada kedalaman tertentu, dipakai untuk membentuk lapisan biozona. | 11 |
 | Pencampuran biologis (`biomix`, `bmix`) | Pengadukan tanah lapisan atas oleh biota (cacing dan sebagainya) yang memindahkan air dan pool; `biomix` adalah efisiensinya. | 7, 9 |
 | Pencarian biner (`search`) | Pencarian nama dalam daftar terurut dengan paling banyak 25 pembagian dua; dapat gagal pada daftar tak terurut. | 5 |
@@ -11365,6 +11711,7 @@ Glosarium ini menghimpun istilah teknis dari Bab 3–17: nama file dan variabel 
 | Rasio puncak (`pk_rto`) | Pengali debit rata-rata untuk debit puncak harian, ditambah faktor luas 2,66 A^−0,3. | 12 |
 | rate | Opsi pelepasan laju tetap (m3/s). | 13 |
 | rate\_pct | Opsi pelepasan persentase volume utama per hari. | 13 |
+| rayon | Pustaka Rust (MIT) untuk komputasi paralel; satu-satunya dependensi eksternal engine sejak 1.1, untuk kumpulan thread mode paralel. | 2, 5, 12 |
 | Reaerasi (`rk2`) | Pemasukan oksigen dari udara sebanding defisit terhadap oksigen jenuh. | 12 |
 | Recall (`rec`) | Objek ruang sumber yang memasukkan hidrograf atau beban terukur atau dari model luar (sumber titik, debit terukur) dari file harian, bulanan, tahunan, atau koefisien ekspor; didefinisikan di `recall.rec`. | 3, 4, 5, 12, 13, 17 |
 | recall / basin\_psc (tabel keluaran) | Tabel beban titik sumber yang dibaca dari berkas (per objek dan jumlah basin). | 15 |
@@ -11373,6 +11720,7 @@ Glosarium ini menghimpun istilah teknis dari Bab 3–17: nama file dan variabel 
 | Regresi USGS (`usgs_reg`, `regres`) | Persamaan regresi beban badai urban Driver dan Tasker untuk padatan tersuspensi, N total, dan P total. | 11 |
 | Rembesan (seepage, `water_seep`, `seep`) | Air genangan lahan basah atau reservoir yang masuk ke tanah melalui dasarnya, dibatasi konduktivitas dasar (mm/jam); untuk reservoir 240·k·A m3/hari. | 11, 13 |
 | Rembesan dalam (deep seepage, `seep`, `deep_seep`) | Bagian resapan yang hilang ke akuifer dalam, menjadi hidrograf kedua akuifer. | 14 |
+| rencana routing (Plan) | Potongan objek di luar HRU menjadi bagian per sub-DAS yang tidak saling membutuhkan, dirouting bersamaan, ditambah bagian terakhir (saluran utama) di thread utama (`make_plan`). | 12 |
 | Reporter | Pelapor progres yang memancarkan event `progress` setiap kali persentase bulat berubah dan pada hari terakhir. | 15, 16 |
 | REQUIRED | Tipe repetisi kolom Parquet tanpa nilai null; tidak memerlukan definition/repetition level. | 15 |
 | res\_convert\_mass | Konversi air awal dari fraksi volume dan konsentrasi ke volume dan massa. | 13 |
@@ -11413,6 +11761,7 @@ Glosarium ini menghimpun istilah teknis dari Bab 3–17: nama file dan variabel 
 | Sheet (lembar) | Penyangga teks satu berkas tabel beserta status header dan penulisannya. | 15 |
 | sim | Nama sumber di `weather-sta.cli` yang berarti variabel dibangkitkan generator. | 6 |
 | Simpanan akuifer (`stor`, mm) | Volume air tersimpan per luas akuifer. | 14 |
+| Simulation | Struct run yang berjalan satu hari setiap panggilan `step` (sejak 1.1): `time_control` dengan loop tahun dan harinya dibalik ke luar, sehingga run dapat dihentikan, diperiksa, disalin, dan dikalibrasi di antara dua hari. | 5 |
 | Sinuositas (`sinu`) | Rasio panjang alur terhadap panjang lembah; menentukan jari-jari lengkung tikungan. | 12 |
 | Sistem septik (`septic.str`) | Sistem pengolahan air limbah rumah tangga di lokasi yang efluennya meresap ke lapisan tanah melalui bidang resapan; basis datanya dibaca dengan perilaku pergeseran baris yang ditiru persis. | 3, 4, 11 |
 | Skema tabel (`Field`, `Kind`) | Deskripsi komponen tipe turunan (nama, jenis, bawaan, panjang larik) yang dipakai port untuk membaca tabel generik. | 3, 4 |
@@ -11745,7 +12094,7 @@ Karena itu pendaftaran akun dilakukan lebih awal (prosesnya beberapa hari), teta
 
 ## Lampiran B  Jalur M: kalibrasi, mode paralel, dan studi spin-up
 
-Lampiran ini mencatat pekerjaan sesudah engine 1.0, yaitu jalur M di `docs/roadmap.md` untuk riset MPhil (kalibrasi berbasis tinggi muka air, TMA), fungsi demi fungsi seperti bab-bab sebelumnya. Isinya masuk ke versi 1.1.0 (Zenodo, DOI 10.5281/zenodo.24448341), kecuali B.7 (studi spin-up), yang menyusul sesudahnya. Bab 1 sampai 17 tetap menjelaskan engine 1.0.1; perubahan kecil di luar jalur M ada di `CHANGELOG.md`. Lampiran ini diperbarui setiap kali satu langkah selesai; B.8 mencatat urutan langkahnya.
+Lampiran ini mencatat pekerjaan sesudah engine 1.0, yaitu jalur M di `docs/roadmap.md` untuk riset MPhil (kalibrasi berbasis tinggi muka air, TMA), fungsi demi fungsi seperti bab-bab sebelumnya. Isinya masuk ke versi 1.1.0 (Zenodo, DOI 10.5281/zenodo.24448341), kecuali B.7 (studi spin-up), yang menyusul sesudahnya. Sejak 24 November 2026 Bab 1 sampai 17 menjelaskan engine 1.1: fungsi baru dan yang berubah sejak 1.0.1 (juga perubahan di luar jalur M, misalnya format tabel recall 1.0.3) masuk ke bab fungsinya dengan keterangan versi, dan lampiran ini mencatat jalannya pekerjaan serta hasilnya. Lampiran ini diperbarui setiap kali satu langkah selesai; B.8 mencatat urutan langkahnya.
 
 ### B.1  Ringkasan
 
@@ -11908,6 +12257,7 @@ Kedua proyek memakai akuifer bawaan editor. Akuifer dangkal (Batanghari 42, Pess
 | 13 November 2026 | M3 uji sintetis, M4 perbandingan pengoptimasi (1 *seed*), M5 routing paralel per sub-DAS | PR #15, #16, #18; `calibration/README.md`, `docs/parallel.md` |
 | 19 November 2026 | M4: *rating fit* mulus, *trust region*, perbandingan 3 *seed* | PR #19 |
 | 23 November 2026 | Pengukuran 1–12 inti di laptop; thread sekali per run; rilis 1.1.0 | PR #20–#23; Zenodo 10.5281/zenodo.24448341 |
-| 24 November 2026 | Studi spin-up: `Simulation::calibrate`, `batch --shared-spinup`, `swatcal.spinup`; pemanasan 2 tahun cukup untuk volume, akuifer tidak menyatu, pemanasan bersama tidak dipakai bawaan | B.7, `docs/spinup.md` |
+| 24 November 2026 | Studi spin-up: `Simulation::calibrate`, `batch --shared-spinup`, `swatcal.spinup`; pemanasan 2 tahun cukup untuk volume, akuifer dangkal menyatu dalam 2–3 tahun, akuifer dalam tidak pernah, pemanasan bersama tidak dipakai bawaan | B.7, `docs/spinup.md` |
 | 24 November 2026 | Pemeriksaan neraca air akuifer (`swatcal.aquifers`): akuifer dangkal seimbang, akuifer dalam terus terisi dan airnya hilang dari sungai | B.7.5, `docs/spinup.md` |
+| 24 November 2026 | Bab 1–17 diperbarui ke versi 1.1: `Simulation` dan method-nya, `batch.rs`, `aunif_skip`, `hru_wave` (Bab 5); `Calibration` (Bab 3); pembaca byte (Bab 4); `cal_conditions`/`calibrate_aquifers` dengan kalibrasi dari memori (Bab 7, 14); `Arc<PlantDb>` dan `Saved` per HRU (Bab 8); gelombang HRU, rencana routing per sub-DAS, `ChanCfg`/`Carry`/`AirLags`, `rating_curve`, `manning_depth`, `channel_hyd` (Bab 12); `list_real4` 1.0.3 dan `channel_hyd_day.txt` (Bab 15); opsi `run` baru dan perintah `batch` (Bab 16); koreksi F20–F22, validasi 1.0.3 dan 1.1, mode paralel (Bab 17) | PR #25; nota dibangun ulang (`scripts/build-nota-desain.sh`) dengan judul 1.1 |
 
