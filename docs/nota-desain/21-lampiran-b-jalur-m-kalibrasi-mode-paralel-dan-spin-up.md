@@ -112,8 +112,8 @@ Percobaan dijalankan 24 November 2026 pada Batanghari dan Pessel (2015–2025), 
 
 - **Air tanah sudah lupa keadaan awalnya dalam tahun pertama**: akhir 2015, air tanah DAS ketiga run berselisih paling banyak 1 mm.
 - **Volume tahunan perlu dua tahun**: selisihnya turun dari 40–56 % di tahun pertama menjadi 4 % di tahun kedua, dan sesudahnya dalam ±1 %. Dua tahun pemanasan proyek sudah cukup untuk volume.
-- **Akuifer tidak pernah lupa.** Simpanannya (kolom `stor` di `basin_aqu_yr`) mempertahankan selisih awalnya sampai 2025: di Batanghari run kering naik sekitar 50 per tahun sampai 1.062, run biasa 3.298, run basah sekitar 3.390; Pessel serupa (1.105; 3.352; 3.395). Simpanan run biasa pun masih naik setiap tahun: dengan parameter proyek, akuifer belum seimbang dengan iklimnya sesudah 11 tahun.
-- **Karena itu keadaan awal tetap terlihat di debit rendah dan debit harian**: debit rendah masih berbeda sampai 9 % sesudah sepuluh tahun, dan di Pessel debit harian run kering dan basah hanya cocok dengan NSE 0,48–0,99.
+- **Akuifer dangkal perlu dua sampai tiga tahun; akuifer dalam tidak pernah lupa.** Simpanan akuifer DAS (kolom `stor` di `basin_aqu_yr`) mempertahankan selisih awalnya sampai 2025 (Batanghari: kering 1.062, biasa 3.298, basah sekitar 3.390; Pessel: 1.105; 3.352; 3.395), tetapi jumlah itu didominasi akuifer dalam (B.7.5). Per akuifer di Batanghari, simpanan akuifer dangkal run basah dan kering berselisih 226 mm (median) akhir 2015, 55 mm pada 2016, 8 mm pada 2017, dan paling banyak 10 mm sejak 2020; dua akuifer dalam mempertahankan selisihnya.
+- **Sisa keadaan awal masih terlihat di debit rendah dan harian**: debit rendah masih berbeda sampai 9 % antar-start pada tahun-tahun tertentu sesudah tahun ketiga, tanpa tren, dan di Pessel debit harian run kering dan basah hanya cocok dengan NSE 0,48–0,99. Akuifer dalam tidak mengalirkan air ke sungai, jadi sisa ini berasal dari akuifer dangkal; dugaan penyebabnya adalah aliran balik yang hidup-mati di ambang muka air tanah (`flo_min`), tempat selisih beberapa milimeter berpengaruh. Belum dibuktikan.
 
 **Bagian B.** Dua puluh set parameter dan set kebenaran, pemanasan sendiri dibandingkan pemanasan bersama:
 
@@ -127,15 +127,33 @@ Percobaan dijalankan 24 November 2026 pada Batanghari dan Pessel (2015–2025), 
 | Waktu 21 run, sendiri / bersama | 163 s / 139 s (−14 %) | 432 s / 364 s (−16 %) |
 
 - **Batanghari masih menoleransi pemanasan bersama**: set terbaik sama, peringkat hampir tidak berubah.
-- **Pessel tidak**: peringkat berubah (0,77) dan set terbaiknya lain, karena debitnya lebih banyak membawa keadaan akuifer.
+- **Pessel tidak**: peringkat berubah (0,77) dan set terbaiknya lain. Di bagian A pun debit harian Pessel lebih lama membawa keadaan awalnya.
 - **Penghematannya kecil**: dua dari sebelas tahun, 14–16 % waktu.
 
-#### B.7.5  Kesimpulan untuk kalibrasi
+#### B.7.5  Neraca air akuifer (`swatcal.aquifers`)
+
+`python -m swatcal.aquifers --exe <program> --project <TxtInOut> --out <folder>` menjalankan salinan proyek yang mencetak setiap akuifer per tahun sejak tahun pertama, lalu menjumlahkan neraca air akuifer dangkal dan akuifer dalam (nama `aqu_deep…` di `aquifer.con`, dibuat editor SWAT+ untuk menampung *deep seepage* akuifer dangkal), serta memeriksa apakah aliran balik akuifer dalam dikirim ke mana pun (`out_tot`).
+
+Kedua proyek memakai akuifer bawaan editor. Akuifer dangkal (Batanghari 42, Pessel 230): alpha aliran dasar 0,05, *revap* 0,02, *deep seepage* 0,05 dari imbuhan, *specific yield* 0,05, aliran balik bila muka air tanah dalam 3 m, `dep_bot` 10 m. Akuifer dalam (Batanghari 2, Pessel 24): `dep_bot` 100 m, aliran balik hanya bila penuh. Rata-rata per akuifer, mm per tahun, 2015–2025:
+
+| | Batanghari dangkal | Batanghari dalam | Pessel dangkal | Pessel dalam |
+| --- | ---: | ---: | ---: | ---: |
+| Imbuhan | 1.023 | 59 | 1.102 | 63 |
+| Aliran balik | 943 | 7 | 1.020 | 10 |
+| *Deep seepage* | 51 | 0 | 55 | 0 |
+| *Revap* | 26 | 0 | 25 | 0 |
+| Perubahan simpanan 2015–2025, mm (min, median, maks) | −12; 3; 17 | 490; 546; 601 | −88; 13; 25 | 0; 602; 607 |
+
+- **Akuifer dangkal seimbang**: imbuhan sama dengan aliran balik, *seepage* dan *revap* dalam beberapa milimeter per tahun.
+- **Akuifer dalam hanya terisi.** Mereka menerima *deep seepage* (5 % imbuhan dangkal), tidak mengembalikan apa pun sampai penuh, dan `aquifer.con` tidak mengirim alirannya ke mana pun (`out_tot` 0). Di Batanghari, satu dari keduanya penuh pada 2025 dan aliran baliknya (77 mm tahun itu) keluar dari model. Sekitar 5 % imbuhan hilang dari sungai karena rancangan ini; kalibrasi volume harus memperhitungkannya.
+- **Aliran balik SWAT+ di atas ambang tidak bergantung pada simpanan** (`aqu_1d_control`: aliran balik hari itu adalah imbuhan yang dihaluskan dengan `alpha_bf`). Tidak ada yang menarik simpanan akuifer dangkal kembali ke suatu tingkat; selisih simpanan hanya meluruh lewat ambang. Itulah sebabnya keadaan awal bertahan lama, dan kalibrasi akuifer dangkal (alpha, `flo_min`, *deep seepage*) memerlukan debit rendah terukur, bukan hanya volume.
+
+#### B.7.6  Kesimpulan untuk kalibrasi
 
 1. Setiap run kalibrasi tetap memakai pemanasannya sendiri (bawaan `batch`). `--shared-spinup` hanya untuk eksplorasi cepat dan harus dicek terhadap pemanasan sendiri sebelum dipercaya.
 2. Dua tahun pemanasan cukup untuk volume dan air tanah di kedua DAS.
-3. Keadaan awal akuifer tidak terlupakan dalam 11 tahun. Untuk debit rendah (Q80, Q90), akuifer sebaiknya dimulai dari keadaan akhir run panjang atau dari simpanan yang diperkirakan secara terpisah, dan muka air tanah awal diperlakukan sebagai ketidakpastian.
-4. Akuifer run biasa terus terisi dari tahun ke tahun: parameter akuifer kedua proyek (imbuhan terhadap aliran keluar, *revap* dan *deep seepage*) perlu diperiksa sebelum mengkalibrasi debit rendah.
+3. Akuifer dangkal perlu dua sampai tiga tahun. Untuk kalibrasi debit rendah (Q80, Q90) atau bentuk debit harian, pakai tiga tahun pemanasan atau mulai akuifer dari keadaan akhir run panjang, dan perlakukan muka air tanah awal sebagai ketidakpastian.
+4. Akuifer dalam terus terisi dan airnya tidak kembali ke sungai: kenaikan simpanan akuifer DAS bukan tanda model tidak stabil, tetapi sekitar 5 % imbuhan hilang lewat jalur ini. Parameter akuifer masih bawaan editor di semua akuifer; alpha, `flo_min` dan *deep seepage* adalah yang perlu dikalibrasi begitu debit rendah terukur (rekaman TMA) tersedia.
 
 ### B.8  Catatan langkah kerja
 
@@ -146,3 +164,4 @@ Percobaan dijalankan 24 November 2026 pada Batanghari dan Pessel (2015–2025), 
 | 19 November 2026 | M4: *rating fit* mulus, *trust region*, perbandingan 3 *seed* | PR #19 |
 | 23 November 2026 | Pengukuran 1–12 inti di laptop; thread sekali per run; rilis 1.1.0 | PR #20–#23; Zenodo 10.5281/zenodo.24448341 |
 | 24 November 2026 | Studi spin-up: `Simulation::calibrate`, `batch --shared-spinup`, `swatcal.spinup`; pemanasan 2 tahun cukup untuk volume, akuifer tidak menyatu, pemanasan bersama tidak dipakai bawaan | B.7, `docs/spinup.md` |
+| 24 November 2026 | Pemeriksaan neraca air akuifer (`swatcal.aquifers`): akuifer dangkal seimbang, akuifer dalam terus terisi dan airnya hilang dari sungai | B.7.5, `docs/spinup.md` |

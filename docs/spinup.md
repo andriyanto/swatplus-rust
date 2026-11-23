@@ -58,15 +58,49 @@ the year's days; NSE: the dry run's daily flow against the wet run's):
 - **The annual volume needs two years**: the spread falls from 40–56 % in the first year to 4 %
   in the second, and stays within about ±1 % from the third. The projects' two warm-up years are
   enough for volumes and for calibrating on them.
-- **The aquifers never forget.** Their storage (`basin_aqu_yr` `stor`) keeps the gap it started
-  with: in Batanghari the dry run's rises by about 50 a year, to 1,062 at the end of 2025, the
-  usual run's to 3,298, the wet run's stays near 3,390; Pessel is alike (1,105, 3,352, 3,395).
-  The usual run's storage still grows each year: under these parameters the aquifers are not in
-  balance with the climate after 11 years.
-- **So the start keeps showing in daily and low flows**: low flows still differ by up to 9 %
-  between starts after ten years, and in Pessel the daily flows of the dry and wet runs agree
-  only to NSE 0.48–0.99. A calibration on low flows (Q80, Q90) or daily shape inherits the guessed
-  aquifer state, however long the warm-up the period allows.
+- **The shallow aquifers need two to three years; the deep ones never forget.** The basin's
+  aquifer storage (`basin_aqu_yr` `stor`) keeps the gap it started with to 2025 (Batanghari: dry
+  1,062, usual 3,298, wet about 3,390; Pessel: 1,105, 3,352, 3,395), but that sum is dominated by
+  the deep aquifers (below). Aquifer by aquifer in Batanghari, the shallow aquifers' storage of
+  the wet and dry runs differs by 226 mm (median) at the end of 2015, 55 mm in 2016, 8 mm in 2017
+  and at most 10 mm from 2020; the two deep aquifers keep their gap (656 and 886 mm for the dry
+  run in 2025 against 3,014 and 3,021 for the wet one).
+- **Some of the start still shows in daily and low flows**: low flows differ by up to 9 % between
+  starts in single years after the third, without a trend, and in Pessel the daily flows of the
+  dry and wet runs agree only to NSE 0.48–0.99. The deep aquifers send no water to the rivers
+  (below), so this comes from the shallow ones; a likely cause is that their return flow switches
+  on and off at a water table threshold (`flo_min`), where differences of a few millimetres
+  matter. Not proven.
+
+## The aquifers
+
+`python -m swatcal.aquifers` prints every aquifer each year and sums their water balance. Both
+projects have the SWAT+ editor's aquifers: shallow ones (Batanghari 42, Pessel 230) with the
+editor's defaults (baseflow alpha 0.05, revap 0.02, deep seepage 0.05 of the recharge, specific
+yield 0.05, return flow when the water table is within 3 m, `dep_bot` 10 m), and deep ones
+(`aqu_deep…`; Batanghari 2, Pessel 24; `dep_bot` 100 m, return flow only when full) that take the
+shallow aquifers' deep seepage. Means over the aquifers, mm a year, 2015–2025:
+
+| | Batanghari shallow | Batanghari deep | Pessel shallow | Pessel deep |
+| --- | ---: | ---: | ---: | ---: |
+| Recharge | 1,023 | 59 | 1,102 | 63 |
+| Return flow | 943 | 7 | 1,020 | 10 |
+| Deep seepage | 51 | 0 | 55 | 0 |
+| Revap | 26 | 0 | 25 | 0 |
+| Storage change 2015–2025, mm (min, median, max) | −12, 3, 17 | 490, 546, 601 | −88, 13, 25 | 0, 602, 607 |
+
+- **The shallow aquifers are in balance**: recharge equals return flow, seepage and revap within
+  a few millimetres a year, and their storage barely moves over 11 years.
+- **The deep aquifers only fill.** They receive the deep seepage (5 % of the shallow recharge),
+  give nothing back until full, and their `aquifer.con` sends their flow nowhere (`out_tot` 0):
+  in Batanghari one of the two is full by 2025 and its return flow (77 mm that year) leaves the
+  model. That water (about 5 % of the recharge) is lost to the rivers by design, which a
+  calibration on volume must keep in mind.
+- **SWAT+'s return flow above the threshold does not depend on storage** (`aqu_1d_control`: the
+  day's return flow is the recharge smoothed by `alpha_bf`), so nothing pulls a shallow
+  aquifer's storage back to a level: a difference in storage decays only through the threshold.
+  That is why the start lingers, and why calibrating the shallow aquifers (alpha, `flo_min`,
+  deep seepage) needs low flows observed, not only volumes.
 
 ## Part B: one shared warm-up for all parameter sets
 
@@ -89,7 +123,7 @@ two cores.
 - **Batanghari would tolerate a shared warm-up**: volumes within 0.2 %, the same best set, ranks
   nearly unchanged.
 - **Pessel would not**: the ranking of the sets changes (0.77) and another set comes out best.
-  Its flows carry more of the aquifers' state (part A), and a warm-up with other parameters
+  Its daily flows also kept more of their start in part A, and a warm-up with other parameters
   leaves the aquifers elsewhere.
 - **The gain is small**: two of eleven years, 14–16 % of the time.
 
@@ -98,9 +132,11 @@ two cores.
 1. Keep each run's own warm-up in a calibration (the default of `batch`); `--shared-spinup` is
    there for quick exploration and must be checked against own warm-ups before it is trusted.
 2. Two warm-up years are enough for volumes and soil water in these basins.
-3. The aquifers' initial state is not forgotten in 11 years. For low flows, start the aquifers
-   from the state at the end of a long run (or from storages measured or estimated
-   independently), and treat the initial water table as uncertain; a run that starts the
-   aquifers from a guess carries that guess into the low flows it is calibrated on.
-4. The usual runs' aquifers still fill year after year: the aquifer parameters of these projects
-   (recharge against outflow, revap and deep seepage) deserve a look before calibrating low flows.
+3. The shallow aquifers need two to three years; a calibration on low flows (Q80, Q90) or
+   daily shape should use three warm-up years, or start the aquifers from the state at the end of
+   a long run, and treat the initial water table as uncertain.
+4. The deep aquifers fill without end and lose their water to nowhere: summed basin aquifer
+   storage is not a sign of drift in these projects, but about 5 % of the recharge leaves the
+   rivers through them. The aquifer parameters are the editor's defaults everywhere; alpha,
+   `flo_min` and deep seepage are the ones to calibrate once observed low flows (stage records)
+   are in hand.
