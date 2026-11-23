@@ -1,8 +1,8 @@
 ## Bab 1  Pendahuluan
 
-Nota ini menjelaskan engine SWAT+ versi Rust (`swatplus-rust`) fungsi demi fungsi, dalam keadaannya pada versi 1.1 (rilis 1.1.0 ditambah studi spin-up sesudahnya): apa tugas setiap fungsi, subrutin SWAT+ mana yang ditirunya, persamaan yang dihitungnya, dan kebiasaan SWAT+ yang sengaja dipertahankan. Engine ini adalah terjemahan SWAT+ Fortran commit `6f51536` (16 Oktober 2026) yang menghasilkan tabel keluaran yang sama bit demi bit.
+Nota ini menjelaskan engine SWAT+ versi Rust (`swatplus-rust`) fungsi demi fungsi, dalam keadaannya pada versi 1.2.0: apa tugas setiap fungsi, subrutin SWAT+ mana yang ditirunya, persamaan yang dihitungnya, dan kebiasaan SWAT+ yang sengaja dipertahankan. Engine ini adalah terjemahan SWAT+ Fortran commit `6f51536` (16 Oktober 2026) yang menghasilkan tabel keluaran yang sama bit demi bit.
 
-Engine 1.0.0 adalah dasarnya. Perbaikan 1.0.1 sampai 1.0.3 dan tambahan 1.1 (simulasi per hari, kalibrasi di memori, banyak run sekaligus, mode paralel, hidraulika saluran) dimasukkan ke bab yang membahas fungsi bersangkutan, dengan keterangan versi di tempatnya. Lampiran B mencatat jalur M (riset kalibrasi berbasis tinggi muka air) langkah demi langkah, beserta catatan kerjanya.
+Engine 1.0.0 adalah dasarnya. Perbaikan 1.0.1 sampai 1.0.3, tambahan 1.1 (simulasi per hari, kalibrasi di memori, banyak run sekaligus, mode paralel, hidraulika saluran) dan 1.2 (kalibrasi di tengah run dan pemanasan bersama, untuk studi spin-up) dimasukkan ke bab yang membahas fungsi bersangkutan, dengan keterangan versi di tempatnya. Lampiran B mencatat jalur M (riset kalibrasi berbasis tinggi muka air) langkah demi langkah, beserta catatan kerjanya.
 
 ### 1.1  Tujuan nota
 

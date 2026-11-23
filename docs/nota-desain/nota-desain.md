@@ -1,10 +1,10 @@
-# Nota Desain SWAT+ Rust Engine 1.1
+# Nota Desain SWAT+ Rust Engine 1.2
 
 ## Bab 1  Pendahuluan
 
-Nota ini menjelaskan engine SWAT+ versi Rust (`swatplus-rust`) fungsi demi fungsi, dalam keadaannya pada versi 1.1 (rilis 1.1.0 ditambah studi spin-up sesudahnya): apa tugas setiap fungsi, subrutin SWAT+ mana yang ditirunya, persamaan yang dihitungnya, dan kebiasaan SWAT+ yang sengaja dipertahankan. Engine ini adalah terjemahan SWAT+ Fortran commit `6f51536` (16 Oktober 2026) yang menghasilkan tabel keluaran yang sama bit demi bit.
+Nota ini menjelaskan engine SWAT+ versi Rust (`swatplus-rust`) fungsi demi fungsi, dalam keadaannya pada versi 1.2.0: apa tugas setiap fungsi, subrutin SWAT+ mana yang ditirunya, persamaan yang dihitungnya, dan kebiasaan SWAT+ yang sengaja dipertahankan. Engine ini adalah terjemahan SWAT+ Fortran commit `6f51536` (16 Oktober 2026) yang menghasilkan tabel keluaran yang sama bit demi bit.
 
-Engine 1.0.0 adalah dasarnya. Perbaikan 1.0.1 sampai 1.0.3 dan tambahan 1.1 (simulasi per hari, kalibrasi di memori, banyak run sekaligus, mode paralel, hidraulika saluran) dimasukkan ke bab yang membahas fungsi bersangkutan, dengan keterangan versi di tempatnya. Lampiran B mencatat jalur M (riset kalibrasi berbasis tinggi muka air) langkah demi langkah, beserta catatan kerjanya.
+Engine 1.0.0 adalah dasarnya. Perbaikan 1.0.1 sampai 1.0.3, tambahan 1.1 (simulasi per hari, kalibrasi di memori, banyak run sekaligus, mode paralel, hidraulika saluran) dan 1.2 (kalibrasi di tengah run dan pemanasan bersama, untuk studi spin-up) dimasukkan ke bab yang membahas fungsi bersangkutan, dengan keterangan versi di tempatnya. Lampiran B mencatat jalur M (riset kalibrasi berbasis tinggi muka air) langkah demi langkah, beserta catatan kerjanya.
 
 ### 1.1  Tujuan nota
 
@@ -2267,7 +2267,7 @@ Di sini `z_obj` adalah elevasi objek, `z_ref,P` elevasi WGN bila hujan disimulas
 
 #### 5.3.11  `Simulation::calibrate`
 
-- **Lokasi:** `run.rs`, `pub fn calibrate(&mut self, cal: &Calibration) -> Result<(), String>`. Sejak 1.1 (studi spin-up, Lampiran B.7.1).
+- **Lokasi:** `run.rs`, `pub fn calibrate(&mut self, cal: &Calibration) -> Result<(), String>`. Sejak 1.2 (studi spin-up, Lampiran B.7.1).
 - **Padanan SWAT+:** tidak ada. SWAT+ menerapkan `calibration.cal` sekali, sebelum hari pertama; method ini melayani kalibrasi dan studi, bukan run yang dibandingkan dengan SWAT+.
 - **Tujuan:** menerapkan perubahan `cal` pada simulasi yang sedang berjalan, di antara dua hari: parameter HRU dan akuifer berubah, air, tanaman, dan nutriennya tetap.
 - **Cara kerja:**
@@ -2861,7 +2861,7 @@ Fungsi yang didokumentasikan dalam bab ini: `run.rs` 50 (`HruWeather::default`, 
 
 ### 5.9  Banyak run sekaligus (`batch.rs`)
 
-Modul ini ditambahkan di 1.1 (M2 dan studi spin-up, Lampiran B.3 dan B.7). Kalibrasi menjalankan proyek yang sama ratusan kali dengan set parameter berbeda, dan run-run itu tidak saling bergantung. Cara tercepat adalah satu run per inti, dengan setiap run hanya menyimpan deret yang dibandingkan dengan pengamatan. Tidak ada padanan SWAT+: program kalibrasi SWAT+ menulis berkas dan menjalankan program berkali-kali.
+Modul ini ditambahkan di 1.1 (M2, Lampiran B.3); `run_batch_shared` di 1.2 (studi spin-up, B.7). Kalibrasi menjalankan proyek yang sama ratusan kali dengan set parameter berbeda, dan run-run itu tidak saling bergantung. Cara tercepat adalah satu run per inti, dengan setiap run hanya menyimpan deret yang dibandingkan dengan pengamatan. Tidak ada padanan SWAT+: program kalibrasi SWAT+ menulis berkas dan menjalankan program berkali-kali.
 
 | Tipe | Isi |
 | --- | --- |
@@ -2898,7 +2898,7 @@ Modul ini ditambahkan di 1.1 (M2 dan studi spin-up, Lampiran B.3 dan B.7). Kalib
 
 #### 5.9.5  `run_batch_shared`
 
-- **Lokasi:** `batch.rs`, `pub fn run_batch_shared(project, opts, base: &Calibration, sets: &[Vec<CalUpdate>], year: i32, channels, depth, threads, progress) -> Result<Vec<BatchResult>, String>`. Sejak studi spin-up (Lampiran B.7.2).
+- **Lokasi:** `batch.rs`, `pub fn run_batch_shared(project, opts, base: &Calibration, sets: &[Vec<CalUpdate>], year: i32, channels, depth, threads, progress) -> Result<Vec<BatchResult>, String>`. Sejak 1.2 (studi spin-up, Lampiran B.7.2).
 - **Tujuan:** `run_batch` dari satu pemanasan bersama: proyek dengan kalibrasinya sendiri `base` dijalankan sekali sampai hari terakhir tahun `year` (dalam praktik tahun-tahun pemanasan, yang tidak dicetak), lalu setiap run mulai dari salinan keadaan itu dengan perubahannya sendiri.
 - **Cara kerja:**
   1. `Simulation::with_calibration(project, opts, base)`, lalu `run_until(&mut NoOutput, year, 365 atau 366)`; bila hari itu tidak ada di periode simulasi, `Err`.
@@ -10079,7 +10079,7 @@ swatplus-rust batch <TxtInOut folder> --sets <sets.csv> --channels <n,n,...> --o
 swatplus-rust compare <SWAT+ table> <our table> [--abs 0.001] [--rel 1e-4]
 ```
 
-Selain itu `--version` atau `-V` mencetak `swatplus-rust <versi>` (pada rilis 1.1.0: `swatplus-rust 1.1.0`). Perintah `batch` dan opsi `run` sesudah `--strict` ditambahkan di 1.1.
+Selain itu `--version` atau `-V` mencetak `swatplus-rust <versi>` (pada rilis 1.2.0: `swatplus-rust 1.2.0`). Perintah `batch` dan opsi `run` sesudah `--strict` ditambahkan di 1.1; opsi `batch --shared-spinup` di 1.2.
 
 **Opsi `run`.**
 
@@ -10211,7 +10211,7 @@ Selain itu `--version` atau `-V` mencetak `swatplus-rust <versi>` (pada rilis 1.
 
 Sejak 1.1 (M2, Lampiran B.3). `swatplus-rust batch <proyek> --sets <sets.csv> --channels <n,n,...> --out <folder> [--threads N] [--fix-swat] [--depth] [--cal-parms <berkas>] [--shared-spinup]` menjalankan satu proyek sekali per set parameter, berdampingan di inti komputer, dan hanya menyimpan deret yang dibutuhkan kalibrasi.
 
-**Struct `BatchArgs<'a>`:** `sets`, `channels` (nomor saluran di `channel_sd`), `out`, `threads` (run sekaligus; 0 = sebanyak inti), `fixes`, `depth` (kedalaman juga), `cal_parms`, `shared_spinup`.
+**Struct `BatchArgs<'a>`:** `sets`, `channels` (nomor saluran di `channel_sd`), `out`, `threads` (run sekaligus; 0 = sebanyak inti), `fixes`, `depth` (kedalaman juga), `cal_parms`, `shared_spinup` (sejak 1.2).
 
 - **`read_sets(text: &str) -> Result<(Vec<String>, Vec<Vec<CalUpdate>>), String>`:** membaca CSV set parameter. Baris kepala berisi kolom `parameter:jenis` (`cn2:pctchg`, `esco:absval`; jenis salah satu dari empat), boleh diawali kolom `run` yang menamai setiap baris; baris kosong dan baris `#` dilewati. Setiap baris menjadi satu set `CalUpdate::all(nama, jenis, nilai)`; tanpa kolom `run` nama run `0001`, `0002`, …. Galat untuk kolom tanpa jenis, jenis tak dikenal, nilai bukan angka, atau jumlah nilai yang tidak sama dengan kolom. Uji `parameter_sets_are_read_from_csv`.
 - **`series_csv(s: &Series) -> String`:** deret satu run sebagai CSV: `date` (`yyyy-mm-dd`, dari `xmon`), `precip_mm`, `et_mm`, `flo_<n>` per saluran, dan bila ada kedalaman `dep_<n>`, `dep_mann_<n>`; nilai yang tidak ada ditulis NaN.
@@ -12094,7 +12094,7 @@ Karena itu pendaftaran akun dilakukan lebih awal (prosesnya beberapa hari), teta
 
 ## Lampiran B  Jalur M: kalibrasi, mode paralel, dan studi spin-up
 
-Lampiran ini mencatat pekerjaan sesudah engine 1.0, yaitu jalur M di `docs/roadmap.md` untuk riset MPhil (kalibrasi berbasis tinggi muka air, TMA), fungsi demi fungsi seperti bab-bab sebelumnya. Isinya masuk ke versi 1.1.0 (Zenodo, DOI 10.5281/zenodo.24448341), kecuali B.7 (studi spin-up), yang menyusul sesudahnya. Sejak 24 November 2026 Bab 1 sampai 17 menjelaskan engine 1.1: fungsi baru dan yang berubah sejak 1.0.1 (juga perubahan di luar jalur M, misalnya format tabel recall 1.0.3) masuk ke bab fungsinya dengan keterangan versi, dan lampiran ini mencatat jalannya pekerjaan serta hasilnya. Lampiran ini diperbarui setiap kali satu langkah selesai; B.8 mencatat urutan langkahnya.
+Lampiran ini mencatat pekerjaan sesudah engine 1.0, yaitu jalur M di `docs/roadmap.md` untuk riset MPhil (kalibrasi berbasis tinggi muka air, TMA), fungsi demi fungsi seperti bab-bab sebelumnya. Isinya masuk ke versi 1.1.0 (Zenodo, DOI 10.5281/zenodo.24448341), kecuali B.7 (studi spin-up), yang masuk ke versi 1.2.0. Sejak 24 November 2026 Bab 1 sampai 17 menjelaskan engine 1.2.0: fungsi baru dan yang berubah sejak 1.0.1 (juga perubahan di luar jalur M, misalnya format tabel recall 1.0.3) masuk ke bab fungsinya dengan keterangan versi, dan lampiran ini mencatat jalannya pekerjaan serta hasilnya. Lampiran ini diperbarui setiap kali satu langkah selesai; B.8 mencatat urutan langkahnya.
 
 ### B.1  Ringkasan
 
@@ -12259,5 +12259,6 @@ Kedua proyek memakai akuifer bawaan editor. Akuifer dangkal (Batanghari 42, Pess
 | 23 November 2026 | Pengukuran 1–12 inti di laptop; thread sekali per run; rilis 1.1.0 | PR #20–#23; Zenodo 10.5281/zenodo.24448341 |
 | 24 November 2026 | Studi spin-up: `Simulation::calibrate`, `batch --shared-spinup`, `swatcal.spinup`; pemanasan 2 tahun cukup untuk volume, akuifer dangkal menyatu dalam 2–3 tahun, akuifer dalam tidak pernah, pemanasan bersama tidak dipakai bawaan | B.7, `docs/spinup.md` |
 | 24 November 2026 | Pemeriksaan neraca air akuifer (`swatcal.aquifers`): akuifer dangkal seimbang, akuifer dalam terus terisi dan airnya hilang dari sungai | B.7.5, `docs/spinup.md` |
-| 24 November 2026 | Bab 1–17 diperbarui ke versi 1.1: `Simulation` dan method-nya, `batch.rs`, `aunif_skip`, `hru_wave` (Bab 5); `Calibration` (Bab 3); pembaca byte (Bab 4); `cal_conditions`/`calibrate_aquifers` dengan kalibrasi dari memori (Bab 7, 14); `Arc<PlantDb>` dan `Saved` per HRU (Bab 8); gelombang HRU, rencana routing per sub-DAS, `ChanCfg`/`Carry`/`AirLags`, `rating_curve`, `manning_depth`, `channel_hyd` (Bab 12); `list_real4` 1.0.3 dan `channel_hyd_day.txt` (Bab 15); opsi `run` baru dan perintah `batch` (Bab 16); koreksi F20–F22, validasi 1.0.3 dan 1.1, mode paralel (Bab 17) | PR #25; nota dibangun ulang (`scripts/build-nota-desain.sh`) dengan judul 1.1 |
+| 24 November 2026 | Bab 1–17 diperbarui ke versi 1.1: `Simulation` dan method-nya, `batch.rs`, `aunif_skip`, `hru_wave` (Bab 5); `Calibration` (Bab 3); pembaca byte (Bab 4); `cal_conditions`/`calibrate_aquifers` dengan kalibrasi dari memori (Bab 7, 14); `Arc<PlantDb>` dan `Saved` per HRU (Bab 8); gelombang HRU, rencana routing per sub-DAS, `ChanCfg`/`Carry`/`AirLags`, `rating_curve`, `manning_depth`, `channel_hyd` (Bab 12); `list_real4` 1.0.3 dan `channel_hyd_day.txt` (Bab 15); opsi `run` baru dan perintah `batch` (Bab 16); koreksi F20–F22, validasi 1.0.3 dan 1.1, mode paralel (Bab 17) | PR #25; nota dibangun ulang (`scripts/build-nota-desain.sh`) |
+| 24 November 2026 | Rilis 1.2.0: kalibrasi di tengah run, `batch --shared-spinup`, studi spin-up dan neraca akuifer, nota desain 1.2; run setia tidak berubah | PR #26; judul nota menjadi 1.2 |
 

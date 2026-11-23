@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## 1.2.0
+
+A running simulation takes calibration changes between two days, and a batch can start every
+parameter set from one shared spin-up; a study of Batanghari and Pessel with them shows how long a
+spin-up the projects need and that calibrations should keep each run's own. The design note
+describes the engine as of this version. Faithful runs are unchanged: every table of the 37
+validation scenarios is the same as 1.1.0's.
+
 
 - **Spin-up study** (`docs/spinup.md`): `Simulation::calibrate` applies calibration changes to a
   running simulation (not a SWAT+ step; changes that would set the state up again are refused),
@@ -12,7 +19,7 @@
 - **Aquifer balance** (`python -m swatcal.aquifers`): the projects' shallow aquifers are in balance;
   their deep aquifers (`aqu_deep…`) only fill with the deep seepage and send their flow nowhere,
   about 5 % of the recharge lost to the rivers.
-- The design note (Indonesian, `docs/nota-desain`) describes 1.1: chapters 1–17 now cover the
+- The design note (Indonesian, `docs/nota-desain`) describes 1.2.0: chapters 1–17 now cover the
   functions added or changed since 1.0.1 (the step-by-step simulation, calibration in memory,
   batches, the parallel mode, channel hydraulics, the byte reader, the recall table format of
   1.0.3), and a new appendix (Lampiran B) records the M track step by step with a work log. Rebuilt

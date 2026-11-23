@@ -32,7 +32,7 @@ relative difference of 1e-4 or one unit in the last printed decimal (decision K1
 | `swat-engine` | The simulation. So far the clock, the daily weather (measured and generated), the print schedule, HRUs (water balance, plant growth, soil nutrients with the original and Century carbon models, erosion, dated and decision-table management), and the objects they feed in SWAT+'s command order: routing units, aquifers and SWAT-DEG channels. |
 | `swat-output` | The output: SWAT+'s text tables, the same tables as Parquet, tar archives, progress as JSON lines. |
 | `swat-wasm` | The engine as a WebAssembly module for the browser: a scenario's tar archive in, its tables out. |
-| `swatplus-rust` | The command line program: `inspect`, `run`, `compare`. |
+| `swatplus-rust` | The command line program: `inspect`, `run`, `batch`, `compare`. |
 
 One external dependency, rayon, for the threads of `--fix-swat --threads N`; the core builds anywhere, WebAssembly included.
 

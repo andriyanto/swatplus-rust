@@ -395,7 +395,7 @@ Di sini `z_obj` adalah elevasi objek, `z_ref,P` elevasi WGN bila hujan disimulas
 
 #### 5.3.11  `Simulation::calibrate`
 
-- **Lokasi:** `run.rs`, `pub fn calibrate(&mut self, cal: &Calibration) -> Result<(), String>`. Sejak 1.1 (studi spin-up, Lampiran B.7.1).
+- **Lokasi:** `run.rs`, `pub fn calibrate(&mut self, cal: &Calibration) -> Result<(), String>`. Sejak 1.2 (studi spin-up, Lampiran B.7.1).
 - **Padanan SWAT+:** tidak ada. SWAT+ menerapkan `calibration.cal` sekali, sebelum hari pertama; method ini melayani kalibrasi dan studi, bukan run yang dibandingkan dengan SWAT+.
 - **Tujuan:** menerapkan perubahan `cal` pada simulasi yang sedang berjalan, di antara dua hari: parameter HRU dan akuifer berubah, air, tanaman, dan nutriennya tetap.
 - **Cara kerja:**
@@ -989,7 +989,7 @@ Fungsi yang didokumentasikan dalam bab ini: `run.rs` 50 (`HruWeather::default`, 
 
 ### 5.9  Banyak run sekaligus (`batch.rs`)
 
-Modul ini ditambahkan di 1.1 (M2 dan studi spin-up, Lampiran B.3 dan B.7). Kalibrasi menjalankan proyek yang sama ratusan kali dengan set parameter berbeda, dan run-run itu tidak saling bergantung. Cara tercepat adalah satu run per inti, dengan setiap run hanya menyimpan deret yang dibandingkan dengan pengamatan. Tidak ada padanan SWAT+: program kalibrasi SWAT+ menulis berkas dan menjalankan program berkali-kali.
+Modul ini ditambahkan di 1.1 (M2, Lampiran B.3); `run_batch_shared` di 1.2 (studi spin-up, B.7). Kalibrasi menjalankan proyek yang sama ratusan kali dengan set parameter berbeda, dan run-run itu tidak saling bergantung. Cara tercepat adalah satu run per inti, dengan setiap run hanya menyimpan deret yang dibandingkan dengan pengamatan. Tidak ada padanan SWAT+: program kalibrasi SWAT+ menulis berkas dan menjalankan program berkali-kali.
 
 | Tipe | Isi |
 | --- | --- |
@@ -1026,7 +1026,7 @@ Modul ini ditambahkan di 1.1 (M2 dan studi spin-up, Lampiran B.3 dan B.7). Kalib
 
 #### 5.9.5  `run_batch_shared`
 
-- **Lokasi:** `batch.rs`, `pub fn run_batch_shared(project, opts, base: &Calibration, sets: &[Vec<CalUpdate>], year: i32, channels, depth, threads, progress) -> Result<Vec<BatchResult>, String>`. Sejak studi spin-up (Lampiran B.7.2).
+- **Lokasi:** `batch.rs`, `pub fn run_batch_shared(project, opts, base: &Calibration, sets: &[Vec<CalUpdate>], year: i32, channels, depth, threads, progress) -> Result<Vec<BatchResult>, String>`. Sejak 1.2 (studi spin-up, Lampiran B.7.2).
 - **Tujuan:** `run_batch` dari satu pemanasan bersama: proyek dengan kalibrasinya sendiri `base` dijalankan sekali sampai hari terakhir tahun `year` (dalam praktik tahun-tahun pemanasan, yang tidak dicetak), lalu setiap run mulai dari salinan keadaan itu dengan perubahannya sendiri.
 - **Cara kerja:**
   1. `Simulation::with_calibration(project, opts, base)`, lalu `run_until(&mut NoOutput, year, 365 atau 366)`; bila hari itu tidak ada di periode simulasi, `Err`.

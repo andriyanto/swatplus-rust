@@ -3,11 +3,11 @@
 # (the chapters in order under one title), then nota-desain.docx and nota-desain.pdf with pandoc
 # (xelatex and DejaVu fonts for the PDF). Run after changing a chapter.
 #
-#   scripts/build-nota-desain.sh "<subtitle>"     e.g. "swatplus-rust 1.1, fungsi demi fungsi"
+#   scripts/build-nota-desain.sh "<subtitle>"     e.g. "swatplus-rust 1.2.0, fungsi demi fungsi"
 set -euo pipefail
 cd "$(dirname "$0")/../docs/nota-desain"
-title="Nota Desain SWAT+ Rust Engine 1.1"
-subtitle=${1:-"swatplus-rust 1.1, fungsi demi fungsi, dengan catatan kerja jalur M (Lampiran B)"}
+title="Nota Desain SWAT+ Rust Engine 1.2"
+subtitle=${1:-"swatplus-rust 1.2.0, fungsi demi fungsi, dengan catatan kerja jalur M (Lampiran B)"}
 {
   echo "# $title"
   echo
