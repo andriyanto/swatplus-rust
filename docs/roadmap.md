@@ -461,10 +461,12 @@ sebagai perintah. Kedua crate itu tidak ada di repo asli `opengeos/RustGIS`.
 
 1. **A1.0 Sinkronisasi fork** dengan `opengeos/RustGIS` (misalnya crate `keychain` yang baru), agar
    pekerjaan A1 tidak bercabang jauh dari repo asli.
-2. **A1.1 Engine sebagai pustaka:** `swat-engine`, `swat-io` dan `swat-output` dari swatplus-rust
-   dipakai sebagai dependensi yang dikunci ke versi rilis, sehingga run berjalan di desktop dan di
-   browser (WASM) tanpa program terpisah. Run berjalan di latar; kemajuan dan pembatalan memakai
-   API langkah (E1).
+2. **A1.1 Engine dijalankan, tidak digabung (K11):** `swat.run` memanggil program
+   `swatplus-rust run --progress json --format parquet` di desktop dan memuat modul
+   `swat_wasm.wasm` di browser (`docs/runner.md`), pada versi rilis yang dikunci. Kode engine
+   (LGPL-2.1) tidak digabung ke dalam program RustGIS-SwatPlus (Apache-2.0). Run berjalan di
+   latar, dengan kemajuan dari baris JSON dan pembatalan dengan menghentikan prosesnya.
+   (Dikoreksi 24 November 2026; sebelumnya "engine sebagai pustaka".)
 3. **A1.2 Perintah `swat.*`:**
 
    | Kelompok | Perintah | Isi |
@@ -635,7 +637,7 @@ flowchart TD
 | Fase | Isi | Repo | Bergantung pada | Hasil yang bisa dipakai atau diterbitkan |
 | --- | --- | --- | --- | --- |
 | **F0** | Merge PR #4 (optimasi) dan #5 (roadmap); rilis 1.0.4 | E | — | Engine ±10% lebih cepat, identik |
-| **F1** | (a) **E1 API langkah**, refaktor identik; (b) H0 mode paralel `--fix-swat`, dibangun di atas E1; (c) H1 tabel `channel_hyd_*`; (d) T1.0 geometri ber-Z dan M; (e) hujan GSMaP: pembaca, peta mode ilmiah, rata-rata per subDAS; (f) A1.0–A1.4 asisten AI untuk SWAT+: sinkronisasi fork, engine sebagai pustaka, perintah `swat.*`, skill, mode rahasia | E, E, E, G, G, G | b setelah a; c, d, e bebas; f bebas (kemajuan dan pembatalan run setelah a) | Engine yang bisa dijalankan per langkah; kalibrasi jauh lebih cepat (dipakai MPhil); kedalaman dan kecepatan per saluran; RustGIS membaca data ukur ber-Z; peta hujan waktu nyata Indonesia; model SWAT+ bisa dibuka, disunting, dijalankan dan dibaca lewat chat |
+| **F1** | (a) **E1 API langkah**, refaktor identik; (b) H0 mode paralel `--fix-swat`, dibangun di atas E1; (c) H1 tabel `channel_hyd_*`; (d) T1.0 geometri ber-Z dan M; (e) hujan GSMaP: pembaca, peta mode ilmiah, rata-rata per subDAS; (f) A1.0–A1.4 asisten AI untuk SWAT+: sinkronisasi fork, engine dijalankan sebagai program atau modul WASM, perintah `swat.*`, skill, mode rahasia | E, E, E, G, G, G | b setelah a; c, d, e bebas; f bebas (kemajuan dan pembatalan run setelah a) | Engine yang bisa dijalankan per langkah; kalibrasi jauh lebih cepat (dipakai MPhil); kedalaman dan kecepatan per saluran; RustGIS membaca data ukur ber-Z; peta hujan waktu nyata Indonesia; model SWAT+ bisa dibuka, disunting, dijalankan dan dibaca lewat chat |
 | **F2** | (a) **E2 simpan dan muat keadaan**; (b) H0 `lu_change` dan `scen_lu.dtl`, diverifikasi terhadap SWAT+; (c) H1 kurva rating dari penampang survei; (d) T1.1 datum tinggi, mosaik DEMNAS; (e) T1.3 permukaan dari data ukur (CSV, shapefile/GeoPackage ber-Z, LandXML, DXF dengan label elevasi) dipadukan dengan DEM; (f) A2 kalibrasi berbantuan AI | E, E, E, G, G, G | F1a → a; F1c → c; F1d → d, e; F1b, F1f → f | *Hot start* dan *spin-up*; simulasi perubahan lahan; lengkung debit hidrolis di pos AWLR; DEM terkoreksi survei. **Naskah:** pemaduan data ukur dan DEM |
 | **F3** | (a) **E3 titik kopling**, dengan uji kopling "lewat"; (b) **E5 koreksi sub-harian** di `--fix-swat`; (c) H2 aliran tunak 1D; (d) alat penampang di layar dan penyunting terain; (e) T1.4–T1.5 batimetri berparameter, garis patah, bukaan struktur | E, E, E, G, G | F1a → a; F2c, F2e → c, e | Engine siap dikopling; muka air banjir rencana Q25–Q100, tinggi jagaan tanggul; pembandingan dengan HEC-RAS *steady* |
 | **F4** | (a) H3 Saint-Venant Preissmann, bangunan, kopling satu arah lewat E3, kondisi awal dari SWAT+; (b) V1 kamera isometrik dan animasi waktu (hasil 1D dan neraca air SWAT+) | E, G | F3a, F3b, F3c; fondasi 3D RustGIS | Hidrograf dan air balik di titik tinjau; animasi neraca air dan muka air 1D. **Naskah:** kopling SWAT+ dengan hidrolika 1D |

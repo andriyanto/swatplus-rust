@@ -26,5 +26,6 @@ Nota desain engine swatplus-rust 1.2.0, fungsi demi fungsi, dalam Bahasa Indones
 | Daftar Pustaka | [19-daftar-pustaka.md](19-daftar-pustaka.md) |
 | Lampiran A  Data hujan satelit GSMaP: alasan, akses, dan rencana | [20-lampiran-a-data-hujan-satelit-gsmap.md](20-lampiran-a-data-hujan-satelit-gsmap.md) |
 | Lampiran B  Jalur M: kalibrasi, mode paralel, dan studi spin-up (versi 1.1 dan sesudahnya), dengan catatan langkah kerja | [21-lampiran-b-jalur-m-kalibrasi-mode-paralel-dan-spin-up.md](21-lampiran-b-jalur-m-kalibrasi-mode-paralel-dan-spin-up.md) |
+| Lampiran C  RustGIS-SwatPlus: model SWAT+ di GIS dan asisten AI, dengan catatan langkah kerja | [22-lampiran-c-rustgis-swatplus.md](22-lampiran-c-rustgis-swatplus.md) |
 
 Satu berkas: [nota-desain.md](nota-desain.md), [nota-desain.docx](nota-desain.docx), [nota-desain.pdf](nota-desain.pdf).
