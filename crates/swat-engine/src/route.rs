@@ -214,7 +214,63 @@ pub struct NetDay<'a> {
     pub print: bool,
 }
 
+/// `cal_conditions` for the aquifers: the changes of `cal` whose object is an aquifer. A condition
+/// would be tested on the HRU numbered as the aquifer, which isn't ported.
+fn calibrate_aquifers(aqus: &mut [Aqu], obs: &[Ob], cal: &swat_model::cal::Calibration) -> Result<(), String> {
+    for u in &cal.updates {
+        let p = crate::hru::cal_parm(cal, u);
+        if p.ob_typ != "aqu" {
+            continue;
+        }
+        if !u.conds.is_empty() {
+            return Err(format!("calibration of {} with conditions (aquifer)", u.name));
+        }
+        for e in crate::hru::cal_elems(u, aqus.len()) {
+            let a = aqus.get_mut(e.wrapping_sub(1)).ok_or_else(|| format!("calibration of {}: aquifer {e}", u.name))?;
+            let chg = |v: f32| crate::hru::chg_par(u, &p, v);
+            let area = obs[a.ob].area_ha;
+            match u.name.as_str() {
+                "alpha" => {
+                    a.db.alpha = chg(a.db.alpha);
+                    a.alpha_e = (-a.db.alpha).exp();
+                }
+                "revap_co" => a.db.revap_co = chg(a.db.revap_co),
+                "deep_seep" => a.db.seep = chg(a.db.seep),
+                "flo_min" => a.db.flo_min = chg(a.db.flo_min),
+                "revap_min" => a.db.revap_min = chg(a.db.revap_min),
+                "dep_bot" => a.db.dep_bot = chg(a.db.dep_bot),
+                "minp_init" => a.db.minp = chg(a.db.minp),
+                "sp_yld" => {
+                    a.db.spyld = chg(a.db.spyld);
+                    a.d.stor = 1000.0 * (a.db.dep_bot - a.d.dep_wt) * a.db.spyld;
+                }
+                "hlife_n" => {
+                    a.db.hlife_n = chg(a.db.hlife_n);
+                    a.nloss = (-0.693 / (a.db.hlife_n + 0.1)).exp();
+                }
+                "no3_init" => {
+                    a.db.no3 = chg(a.db.no3);
+                    a.d.no3_st = (10.0 * a.d.flo * area) * a.db.no3 / 1000.0;
+                }
+                // Used only while setting up, or by 2-D aquifers.
+                "flo_init_mm" => a.db.flo = chg(a.db.flo),
+                "dep_wt_init" => a.db.dep_wt = chg(a.db.dep_wt),
+                "cbn_init" => a.db.cbn = chg(a.db.cbn),
+                "flo_dist" => a.db.flo_dist = chg(a.db.flo_dist),
+                "bf_max" => a.db.bf_max = chg(a.db.bf_max),
+                other => return Err(format!("calibration of {other}")),
+            }
+        }
+    }
+    Ok(())
+}
+
 impl Network {
+    /// Applies the aquifer changes of `cal` to the network as it stands (`Simulation::calibrate`).
+    pub(crate) fn calibrate(&mut self, cal: &swat_model::cal::Calibration) -> Result<(), String> {
+        calibrate_aquifers(&mut self.aqus, &self.obs, cal)
+    }
+
     /// `hyd_connect`, `ru_read_elements`, `time_conc_init`, `dr_ru` and `aqu_initial`. The HRUs'
     /// times of concentration come in `tconc` (h) with their Manning's n and area (km2) in
     /// `ovn_km`. `Ok(None)` when the project has nothing past its HRUs; `Err` names what isn't
@@ -404,53 +460,8 @@ impl Network {
             aqu_of[ob] = Some(iaq);
             aqus.push(Aqu { ob, db, alpha_e, nloss, d });
         }
-        // cal_conditions: the aquifers' calibration (after aqu_initial). A condition would be
-        // tested on the HRU numbered as the aquifer.
-        for u in &cal.updates {
-            let p = crate::hru::cal_parm(cal, u);
-            if p.ob_typ != "aqu" {
-                continue;
-            }
-            if !u.conds.is_empty() {
-                return Err(format!("calibration of {} with conditions (aquifer)", u.name));
-            }
-            for e in crate::hru::cal_elems(u, aqus.len()) {
-                let a = aqus.get_mut(e.wrapping_sub(1)).ok_or_else(|| format!("calibration of {}: aquifer {e}", u.name))?;
-                let chg = |v: f32| crate::hru::chg_par(u, &p, v);
-                let area = obs[a.ob].area_ha;
-                match u.name.as_str() {
-                    "alpha" => {
-                        a.db.alpha = chg(a.db.alpha);
-                        a.alpha_e = (-a.db.alpha).exp();
-                    }
-                    "revap_co" => a.db.revap_co = chg(a.db.revap_co),
-                    "deep_seep" => a.db.seep = chg(a.db.seep),
-                    "flo_min" => a.db.flo_min = chg(a.db.flo_min),
-                    "revap_min" => a.db.revap_min = chg(a.db.revap_min),
-                    "dep_bot" => a.db.dep_bot = chg(a.db.dep_bot),
-                    "minp_init" => a.db.minp = chg(a.db.minp),
-                    "sp_yld" => {
-                        a.db.spyld = chg(a.db.spyld);
-                        a.d.stor = 1000.0 * (a.db.dep_bot - a.d.dep_wt) * a.db.spyld;
-                    }
-                    "hlife_n" => {
-                        a.db.hlife_n = chg(a.db.hlife_n);
-                        a.nloss = (-0.693 / (a.db.hlife_n + 0.1)).exp();
-                    }
-                    "no3_init" => {
-                        a.db.no3 = chg(a.db.no3);
-                        a.d.no3_st = (10.0 * a.d.flo * area) * a.db.no3 / 1000.0;
-                    }
-                    // Used only while setting up, or by 2-D aquifers.
-                    "flo_init_mm" => a.db.flo = chg(a.db.flo),
-                    "dep_wt_init" => a.db.dep_wt = chg(a.db.dep_wt),
-                    "cbn_init" => a.db.cbn = chg(a.db.cbn),
-                    "flo_dist" => a.db.flo_dist = chg(a.db.flo_dist),
-                    "bf_max" => a.db.bf_max = chg(a.db.bf_max),
-                    other => return Err(format!("calibration of {other}")),
-                }
-            }
-        }
+        // cal_conditions: the aquifers' calibration (after aqu_initial).
+        calibrate_aquifers(&mut aqus, &obs, cal)?;
 
         // The command order (`cmd_next`): objects fire, in passes over the array, once all
         // their inflows and (for routing units) all their elements have.

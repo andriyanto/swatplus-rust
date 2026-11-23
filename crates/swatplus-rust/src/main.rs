@@ -3,7 +3,7 @@
 //! ```text
 //! swatplus-rust inspect <TxtInOut folder>
 //! swatplus-rust run <TxtInOut folder> [--out <folder>] [--fix-swat] [--format text|parquet|both] [--progress json] [--strict] [--channel-hyd] [--threads N] [--calibration <file>] [--cal-parms <file>] [--set <name> <absval|abschg|pctchg|relchg> <value>]...
-//! swatplus-rust batch <TxtInOut folder> --sets <sets.csv> --channels <n,n,...> --out <folder> [--threads N] [--fix-swat] [--depth] [--cal-parms <file>]
+//! swatplus-rust batch <TxtInOut folder> --sets <sets.csv> --channels <n,n,...> --out <folder> [--threads N] [--fix-swat] [--depth] [--cal-parms <file>] [--shared-spinup]
 //! swatplus-rust compare <SWAT+ table> <our table> [--abs 0.001] [--rel 1e-4]
 //! ```
 //!
@@ -22,7 +22,7 @@ use swat_model::{ClimateVar, ObjectKind};
 const USAGE: &str = "usage:
   swatplus-rust inspect <TxtInOut folder>
   swatplus-rust run <TxtInOut folder> [--out <folder>] [--fix-swat] [--format text|parquet|both] [--progress json] [--strict] [--channel-hyd] [--threads N] [--calibration <file>] [--cal-parms <file>] [--set <name> <absval|abschg|pctchg|relchg> <value>]...
-  swatplus-rust batch <TxtInOut folder> --sets <sets.csv> --channels <n,n,...> --out <folder> [--threads N] [--fix-swat] [--depth] [--cal-parms <file>]
+  swatplus-rust batch <TxtInOut folder> --sets <sets.csv> --channels <n,n,...> --out <folder> [--threads N] [--fix-swat] [--depth] [--cal-parms <file>] [--shared-spinup]
   swatplus-rust compare <SWAT+ table> <our table> [--abs 0.001] [--rel 1e-4]";
 
 fn main() -> ExitCode {
@@ -100,8 +100,16 @@ fn main() -> ExitCode {
             run(dir, &o)
         }
         ["batch", dir, opts @ ..] => {
-            let mut a =
-                batch::BatchArgs { sets: None, channels: Vec::new(), out: None, threads: 0, fixes: false, depth: false, cal_parms: None };
+            let mut a = batch::BatchArgs {
+                sets: None,
+                channels: Vec::new(),
+                out: None,
+                threads: 0,
+                fixes: false,
+                depth: false,
+                cal_parms: None,
+                shared_spinup: false,
+            };
             let mut it = opts.iter();
             while let Some(o) = it.next() {
                 match (*o, it.clone().next().copied()) {
@@ -133,6 +141,7 @@ fn main() -> ExitCode {
                     }
                     ("--fix-swat", _) => a.fixes = true,
                     ("--depth", _) => a.depth = true,
+                    ("--shared-spinup", _) => a.shared_spinup = true,
                     _ => {
                         eprintln!("{USAGE}");
                         return ExitCode::from(2);

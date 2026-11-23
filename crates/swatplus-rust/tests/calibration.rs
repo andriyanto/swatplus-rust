@@ -130,3 +130,63 @@ fn a_parameter_cal_parms_doesn_t_list_is_refused() {
     let bare = Calibration { parms: Vec::new(), updates: changes() };
     assert!(Simulation::with_calibration(&ames, RunOptions::default(), &bare).is_err());
 }
+
+/// The tables of a stepped run of `sim` to its end.
+fn run_out(p: &Project, mut sim: Simulation, mut t: TextTables<MemStore>) -> BTreeMap<String, Vec<u8>> {
+    let _ = p;
+    while sim.step(&mut t).unwrap() {}
+    sim.finish(&mut t);
+    t.finish().unwrap().files
+}
+
+#[test]
+fn changes_applied_before_the_first_day_are_the_changes_set_up_with_the_run() {
+    // `Simulation::calibrate` before any day has run is the run set up with those changes: the
+    // parameters change in the same place, and nothing else does.
+    let ames = load(&testdata("Ames_sub1"));
+    let none = Calibration { parms: cal_parms(), updates: Vec::new() };
+    let cal = Calibration { parms: cal_parms(), updates: changes() };
+    let mut sim = Simulation::with_calibration(&ames, RunOptions::default(), &none).unwrap();
+    sim.calibrate(&cal).unwrap();
+    let late = run_out(&ames, sim, TextTables::new("calibration", MemStore::new(), &ames.print));
+    assert_eq!(late, tables(&ames, Some(&cal)));
+}
+
+#[test]
+fn changes_applied_during_a_run_change_only_what_follows() {
+    // A shared spin-up: the days before the change are the plain run's, the days after differ.
+    let ames = load(&testdata("Ames_sub1"));
+    let none = Calibration { parms: cal_parms(), updates: Vec::new() };
+    let cal = Calibration { parms: cal_parms(), updates: changes() };
+    let mut sim = Simulation::with_calibration(&ames, RunOptions::default(), &none).unwrap();
+    let mut t = TextTables::new("calibration", MemStore::new(), &ames.print);
+    // The change goes in after day 200 of the first printed year.
+    let year = ames.time.yrc_start + ames.print.nyskip;
+    assert!(sim.run_until(&mut t, year, 200).unwrap());
+    sim.calibrate(&cal).unwrap();
+    let late = run_out(&ames, sim, t);
+    let plain = tables(&ames, Some(&none));
+    let rows = |f: &BTreeMap<String, Vec<u8>>, after: bool| -> Vec<String> {
+        String::from_utf8(f["hru_wb_day.txt"].clone())
+            .unwrap()
+            .lines()
+            .filter(|l| {
+                let w: Vec<i32> = l.split_whitespace().take(4).map_while(|v| v.parse().ok()).collect();
+                w.len() == 4 && ((w[3], w[0]) > (year, 200)) == after
+            })
+            .map(String::from)
+            .collect()
+    };
+    assert!(!rows(&plain, false).is_empty());
+    assert_eq!(rows(&late, false), rows(&plain, false), "the days up to the change");
+    assert_ne!(rows(&late, true), rows(&plain, true), "the days after it");
+}
+
+#[test]
+fn a_change_that_would_set_the_state_up_again_is_refused_during_a_run() {
+    let ames = load(&testdata("Ames_sub1"));
+    let none = Calibration { parms: cal_parms(), updates: Vec::new() };
+    let mut sim = Simulation::with_calibration(&ames, RunOptions::default(), &none).unwrap();
+    let awc = Calibration { parms: cal_parms(), updates: vec![CalUpdate::all("awc", "pctchg", 10.0)] };
+    assert!(sim.calibrate(&awc).unwrap_err().contains("sets the state up again"));
+}

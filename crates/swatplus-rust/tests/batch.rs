@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use swat_engine::batch::{run_batch, run_one};
+use swat_engine::batch::{run_batch, run_batch_shared, run_one};
 use swat_engine::run::{RunOptions, run_with_calibration};
 use swat_io::{DirSource, load_project};
 use swat_model::Project;
@@ -91,4 +91,36 @@ fn a_failed_run_is_reported_in_its_place() {
     let r = run_batch(&p, RunOptions::default(), &cals, &[1], false, 2, &|_| {});
     assert!(r[0].is_ok() && r[2].is_ok());
     assert!(r[1].as_ref().err().is_some_and(|e| e.contains("no_such_parm")));
+}
+
+#[test]
+fn a_shared_spin_up_without_changes_is_the_project_s_own_run() {
+    // `--shared-spinup`: the warm-up years run once with the project's parameters, then each set
+    // goes on from a copy. A set that changes nothing is then the project's own run, day for day.
+    let p = osu_daily();
+    let base = Calibration::of(&p);
+    let year = p.time.yrc_start + p.print.nyskip - 1;
+    let own = run_one(&p, RunOptions::default(), &base, &[1], false).unwrap().0;
+    let shared = run_batch_shared(&p, RunOptions::default(), &base, &[Vec::new(), Vec::new()], year, &[1], false, 2, &|_| {}).unwrap();
+    for r in shared {
+        assert_eq!(r.unwrap().0, own);
+    }
+}
+
+#[test]
+fn a_shared_spin_up_runs_each_set_with_its_own_changes() {
+    // With a change, a set from the shared spin-up differs from the project's run, and is close
+    // to (not the same as) the set's run with its own spin-up: its warm-up had other parameters.
+    let p = osu_daily();
+    let base = Calibration::of(&p);
+    let year = p.time.yrc_start + p.print.nyskip - 1;
+    let set = vec![CalUpdate::all("esco", "absval", 0.2)];
+    let plain = run_one(&p, RunOptions::default(), &base, &[1], false).unwrap().0;
+    let own = run_one(&p, RunOptions::default(), &cal(&p, 0.2), &[1], false).unwrap().0;
+    let shared = run_batch_shared(&p, RunOptions::default(), &base, &[set], year, &[1], false, 1, &|_| {}).unwrap();
+    let shared = shared.into_iter().next().unwrap().unwrap().0;
+    assert_eq!(shared.days, own.days);
+    assert_ne!(shared.et, plain.et);
+    let mean = |v: &[f32]| v.iter().map(|x| f64::from(*x)).sum::<f64>() / v.len() as f64;
+    assert!((mean(&shared.et) / mean(&own.et) - 1.0).abs() < 0.05, "ET within 5 % of the set's own run");
 }

@@ -1,7 +1,7 @@
 # Nota Desain SWAT+ Rust Engine 1.0
 
 
-Nota desain engine swatplus-rust 1.0.1, fungsi demi fungsi, dalam Bahasa Indonesia: apa tugas setiap fungsi, subrutin SWAT+ yang ditirunya, persamaannya, dan kebiasaan SWAT+ yang dipertahankan. Disusun dari dokumen Claude Docs dengan judul yang sama. Berkas Word dan PDF dibuat dari nota-desain.md dengan pandoc (xelatex untuk PDF).
+Nota desain engine swatplus-rust 1.0.1, fungsi demi fungsi, dalam Bahasa Indonesia: apa tugas setiap fungsi, subrutin SWAT+ yang ditirunya, persamaannya, dan kebiasaan SWAT+ yang dipertahankan. Disusun dari dokumen Claude Docs dengan judul yang sama. Berkas Word dan PDF dibuat dari nota-desain.md dengan pandoc (xelatex untuk PDF) oleh `scripts/build-nota-desain.sh`. Bab 1–17 menjelaskan engine 1.0.1; pekerjaan sesudahnya dicatat di Lampiran B, langkah demi langkah.
 
 | Bab | File |
 | --- | --- |
@@ -25,5 +25,6 @@ Nota desain engine swatplus-rust 1.0.1, fungsi demi fungsi, dalam Bahasa Indones
 | Glosarium | [18-glosarium.md](18-glosarium.md) |
 | Daftar Pustaka | [19-daftar-pustaka.md](19-daftar-pustaka.md) |
 | Lampiran A  Data hujan satelit GSMaP: alasan, akses, dan rencana | [20-lampiran-a-data-hujan-satelit-gsmap.md](20-lampiran-a-data-hujan-satelit-gsmap.md) |
+| Lampiran B  Jalur M: kalibrasi, mode paralel, dan studi spin-up (versi 1.1 dan sesudahnya), dengan catatan langkah kerja | [21-lampiran-b-jalur-m-kalibrasi-mode-paralel-dan-spin-up.md](21-lampiran-b-jalur-m-kalibrasi-mode-paralel-dan-spin-up.md) |
 
 Satu berkas: [nota-desain.md](nota-desain.md), [nota-desain.docx](nota-desain.docx), [nota-desain.pdf](nota-desain.pdf).

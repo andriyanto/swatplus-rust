@@ -14,7 +14,7 @@ use swat_model::cal::Calibration;
 use swat_model::{ObjectKind, Project};
 
 use crate::hru::HruDay;
-use crate::run::{Day, HruWeather, OutputSink, RunOptions, RunReport, Simulation};
+use crate::run::{Day, HruWeather, NoOutput, OutputSink, RunOptions, RunReport, Simulation};
 
 /// What a calibration run keeps: for each printed day, the outflow of chosen channels and,
 /// optionally, their depth, and the basin's precipitation and evapotranspiration (the HRUs'
@@ -184,6 +184,62 @@ pub fn run_batch(
         }
     });
     results.into_inner().unwrap_or_default().into_iter().map(|r| r.unwrap_or_else(|| Err("the run did not finish".into()))).collect()
+}
+
+/// [`run_batch`] from one shared spin-up (`docs/spinup.md`): the project with its own calibration
+/// `base` is run once through the last day of `year` (in practice the warm-up years, which print
+/// nothing), and each run then starts from a copy of that state with its own changes `sets`
+/// applied ([`Simulation::calibrate`]), after `base`'s. A run's spin-up then had the project's
+/// parameters, not its own: whether that matters is what `docs/spinup.md` measures.
+#[allow(clippy::too_many_arguments)]
+pub fn run_batch_shared(
+    project: &Project,
+    opts: RunOptions,
+    base: &Calibration,
+    sets: &[Vec<swat_model::cal::CalUpdate>],
+    year: i32,
+    channels: &[usize],
+    depth: bool,
+    threads: usize,
+    progress: &(dyn Fn(usize) + Sync),
+) -> Result<Vec<BatchResult>, String> {
+    let opts = RunOptions { threads: 1, ..opts };
+    let mut spun = Simulation::with_calibration(project, opts, base)?;
+    let last = if swat_model::time::is_leap(year) { 366 } else { 365 };
+    if !spun.run_until(&mut NoOutput, year, last)? {
+        return Err(format!("the shared spin-up: day {last} of {year} is not in the simulated period"));
+    }
+    let workers = match threads {
+        0 => std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1),
+        n => n,
+    }
+    .min(sets.len().max(1));
+    let next = AtomicUsize::new(0);
+    let done = AtomicUsize::new(0);
+    let results: Mutex<Vec<Option<BatchResult>>> = Mutex::new(vec![None; sets.len()]);
+    std::thread::scope(|s| {
+        for _ in 0..workers {
+            s.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(set) = sets.get(i) else { break };
+                    let r = (|| {
+                        let mut sim = spun.checkpoint();
+                        sim.calibrate(&Calibration { parms: base.parms.clone(), updates: set.clone() })?;
+                        let mut sink = SeriesSink::new(project, channels, depth);
+                        while sim.step(&mut sink)? {}
+                        let report = sim.finish(&mut sink);
+                        Ok((sink.finish(), report))
+                    })();
+                    if let Ok(mut all) = results.lock() {
+                        all[i] = Some(r);
+                    }
+                    progress(done.fetch_add(1, Ordering::Relaxed) + 1);
+                }
+            });
+        }
+    });
+    Ok(results.into_inner().unwrap_or_default().into_iter().map(|r| r.unwrap_or_else(|| Err("the run did not finish".into()))).collect())
 }
 
 /// One run of a batch.

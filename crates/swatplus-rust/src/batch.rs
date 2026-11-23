@@ -4,7 +4,7 @@
 use std::fmt::Write as _;
 use std::process::ExitCode;
 
-use swat_engine::batch::{Series, run_batch};
+use swat_engine::batch::{Series, run_batch, run_batch_shared};
 use swat_engine::run::RunOptions;
 use swat_io::{DirSource, load_project};
 use swat_model::cal::{CalUpdate, Calibration};
@@ -17,6 +17,8 @@ pub struct BatchArgs<'a> {
     pub fixes: bool,
     pub depth: bool,
     pub cal_parms: Option<&'a str>,
+    /// Runs from one shared spin-up through the warm-up years (`docs/spinup.md`).
+    pub shared_spinup: bool,
 }
 
 /// The parameter sets of a CSV file: a header of `parameter:change` columns (`cn2:pctchg`,
@@ -119,10 +121,14 @@ pub fn batch(dir: &str, a: &BatchArgs) -> ExitCode {
     if base.parms.is_empty() {
         return fail("the project has no cal_parms.cal; give one with --cal-parms");
     }
-    let cals: Vec<Calibration> = sets
-        .into_iter()
-        .map(|s| Calibration { parms: base.parms.clone(), updates: base.updates.iter().cloned().chain(s).collect() })
-        .collect();
+    let total = sets.len();
+    let cals: Vec<Calibration> = if a.shared_spinup {
+        Vec::new()
+    } else {
+        sets.iter()
+            .map(|s| Calibration { parms: base.parms.clone(), updates: base.updates.iter().cloned().chain(s.iter().cloned()).collect() })
+            .collect()
+    };
     let n_ch = project.objects_of(swat_model::ObjectKind::ChannelDeg).count();
     if let Some(c) = a.channels.iter().find(|&&c| c == 0 || c > n_ch) {
         return fail(&format!("channel {c}: the project has channels 1 to {n_ch}"));
@@ -131,10 +137,23 @@ pub fn batch(dir: &str, a: &BatchArgs) -> ExitCode {
         return fail(&format!("{out}: {e}"));
     }
     let started = std::time::Instant::now();
-    let total = cals.len();
     eprintln!("{total} runs, {} at a time", if a.threads == 0 { "as many as there are cores".to_string() } else { a.threads.to_string() });
     let progress = |done: usize| eprint!("\r{done}/{total} runs done");
-    let results = run_batch(&project, RunOptions { fixes: a.fixes, threads: 1 }, &cals, &a.channels, a.depth, a.threads, &progress);
+    let opts = RunOptions { fixes: a.fixes, threads: 1 };
+    let results = if a.shared_spinup {
+        let nyskip = project.print.nyskip;
+        if nyskip < 1 {
+            return fail("--shared-spinup needs warm-up years (print.prt's nyskip) to share");
+        }
+        let year = project.time.yrc_start + nyskip - 1;
+        eprintln!("one shared spin-up through {year}");
+        match run_batch_shared(&project, opts, &base, &sets, year, &a.channels, a.depth, a.threads, &progress) {
+            Ok(r) => r,
+            Err(e) => return fail(&e),
+        }
+    } else {
+        run_batch(&project, opts, &cals, &a.channels, a.depth, a.threads, &progress)
+    };
     eprintln!();
     let mut summary = String::from("run,status");
     for c in &a.channels {
