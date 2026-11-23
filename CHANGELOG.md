@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- **Spin-up study** (`docs/spinup.md`): `Simulation::calibrate` applies calibration changes to a
+  running simulation (not a SWAT+ step; changes that would set the state up again are refused),
+  and `batch --shared-spinup` starts every parameter set from one warm-up made with the project's
+  parameters. On Batanghari and Pessel, two warm-up years are enough for soil water and annual
+  volumes and the shallow aquifers settle in two to three; a shared warm-up keeps Batanghari's
+  ranking of parameter sets (0.99) but not Pessel's (0.77), for 14–16 % less time, so
+  calibrations keep each run's own warm-up. `python -m swatcal.spinup` runs the study.
+- **Aquifer balance** (`python -m swatcal.aquifers`): the projects' shallow aquifers are in balance;
+  their deep aquifers (`aqu_deep…`) only fill with the deep seepage and send their flow nowhere,
+  about 5 % of the recharge lost to the rivers.
+- The design note has a new appendix (Lampiran B: the M track step by step, with a work log),
+  rebuilt by `scripts/build-nota-desain.sh`.
+
 ## 1.1.0
 
 A simulation runs a day at a time and can be copied mid-run; calibrations run in memory and in

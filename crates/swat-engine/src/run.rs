@@ -688,6 +688,34 @@ impl<'p> Simulation<'p> {
         Ok(true)
     }
 
+    /// Applies the changes of `cal` to the simulation as it stands, between two days: the HRUs'
+    /// and aquifers' parameters change, their water, plants and nutrients stay. With
+    /// [`Simulation::run_until`] and [`Simulation::checkpoint`] this starts parameter sets from one
+    /// shared spin-up (`docs/spinup.md`). Not a SWAT+ step: SWAT+ applies `calibration.cal` once,
+    /// before the first day. The changes go after the project's own (as `--set` does), and `cal`'s
+    /// `parms` give their kinds and ranges.
+    ///
+    /// Refused: a parameter `cal.parms` doesn't list, and a change that would set the state up
+    /// again rather than change a parameter (a soil layer's depth, bulk density or available
+    /// water, which recompute the soil's water; an aquifer's specific yield or initial values;
+    /// the basin's `surlag`, applied from the project's value).
+    pub fn calibrate(&mut self, cal: &swat_model::cal::Calibration) -> Result<(), String> {
+        const RESET: [&str; 10] = ["z", "bd", "awc", "sp_yld", "flo_init_mm", "dep_wt_init", "cbn_init", "no3_init", "minp_init", "surlag"];
+        if let Some(name) = cal.unknown().first() {
+            return Err(format!("calibration of {name}: not in cal_parms.cal"));
+        }
+        if let Some(u) = cal.updates.iter().find(|u| RESET.contains(&u.name.as_str())) {
+            return Err(format!("calibration of {} during a run: it sets the state up again", u.name));
+        }
+        if let Some(land) = self.land.as_mut() {
+            crate::hru::cal_conditions(self.project, cal, land)?;
+        }
+        if let Some(n) = self.network.as_mut() {
+            n.calibrate(cal)?;
+        }
+        Ok(())
+    }
+
     /// A copy of the simulation as it stands, to go on from later or to run on in another way:
     /// it goes on exactly as this one would (`tests/step_api.rs`).
     pub fn checkpoint(&self) -> Simulation<'p> {

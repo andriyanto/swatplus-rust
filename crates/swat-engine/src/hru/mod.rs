@@ -855,7 +855,7 @@ pub(crate) fn cal_elems(u: &swat_model::cal::CalUpdate, n: usize) -> Vec<usize> 
 /// conditions (the aquifers' are made where the aquifers are set up). As in SWAT+, a change
 /// made after the set-up only reaches what is computed from the parameter later: a slope's
 /// time of concentration and USLE LS keep the old slope.
-fn cal_conditions(project: &Project, cal: &swat_model::cal::Calibration, hrus: &mut [Hru]) -> Result<(), String> {
+pub(crate) fn cal_conditions(project: &Project, cal: &swat_model::cal::Calibration, hrus: &mut [Hru]) -> Result<(), String> {
     // bsn_prm%surlag: each change starts from the last one's value.
     let mut surlag = project.params.get("surlag").unwrap_or(4.0);
     for u in &cal.updates {

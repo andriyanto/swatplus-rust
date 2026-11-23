@@ -32,8 +32,12 @@ let report = swat_engine::run::run_with_calibration(&project, &mut tables, opts,
   `absval` sets it, `abschg` adds to it, `pctchg` changes it by a percentage, `relchg` multiplies
   it by 1 + `val`. Each result is held to the parameter's range in `cal_parms.cal`. Conditions,
   soil layers and object lists are the other fields of `CalUpdate`, as in `calibration.cal`.
-- `Simulation::with_calibration` is the stepped form (`docs/runner.md`): with `run_until` and
-  `checkpoint`, a spin-up can be run once and each parameter set started from a copy of it (M2).
+- `Simulation::with_calibration` is the stepped form (`docs/runner.md`). `Simulation::calibrate`
+  applies changes to a simulation as it stands, between two days: with `run_until` and
+  `checkpoint`, a spin-up can be run once and each parameter set started from a copy of it with
+  its changes applied (`docs/spinup.md`, which measures what that costs). It is not a SWAT+
+  step, and it refuses changes that would set the state up again (a soil layer's depth, bulk
+  density or available water; an aquifer's specific yield or initial values; `surlag`).
 - A change of a parameter that `cal_parms.cal` doesn't list is refused, and so is a calibration
   under which the HRUs can't be simulated: a project run with its own files would then run
   without its HRUs and only report it, which a calibration program must not mistake for a result.
@@ -93,11 +97,12 @@ Python or anything else) writes the sets, calls `batch` and reads the series bac
 69.7 s with one run at a time, 35.7 s with two, on a 2-core machine. The gain is about the
 number of cores, since nothing is shared between runs.
 
-**Spin-up.** Each run simulates its own warm-up years (`print.prt`'s `nyskip`). Starting every
-run from one spin-up made with other parameters (E2's `checkpoint`) would be faster but is not the
-same model: the soil water, aquifers and plants at the end of the warm-up depend on the
-parameters. Whether a shared spin-up followed by a short one of each run's own is good enough is
-for the synthetic tests (M3) to measure, not to assume.
+**Spin-up.** Each run simulates its own warm-up years (`print.prt`'s `nyskip`). `--shared-spinup`
+runs the warm-up once with the project's parameters and starts every set from a copy of it, with
+its changes applied (`Simulation::calibrate`). `docs/spinup.md` measured what that costs: on
+Batanghari the best set and the ranking barely change, on Pessel they do (rank correlation 0.77,
+another best set), for 14–16 % less time. Keep each run's own warm-up unless a check like that
+says otherwise.
 
 ## Stage-based calibration tools (M3)
 
