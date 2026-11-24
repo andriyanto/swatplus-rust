@@ -6,7 +6,7 @@ Lampiran ini mencatat pekerjaan di repositori `andriyanto/rustgis-swatplus` (Rus
 
 RustGIS bekerja lewat **perintah**: setiap aksi adalah `CommandSpec` di `crates/engine/src/cmd/*.rs`, dipanggil oleh pita menu, pencarian perintah, baris perintah, skrip, dan asisten AI. Asisten menjalankan perintah yang sama dengan pengguna, dan perintah yang menyentuh berkas, jaringan, atau plugin menunggu persetujuan pengguna. Menambah kemampuan SWAT+ berarti menambah perintah `swat.*` dan skill untuk asisten.
 
-**Keputusan K11 tetap berlaku.** Engine berlisensi LGPL-2.1 (turunan SWAT+), RustGIS-SwatPlus Apache-2.0. Kode engine tidak digabung ke dalam program RustGIS. Untuk menjalankan model (`swat.run`, A1.1), RustGIS-SwatPlus memanggil program `swatplus-rust run --progress json --format parquet` di desktop dan memuat modul `swat_wasm.wasm` di browser, lewat antarmuka yang dijelaskan di Bab 15 dan 16 (`docs/runner.md`). Butir A1.1 roadmap, yang semula menulis "engine sebagai pustaka", dikoreksi pada 24 November 2026.
+**Keputusan K11 tetap berlaku.** Engine berlisensi LGPL-2.1 (turunan SWAT+), RustGIS-SwatPlus Apache-2.0. Kode engine tidak digabung ke dalam program RustGIS. Untuk menjalankan model (`swat.run`, A1.1), RustGIS-SwatPlus memanggil program `swatplus-rust run --progress json` di desktop dan memuat modul `swat_wasm.wasm` di browser, lewat antarmuka yang dijelaskan di Bab 15 dan 16 (`docs/runner.md`). Butir A1.1 roadmap, yang semula menulis "engine sebagai pustaka", dikoreksi pada 24 November 2026.
 
 Untuk membaca dan menyunting berkas TxtInOut, RustGIS-SwatPlus memakai dua crate miliknya sendiri, ditulis dari dokumentasi format, bukan dari kode SWAT+:
 
@@ -67,11 +67,44 @@ Pada 24 November 2026 repositori tertinggal 1.145 commit dari `opengeos/RustGIS`
 
 **CI di GitHub** menemukan tiga hal lagi, yang sudah diperbaiki: satu akses langsung ke baris lapisan melebihi batas yang hanya boleh turun (`xtask rows`; `rain.zonal` kini memakai `Features::rows`), nama berkas `time.sim` di `swat.rs` terbaca sebagai perintah oleh pemindai ID perintah karena RustGIS kini punya `time.*` (dikecualikan dengan alasannya), dan uji Python ekspor GeoJSON yang mengharapkan tinggi dibuang (kini memakai ukuran M). Sesudahnya semua pemeriksaan CI lulus.
 
-### C.5  Langkah berikutnya
+### C.5  A1.1: menjalankan model (`swat.run`, tahap pertama)
+
+Tahap pertama untuk desktop dan baris perintah: model dijalankan dari RustGIS-SwatPlus dengan program `swatplus-rust`, sesuai K11. Polanya sama dengan cara RustGIS menjalankan perangkat GeoLibre, yang juga program terpisah yang bisa diunduh (`crates/geolibre`).
+
+**Crate `rustgis-swat-run`** (`crates/swat-run`, lapisan L3; bagian program hanya di desktop):
+
+| Modul dan fungsi | Isi |
+| --- | --- |
+| `event::Event::parse` | Membaca satu baris kejadian JSON engine (`--progress json`, Bab 15–16): `start` (versi, jumlah hari, tanggal pertama dan terakhir), `progress`, `note`, `table` (berkas dan barisnya untuk Parquet), `done` (hari dan detik), `error`. Baris yang bukan kejadian dilewati, tidak ditolak |
+| `runner::find`, `choose`, `version_of`, `check_supported` | Mencari program berurutan: pilihan pengguna, variabel lingkungan `SWATPLUS_RUST`, folder pemasangan, samping aplikasi, `PATH`. Program dipakai bila menjawab `--version` sebagai `swatplus-rust` versi 1.1.0 sampai sebelum 2.0.0 (1.1.0 punya `--threads`). Jawaban `--version` ditunggu paling lama 10 detik; program lain yang kebetulan bernama sama dihentikan |
+| `runner::RELEASE` | Versi yang dipasang: 1.2.0, versi yang sudah divalidasi. Dimajukan lewat pull request |
+| `install::install`, `find_asset`, `asset_name`, `uninstall` | Mengunduh arsip platform ini dari rilis GitHub swatplus-rust yang dipatok, memeriksa SHA-256 yang diterbitkan GitHub untuk arsip itu (`digest`), membongkarnya, mencobanya, lalu baru memasangnya di folder data aplikasi. Unduhan yang gagal di salah satu langkah membiarkan program yang terpasang apa adanya. Enam platform: Linux dan Windows x86-64 dan ARM64, macOS Apple silicon dan Intel |
+| `run::Spec::args` | Argumen program: `run <input> --out <output> --progress json --format <parquet\|text\|both>`, ditambah `--fix-swat --threads N` untuk mode koreksi |
+| `run::run` | Menjalankan program, membaca kejadiannya dari keluaran standar di thread tersendiri (sehingga permintaan berhenti tetap diperiksa setiap 50 ms walau engine diam), menguras keluaran galat di thread lain, dan menghentikan proses bila diminta. Hasilnya `Outcome`: versi, hari, tanggal, tabel, catatan, detik, galat (kejadian `error`, atau 4 KB terakhir keluaran galat bila engine diam), berhenti atau tidak, dan kode keluar |
+| `run::digest` | Sidik masukan: SHA-256 atas nama, panjang, dan isi setiap berkas, terurut menurut nama. Dua run dengan sidik dan versi engine yang sama membaca masukan yang sama |
+
+**Perintah baru** (`crates/engine/src/cmd/swat.rs`):
+
+| Perintah | Efek (izin) | Isi |
+| --- | --- | --- |
+| `swat.engine` | — | Program yang dipakai (jalur, versi, terpasang lewat aplikasi atau tidak), atau cara mendapatkannya |
+| `swat.setEngine` | khusus pengguna, berkas | Menunjuk program; kosong berarti mencari lagi di tempat biasa |
+| `swat.installEngine` | khusus pengguna | Memasang rilis yang dipatok (`install::install`) |
+| `swat.run` | berkas | Menjalankan proyek seperti disunting. Run diberi folder `run-NNNN` sendiri di `swat-runs/<nama folder proyek>` dalam folder data aplikasi, atau di folder yang diberikan (`folder`). Bila tidak ada yang berubah, engine membaca folder proyek sendiri (engine hanya membaca); bila ada, proyek seperti disunting ditulis ke `input` di folder run, dan berkas proyek asli tidak tersentuh. Tabel ditulis ke `output`. Catatan run (`run.json` di folder run) memuat nomor, folder, jalur dan versi engine, mode (asli atau `fix-swat`) dan jumlah thread, format, berkas dan kolom yang berubah (dalam mode rahasia hanya jumlahnya), sidik masukan, berhasil atau tidak, hari dan tanggal, detik, tabel, catatan, dan galat |
+| `swat.runs` | — | Semua run sejak proyek dibuka |
+
+Asisten AI boleh menjalankan model, tetapi setiap `swat.run` menunggu persetujuan pengguna karena menulis berkas dan menjalankan program. Memasang atau menunjuk engine hanya boleh dilakukan pengguna.
+
+**Uji.** `rustgis-swat-run`: pembacaan kejadian sesuai `docs/runner.md`, versi dan rentangnya, aset dan SHA-256 dari informasi rilis, argumen program, galat dari kejadian atau dari keluaran galat, penghentian run, dan sidik masukan. `swat.rs`: dengan program tiruan yang menjawab seperti `swatplus-rust`, run tanpa perubahan membaca folder proyek, run dengan perubahan membaca salinan yang disunting sementara berkas asli tetap, mode `--fix-swat --threads 2` sampai ke argumen, catatan `run.json` sama dengan jawaban perintah, dan masukan yang salah ditolak.
+
+Selain uji otomatis, `swat.run` dicoba sekali dengan program sungguhan `swatplus-rust 1.2.0` pada proyek Osu_1hru, tanpa perubahan dan sesudah `swat.set` `esco` 0,5 dalam mode `--fix-swat --threads 2`. Keduanya berhasil: 5.113 hari, 1 Januari 2010 sampai 31 Desember 2023. Uji ini tidak disimpan di repositori karena butuh program engine. Panduan pengguna RustGIS (`docs/user-guide/analysis.md`, bagian SWAT+ models) serta tabel crate di `README.md` dan `docs/architecture.md` ikut diperbarui.
+
+**Tahap berikutnya A1.1:** run di latar dengan kemajuan dan tombol batal di aplikasi (fungsi `run::run` sudah menerima permintaan berhenti); modul WASM untuk browser.
+
+#### Langkah sesudah A1.1
 
 | Langkah | Isi |
 | --- | --- |
-| A1.1 `swat.run` | Menjalankan model sebagai program terpisah (desktop) atau modul WASM (browser), mode asli atau `--fix-swat`, dengan kemajuan dan pembatalan; riwayat run mencatat versi engine, selisih parameter, dan sidik berkas |
 | A1.2 keluaran | `swat.output.list`, `swat.output.read`, `swat.balance` (neraca air DAS), `swat.compare` (dua run) |
 | A1.2 pengamatan | `swat.observed`, `swat.metrics` (NSE, KGE, PBIAS), juga untuk TMA lewat lengkung debit `swatcal` |
 | A1.2 peta dan grafik | `swat.map`, `swat.chart` |
@@ -84,3 +117,4 @@ Pada 24 November 2026 repositori tertinggal 1.145 commit dari `opengeos/RustGIS`
 | awal November 2026 | A1.0 sinkronisasi pertama; T1.0 Z/M; A1.2 perintah `swat.*` dan skill; F1(e) GSMaP dan `rain.*` | rustgis-swatplus, cabang `feat/swat-txtinout`, `sync-upstream`, `t1-zm`, `a1-swat-commands`, `f1e-gsmap`, `f1e-rain`, `ci-free-disk` |
 | 24 November 2026 | Keputusan: K11 berlaku untuk RustGIS-SwatPlus (engine dijalankan sebagai program atau modul WASM, tidak digabung); pekerjaan dicatat di Lampiran C | `docs/roadmap.md` A1.1 dikoreksi; `CLAUDE.md` |
 | 24 November 2026 | A1.0 sinkronisasi kedua: 1.145 commit RustGIS, 13 berkas berkonflik diselesaikan, izin perintah `swat.*`/`rain.*`, Z/M GeoJSON dan Shapefile tetap disimpan, job penandatanganan `mobile.yml` hanya di repo asli; 5.290 uji lokal, 4 gagal di luar penggabungan; CI lulus setelah tiga perbaikan (C.4) | rustgis-swatplus PR #10 |
+| 24 November 2026 | A1.1 tahap pertama: crate `rustgis-swat-run` (mencari, memasang, dan menjalankan `swatplus-rust`), perintah `swat.engine`, `swat.setEngine`, `swat.installEngine`, `swat.run`, `swat.runs` (C.5) | rustgis-swatplus PR #11 |
