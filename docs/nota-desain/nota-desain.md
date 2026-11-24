@@ -12363,7 +12363,30 @@ Asisten AI boleh menjalankan model, tetapi setiap `swat.run` menunggu persetujua
 
 Selain uji otomatis, `swat.run` dicoba sekali dengan program sungguhan `swatplus-rust 1.2.0` pada proyek Osu_1hru, tanpa perubahan dan sesudah `swat.set` `esco` 0,5 dalam mode `--fix-swat --threads 2`. Keduanya berhasil: 5.113 hari, 1 Januari 2010 sampai 31 Desember 2023. Uji ini tidak disimpan di repositori karena butuh program engine. Panduan pengguna RustGIS (`docs/user-guide/analysis.md`, bagian SWAT+ models) serta tabel crate di `README.md` dan `docs/architecture.md` ikut diperbarui.
 
-**Tahap berikutnya A1.1:** run di latar dengan kemajuan dan tombol batal di aplikasi (fungsi `run::run` sudah menerima permintaan berhenti); modul WASM untuk browser.
+#### Tahap kedua: run di latar, dengan kemajuan dan tombol Batal
+
+Pada tahap pertama, `swat.run` menahan jendela aplikasi selama model berjalan. Untuk Batanghari, itu bisa berarti beberapa menit tanpa respons. RustGIS sudah punya jalur untuk pekerjaan panjang seperti itu: perintah yang terdaftar di `reads::IN_BACKGROUND` (Add Data, Run Model, dan lainnya) dikerjakan di thread tersendiri, dan baris status menampilkan kemajuan serta tombol Batal. `swat.run` kini masuk daftar itu dengan nama "Run SWAT+ Project", jadi tidak perlu mekanisme baru.
+
+| Fungsi | Isi |
+| --- | --- |
+| `swat::prepare_run` | Bekerja di thread jendela. Memeriksa parameter, mengambil daftar berkas proyek, dan hanya meng-encode berkas yang diubah, sehingga ringan walau berkas cuaca proyek besar. Proyek tanpa folder meng-encode semua berkasnya |
+| `Prepared::go` | Bekerja di thread sendiri. Mencari engine, membuat folder `run-NNNN`, menyusun masukan (berkas yang tidak berubah disalin dari folder proyek karena isinya sama dengan yang dibaca, berkas yang diubah ditulis dari suntingan), menghitung sidik masukan, menjalankan engine, lalu menulis `run.json` bagaimanapun run berakhir (berhasil, gagal, atau dihentikan) |
+| kemajuan | Diambil dari kejadian engine: `start` memberi jumlah hari, dan setiap `progress` menambah hari yang sudah disimulasikan, dicatat pada kontrol thread (`rustgis_analysis::control`). Baris status menampilkannya sebagai persentase |
+| Batal | Ditanyakan di antara berkas dan setiap 50 ms selama engine berjalan. Bila diminta, proses engine dihentikan, `run.json` mencatat `"stopped": true` dan sidik masukan kosong, dan run tidak masuk `swat.runs` karena perintahnya tidak mendarat. Run yang gagal tetap dicatat bersama galatnya |
+| `swat::run_ahead`, `swat::run` | `run_ahead` menyerahkan pekerjaan ke antrean baca (`reads::prepare`). Saat mendarat, `run` mengambil hasilnya dan mencatatnya pada proyek yang dijalankan (`run.json` kini memuat `project`), bukan proyek lain yang dibuka sementara run berjalan. Tanpa antrean (baris perintah, skrip, asisten di aplikasi), `run` mengerjakan semuanya langsung seperti tahap pertama |
+| `run::Fingerprint` | Sidik masukan dihitung berkas demi berkas, sehingga berkas proyek besar tidak perlu dimuat ke memori sekaligus. Hasilnya sama dengan `digest` |
+
+**Jangkauan.** Di desktop (pita, pencarian perintah, Record Task), `swat.run` berjalan di latar. Agen yang tersambung lewat MCP juga mendapat jalur latar karena `swat.run` ditambahkan ke daftar baca bercakupan di `mcp.rs` dan `dispatch.rs`: jawabannya datang saat run mendarat, dan aplikasi tetap bisa dipakai sementara itu. Baris perintah, skrip, dan asisten di dalam aplikasi menunggu run selesai, sama seperti untuk semua perintah baca di RustGIS. Bila thread pekerja gagal dibuat, aplikasi menolak run dan meminta pengguna mencoba lagi, bukan menjalankannya langsung sehingga jendela tertahan. Browser belum menjalankan model; itu tahap berikutnya.
+
+**Uji.**
+- `cmd::swat`: run yang disiapkan di depan menghitung hari engine sebagai kemajuan dan mendarat sama seperti run langsung. Batal ketika engine berjalan (`Control::cancelled_at_look`, tanpa menunggu waktu) menghentikan engine, `run.json` mencatat `stopped`, dan tidak ada yang mendarat. Uji-uji yang menunjuk engine bergiliran karena pilihan engine berlaku untuk seluruh aplikasi.
+- `long_commands` mengecualikan `swat.run`, dengan alasan bahwa perintah ini menjalankan program yang tidak ada di fikstur; Batal-nya diuji di `cmd::swat`.
+- Di aplikasi, `readjob::a_swat_run_is_made_off_the_window_and_lands`.
+- Dengan engine sungguhan pada Osu_1hru lewat `read_ahead`, `run`, dan `read_land`: kemajuan 5.113 dari 5.113 hari, berhasil.
+
+Dua koreksi kecil ikut masuk: panduan pengguna sempat menulis `both` sebagai format bawaan, padahal bawaannya `parquet`; dan crate `rustgis-swat-run` kembali memuat blok `#![deny(clippy::unwrap_used, …)]` yang diwajibkan AGENTS.md.
+
+**Tahap berikutnya A1.1:** modul WASM engine untuk browser.
 
 #### Langkah sesudah A1.1
 
@@ -12382,4 +12405,5 @@ Selain uji otomatis, `swat.run` dicoba sekali dengan program sungguhan `swatplus
 | 24 November 2026 | Keputusan: K11 berlaku untuk RustGIS-SwatPlus (engine dijalankan sebagai program atau modul WASM, tidak digabung); pekerjaan dicatat di Lampiran C | `docs/roadmap.md` A1.1 dikoreksi; `CLAUDE.md` |
 | 24 November 2026 | A1.0 sinkronisasi kedua: 1.145 commit RustGIS, 13 berkas berkonflik diselesaikan, izin perintah `swat.*`/`rain.*`, Z/M GeoJSON dan Shapefile tetap disimpan, job penandatanganan `mobile.yml` hanya di repo asli; 5.290 uji lokal, 4 gagal di luar penggabungan; CI lulus setelah tiga perbaikan (C.4) | rustgis-swatplus PR #10 |
 | 24 November 2026 | A1.1 tahap pertama: crate `rustgis-swat-run` (mencari, memasang, dan menjalankan `swatplus-rust`), perintah `swat.engine`, `swat.setEngine`, `swat.installEngine`, `swat.run`, `swat.runs` (C.5) | rustgis-swatplus PR #11 |
+| 24 November 2026 | A1.1 tahap kedua: `swat.run` di thread sendiri lewat `reads::IN_BACKGROUND`, dengan hari engine sebagai kemajuan dan tombol Batal yang menghentikan engine; `run.json` juga ditulis untuk run yang dihentikan; agen MCP ikut lewat jalur latar (C.5) | rustgis-swatplus PR #12 |
 
