@@ -50,4 +50,4 @@ Persamaan ditulis dalam notasi matematika, bukan salinan kode Fortran. SWAT+ ber
 - Bab 3 sampai 16 mengikuti crate dan modul, dari model data, pembaca input, loop simulasi, proses di HRU, routing, sampai keluaran dan program.
 - Setiap fungsi punya entri sendiri: lokasi, padanan SWAT+, tujuan, masukan dan keluaran, cara kerja, dan catatan. Fungsi kecil dikumpulkan dalam tabel.
 - Bab 17 merangkum validasi, katalog kebiasaan SWAT+, koreksi `--fix-swat`, dan fitur yang ditolak.
-- Glosarium dan daftar pustaka ada di akhir. Lampiran A membahas data hujan satelit GSMaP; Lampiran B jalur M (kalibrasi, mode paralel, studi spin-up) dan catatan langkah kerja (B.8).
+- Glosarium dan daftar pustaka ada di akhir. Lampiran A membahas data hujan satelit GSMaP; Lampiran B jalur M (kalibrasi, mode paralel, studi spin-up) dan catatan langkah kerja (B.8); Lampiran C pekerjaan di RustGIS-SwatPlus (model SWAT+ di GIS dan asisten AI), dengan catatan langkah kerja C.6.

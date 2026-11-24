@@ -5,7 +5,11 @@
   function by function, as the chapters there) and a row in the work log of its appendix
   (Lampiran B, `B.8 Catatan langkah kerja`), in the same pull request. Then rebuild the single
   files with `scripts/build-nota-desain.sh`. The English docs (`docs/*.md`, `CHANGELOG.md`,
-  `docs/roadmap.md`) are updated as before.
+  `docs/roadmap.md`) are updated as before. Work in RustGIS-SwatPlus (`andriyanto/rustgis-swatplus`)
+  is recorded the same way in Lampiran C (`22-lampiran-c-rustgis-swatplus.md`, work log C.6).
+- **The engine is run, never linked, by RustGIS-SwatPlus** (decision K11): the program
+  `swatplus-rust` or the module `swat_wasm.wasm`, because the engine is LGPL-2.1 and RustGIS
+  Apache-2.0.
 - **Faithful mode stays SWAT+.** A change of results in a faithful run is a bug; corrections and
   extensions belong to `--fix-swat` or to new functions, recorded in `docs/swat-fixes.md`. Every
   change is validated against SWAT+ Fortran in CI (`Validate against SWAT+`).
