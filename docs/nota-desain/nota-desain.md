@@ -12329,6 +12329,8 @@ Pada 24 November 2026 repositori tertinggal 1.145 commit dari `opengeos/RustGIS`
 
 **Hasil pemeriksaan lokal** (Linux, Rust 1.97, 2 inti): clippy `-D warnings` lulus pada crate yang tersentuh (data, engine, plugins, assistant, map, swat-model, swat-txtinout). Dua lint baru Rust 1.97 dikecualikan untuk pemeriksaan lokal ini saja, karena hanya muncul di dua baris kode RustGIS yang tidak kita ubah (`manual_option_zip`, `manual_range_contains`). Dari 5.290 uji, 4 gagal karena hal di luar penggabungan: uji izin folder (proses berjalan sebagai root), uji proyeksi yang lulus bila dijalankan sendiri, uji waktu WAL SQLite pada MBTiles (bagian yang tidak tersentuh), dan `never_silent_reading` yang kemudian disesuaikan dan lulus.
 
+**CI di GitHub** menemukan tiga hal lagi, yang sudah diperbaiki: satu akses langsung ke baris lapisan melebihi batas yang hanya boleh turun (`xtask rows`; `rain.zonal` kini memakai `Features::rows`), nama berkas `time.sim` di `swat.rs` terbaca sebagai perintah oleh pemindai ID perintah karena RustGIS kini punya `time.*` (dikecualikan dengan alasannya), dan uji Python ekspor GeoJSON yang mengharapkan tinggi dibuang (kini memakai ukuran M). Sesudahnya semua pemeriksaan CI lulus.
+
 ### C.5  Langkah berikutnya
 
 | Langkah | Isi |
@@ -12345,5 +12347,5 @@ Pada 24 November 2026 repositori tertinggal 1.145 commit dari `opengeos/RustGIS`
 | --- | --- | --- |
 | awal November 2026 | A1.0 sinkronisasi pertama; T1.0 Z/M; A1.2 perintah `swat.*` dan skill; F1(e) GSMaP dan `rain.*` | rustgis-swatplus, cabang `feat/swat-txtinout`, `sync-upstream`, `t1-zm`, `a1-swat-commands`, `f1e-gsmap`, `f1e-rain`, `ci-free-disk` |
 | 24 November 2026 | Keputusan: K11 berlaku untuk RustGIS-SwatPlus (engine dijalankan sebagai program atau modul WASM, tidak digabung); pekerjaan dicatat di Lampiran C | `docs/roadmap.md` A1.1 dikoreksi; `CLAUDE.md` |
-| 24 November 2026 | A1.0 sinkronisasi kedua: 1.145 commit RustGIS, 13 berkas berkonflik diselesaikan, izin perintah `swat.*`/`rain.*`, Z/M GeoJSON dan Shapefile tetap disimpan, job penandatanganan `mobile.yml` hanya di repo asli; 5.290 uji, 4 gagal di luar penggabungan (C.4) | rustgis-swatplus PR #10 |
+| 24 November 2026 | A1.0 sinkronisasi kedua: 1.145 commit RustGIS, 13 berkas berkonflik diselesaikan, izin perintah `swat.*`/`rain.*`, Z/M GeoJSON dan Shapefile tetap disimpan, job penandatanganan `mobile.yml` hanya di repo asli; 5.290 uji lokal, 4 gagal di luar penggabungan; CI lulus setelah tiga perbaikan (C.4) | rustgis-swatplus PR #10 |
 
