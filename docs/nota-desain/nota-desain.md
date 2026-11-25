@@ -52,7 +52,7 @@ Persamaan ditulis dalam notasi matematika, bukan salinan kode Fortran. SWAT+ ber
 - Bab 3 sampai 16 mengikuti crate dan modul, dari model data, pembaca input, loop simulasi, proses di HRU, routing, sampai keluaran dan program.
 - Setiap fungsi punya entri sendiri: lokasi, padanan SWAT+, tujuan, masukan dan keluaran, cara kerja, dan catatan. Fungsi kecil dikumpulkan dalam tabel.
 - Bab 17 merangkum validasi, katalog kebiasaan SWAT+, koreksi `--fix-swat`, dan fitur yang ditolak.
-- Glosarium dan daftar pustaka ada di akhir. Lampiran A membahas data hujan satelit GSMaP; Lampiran B jalur M (kalibrasi, mode paralel, studi spin-up) dan catatan langkah kerja (B.8); Lampiran C pekerjaan di RustGIS-SwatPlus (model SWAT+ di GIS dan asisten AI), dengan catatan langkah kerja C.6.
+- Glosarium dan daftar pustaka ada di akhir. Lampiran A membahas data hujan satelit GSMaP; Lampiran B jalur M (kalibrasi, mode paralel, studi spin-up) dan catatan langkah kerja (B.8); Lampiran C pekerjaan di RustGIS-SwatPlus (model SWAT+ di GIS dan asisten AI), dengan catatan langkah kerja C.7.
 
 ## Bab 2  Arsitektur dan prinsip desain
 
@@ -12264,7 +12264,7 @@ Kedua proyek memakai akuifer bawaan editor. Akuifer dangkal (Batanghari 42, Pess
 
 ## Lampiran C  RustGIS-SwatPlus: model SWAT+ di GIS dan asisten AI
 
-Lampiran ini mencatat pekerjaan di repositori `andriyanto/rustgis-swatplus` (RustGIS-SwatPlus), turunan RustGIS (`opengeos/RustGIS`) berlisensi Apache-2.0, fungsi demi fungsi seperti bab-bab sebelumnya. Isinya butir A1 dan F1(e) di `docs/roadmap.md`: model SWAT+ dibuka, disunting, dijalankan, dan hasilnya dibaca lewat perintah RustGIS dan asisten AI-nya. Lampiran ini diperbarui setiap kali satu langkah selesai; C.6 mencatat urutan langkahnya.
+Lampiran ini mencatat pekerjaan di repositori `andriyanto/rustgis-swatplus` (RustGIS-SwatPlus), turunan RustGIS (`opengeos/RustGIS`) berlisensi Apache-2.0, fungsi demi fungsi seperti bab-bab sebelumnya. Isinya butir A1 dan F1(e) di `docs/roadmap.md`: model SWAT+ dibuka, disunting, dijalankan, dan hasilnya dibaca lewat perintah RustGIS dan asisten AI-nya. Lampiran ini diperbarui setiap kali satu langkah selesai; C.7 mencatat urutan langkahnya.
 
 ### C.1  Kedudukan terhadap engine
 
@@ -12386,18 +12386,49 @@ Pada tahap pertama, `swat.run` menahan jendela aplikasi selama model berjalan. U
 
 Dua koreksi kecil ikut masuk: panduan pengguna sempat menulis `both` sebagai format bawaan, padahal bawaannya `parquet`; dan crate `rustgis-swat-run` kembali memuat blok `#![deny(clippy::unwrap_used, …)]` yang diwajibkan AGENTS.md.
 
-**Tahap berikutnya A1.1:** modul WASM engine untuk browser.
+### C.6  A1.2: membaca keluaran run (`swat.output.*`, `swat.balance`, `swat.compare`)
 
-#### Langkah sesudah A1.1
+Setelah model bisa dijalankan dari RustGIS-SwatPlus, langkah berikutnya adalah membaca hasilnya. Tabel keluaran dibaca dari folder run (teks atau Parquet, keduanya ditulis engine) atau dari folder TxtInOut tempat SWAT+ Fortran menulis tabel teksnya. Karena itu, hasil SWAT+ asli dan hasil engine dapat dibaca dan dibandingkan dengan perintah yang sama.
+
+**Pembaca tabel** (`rustgis_swat_run::output`):
+
+| Fungsi | Isi |
+| --- | --- |
+| `table_of`, `list` | Mengenali berkas keluaran dari namanya, `<objek>_<day\|mon\|yr\|aa>.txt` atau `.parquet`, lalu mengelompokkan kedua format satu tabel. Bila keduanya ada, berkas Parquet yang dibaca karena bertipe dan lebih cepat |
+| `header` | Mengambil kolom tabel: dari baris kedua untuk teks, atau dari metadata untuk Parquet (sekaligus jumlah barisnya). Nama kolom yang berulang diberi nomor (`null`, `null_2`, `null_3`), sama seperti di berkas Parquet engine |
+| `scan` | Membaca baris satu per satu dan menyerahkannya ke pemanggil, sehingga tabel harian DAS besar (jutaan baris) tidak pernah dimuat utuh. Kolom kunci (`jday`, `mon`, `day`, `yr`, `unit`, `gis_id`, …) dibaca sebagai bilangan bulat, kolom nama sebagai teks, dan selebihnya sebagai bilangan. `NaN` dan tanda bintang dibaca sebagai nilai hilang. Baris teks yang jumlah nilainya tidak sama dengan jumlah kolom dihitung (`uneven`) dan dilaporkan sebagai pemberitahuan |
+| `tidy` | Membulatkan nilai ke tujuh angka penting, presisi tabel SWAT+ dan float 32-bit Parquet engine. Contohnya 4,965, bukan 4,965000152587891 |
+
+Teks dan Parquet dicocokkan pada 18 tabel Osu_1hru: kolom dan setiap nilai sama.
+
+**Perintah** (`crates/engine/src/cmd/swat_output.rs`):
+
+| Perintah | Isi |
+| --- | --- |
+| `swat.output.list` | Tabel-tabel sebuah run: objek, periode, format, dan kolom. `run` berisi nomor run di `swat.runs`, folder sebuah run, atau folder tabel apa pun. Bila tidak diisi, dipakai run terakhir yang berhasil, atau folder proyek bila belum ada run |
+| `swat.output.read` | Memilih baris menurut nama objek (`match`, dengan `*` dan `?`), `unit`, dan tanggal (`from`, `to` dalam bentuk `yyyy`, `yyyy-mm`, atau `yyyy-mm-dd`). Hasilnya: jumlah, rerata, minimum, maksimum, dan total setiap kolom, ditambah baris-baris pertama (`limit`, bawaan 50, paling banyak 500) |
+| `swat.balance` | Neraca air rerata tahunan DAS dalam mm dari `basin_wb_aa`, ditambah `basin_aqu_aa` bila dicetak. Juga rasionya terhadap hujan: ET, hasil air, limpasan permukaan, perkolasi, rembesan dalam, dan aliran sungai (hasil air ditambah aliran balik akuifer ke sungai), serta fraksi aliran dasar (aliran lateral dan aliran balik dibagi ketiganya). Tabelnya hanya satu baris, jadi dikerjakan di thread jendela |
+| `swat.compare` | Tabel yang sama dari dua run: statistik setiap kolom di kedua run dan perubahan reratanya (selisih dan persen), untuk seluruh tabel dan per objek. Bila jumlah baris yang terpilih berbeda, misalnya karena periode atau pengaturan cetak berbeda, hal itu dicatat |
+
+`swat.output.read` dan `swat.compare` dikerjakan di latar seperti `swat.run` (`reads::IN_BACKGROUND`). Kemajuannya adalah baris yang sudah dibaca (Parquet) atau byte (teks), dan Batal diperiksa di setiap baris. Agen MCP juga mendapat jalur latar ini. Untuk proyek rahasia, jawaban hanya berisi statistik, tanpa baris dan tanpa nama objek.
+
+**Koreksi tahap pertama A1.1.** Saat diuji dengan engine sungguhan pada run yang disunting, folder `input` ternyata hanya berisi berkas yang dibaca `swat.open`, yaitu `file.cio` dan berkas yang disebutnya. Padahal SWAT+ juga membuka beberapa berkas dengan nama yang ditanam di kodenya sendiri, misalnya `puddle.ops`, `transplant.plt`, `treatment.trt`, dan `manure*.frt`. Pada Osu_1hru, akibatnya neraca air HRU tidak disimulasikan dan run teks tidak menulis tabel, walaupun run dilaporkan berhasil. Kini `input` berisi seluruh berkas di folder proyek: berkas yang disunting ditulis dari suntingan, dan tabel keluaran run sebelumnya (`*_day|mon|yr|aa.txt`/`.parquet`, `*.out`, dan tabel CSV) tidak disalin. Sidik masukan dihitung atas himpunan berkas yang sama, baik untuk proyek yang diubah maupun tidak. Uji `a_run_runs_the_project_as_edited_and_is_recorded` kini memeriksa bahwa `puddle.ops` ikut masuk `input` dan tabel run lama tidak.
+
+**Uji.**
+- `rustgis-swat-run`: pengenalan nama tabel; tabel teks dengan kolom berulang, notasi E, dan tanda bintang; tabel Parquet yang ditulis dengan pustaka `parquet`; `tidy`.
+- `cmd::swat_output`: daftar tabel; pemilihan menurut nama, unit, dan tanggal; kolom yang tidak ada; neraca air dan rasionya, termasuk tanpa tabel akuifer; perbandingan dua run, per kolom dan per objek; jawaban proyek rahasia; pembacaan di latar yang menghitung kemajuan dan berhenti saat Batal.
+- Dengan engine sungguhan pada Osu_1hru, membandingkan run asli dengan run `esco` 0,5: ET rerata tahunan turun dari 382,984 menjadi 382,861 mm dan evaporasi tanah dari 182,034 menjadi 181,911 mm, sedangkan fraksi aliran dasar 0,347 tidak berubah berarti. Pengaruhnya kecil karena proyek ini hanya satu HRU.
+
+#### Langkah berikutnya
 
 | Langkah | Isi |
 | --- | --- |
-| A1.2 keluaran | `swat.output.list`, `swat.output.read`, `swat.balance` (neraca air DAS), `swat.compare` (dua run) |
 | A1.2 pengamatan | `swat.observed`, `swat.metrics` (NSE, KGE, PBIAS), juga untuk TMA lewat lengkung debit `swatcal` |
 | A1.2 peta dan grafik | `swat.map`, `swat.chart` |
 | A1.3 skill | `swat-run-results`, `swat-diagnose`; dokumentasi swatplus-rust untuk pencarian asisten |
+| A1.1 tahap ketiga | Modul WASM engine untuk browser |
 
-### C.6  Catatan langkah kerja
+### C.7  Catatan langkah kerja
 
 | Tanggal | Langkah | Hasil dan tempatnya |
 | --- | --- | --- |
@@ -12406,4 +12437,5 @@ Dua koreksi kecil ikut masuk: panduan pengguna sempat menulis `both` sebagai for
 | 24 November 2026 | A1.0 sinkronisasi kedua: 1.145 commit RustGIS, 13 berkas berkonflik diselesaikan, izin perintah `swat.*`/`rain.*`, Z/M GeoJSON dan Shapefile tetap disimpan, job penandatanganan `mobile.yml` hanya di repo asli; 5.290 uji lokal, 4 gagal di luar penggabungan; CI lulus setelah tiga perbaikan (C.4) | rustgis-swatplus PR #10 |
 | 24 November 2026 | A1.1 tahap pertama: crate `rustgis-swat-run` (mencari, memasang, dan menjalankan `swatplus-rust`), perintah `swat.engine`, `swat.setEngine`, `swat.installEngine`, `swat.run`, `swat.runs` (C.5) | rustgis-swatplus PR #11 |
 | 24 November 2026 | A1.1 tahap kedua: `swat.run` di thread sendiri lewat `reads::IN_BACKGROUND`, dengan hari engine sebagai kemajuan dan tombol Batal yang menghentikan engine; `run.json` juga ditulis untuk run yang dihentikan; agen MCP ikut lewat jalur latar (C.5) | rustgis-swatplus PR #12 |
+| 25 November 2026 | A1.2 keluaran: pembaca tabel teks dan Parquet baris demi baris (`rustgis_swat_run::output`), perintah `swat.output.list`, `swat.output.read`, `swat.balance`, `swat.compare` (dua yang membaca tabel panjang dikerjakan di latar); koreksi A1.1: `input` run yang disunting kini berisi seluruh berkas proyek (C.6) | rustgis-swatplus PR #13 |
 
