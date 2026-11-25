@@ -12419,11 +12419,49 @@ Teks dan Parquet dicocokkan pada 18 tabel Osu_1hru: kolom dan setiap nilai sama.
 - `cmd::swat_output`: daftar tabel; pemilihan menurut nama, unit, dan tanggal; kolom yang tidak ada; neraca air dan rasionya, termasuk tanpa tabel akuifer; perbandingan dua run, per kolom dan per objek; jawaban proyek rahasia; pembacaan di latar yang menghitung kemajuan dan berhenti saat Batal.
 - Dengan engine sungguhan pada Osu_1hru, membandingkan run asli dengan run `esco` 0,5: ET rerata tahunan turun dari 382,984 menjadi 382,861 mm dan evaporasi tanah dari 182,034 menjadi 181,911 mm, sedangkan fraksi aliran dasar 0,347 tidak berubah berarti. Pengaruhnya kecil karena proyek ini hanya satu HRU.
 
+#### Bagian kedua: data pengamatan dan statistik kecocokan (`swat.observed`, `swat.metrics`)
+
+Bagian ini menilai seberapa cocok hasil run dengan pengamatan, untuk debit maupun tinggi muka air (TMA). Ini jalur yang akan dipakai begitu data TMA dari Dinas SDA-BK/BWS tersedia.
+
+**Statistik dan lengkung debit** (`rustgis_swat_run::metrics`): ditulis dari definisi yang diterbitkan, dengan konvensi alat kalibrasi `swatcal` (M3). Kode `swatcal` tidak disalin karena berada di repositori berlisensi LGPL, sedangkan RustGIS-SwatPlus berlisensi Apache-2.0. Nilainya dicocokkan dengan `swatcal` pada deret yang sama.
+
+| Fungsi | Isi |
+| --- | --- |
+| `nse` | Nash dan Sutcliffe (1970): 1 sempurna, 0 tidak lebih baik daripada rerata pengamatan |
+| `kge` | Gupta dkk. (2009): 1 dikurangi jarak (r, α, β) dari (1, 1, 1), yaitu korelasi, rasio simpangan baku, dan rasio rerata. Komponennya ikut dilaporkan |
+| `pbias` | Persen bias, positif bila simulasi terlalu besar. Tandanya berlawanan dengan Moriasi dkk. (2007), sama seperti di `swatcal` |
+| `rsr` | RMSE dibagi simpangan baku pengamatan (Moriasi dkk., 2007) |
+| `spearman` | Korelasi peringkat; nilai kembar mendapat rerata peringkatnya. Tidak bergantung pada lengkung debit apa pun, jadi bisa menilai debit model terhadap TMA tanpa lengkung |
+| `Rating` | Lengkung debit `Q = a (H − h0)^b` dua arah: dari debit ke TMA dan sebaliknya. Debit nol atau negatif berada di h0 |
+| `fit_rating` | Lengkung yang paling baik mengubah debit sebuah run menjadi TMA pengamatan, dengan kuadrat terkecil pada TMA. Untuk setiap h0, a dan b dicari lewat regresi log lalu langkah Gauss-Newton. h0 dicari dengan pindaian 25 titik dan pencarian golden-section, mulai 2 m di bawah TMA terendah sampai tepat di bawahnya. Rentang b 1,2 sampai 3,0 |
+
+Semua statistik hanya memakai hari yang kedua nilainya ada, dan simpangan baku dihitung untuk populasi (dibagi n), seperti `swatcal`. Hasilnya sama dengan `swatcal` sampai 1e-12, dan lengkung hasil penyesuaian sama sampai 1e-4: langkah kuadrat terkecilnya memakai persamaan normal 2 × 2, sedangkan `swatcal` memakai `numpy.linalg.lstsq`.
+
+**Perintah:**
+
+| Perintah | Isi |
+| --- | --- |
+| `swat.observed` | Memuat deret pengamatan dari CSV tanggal dan nilai, bertipe debit (m³/s, bawaan) atau TMA (m). Pemisah kolom ditentukan dari baris judul: koma, titik koma (dengan koma desimal), atau tab. Tanggal berbentuk `yyyy-mm-dd` atau `dd/mm/yyyy` (`dayFirst: false` untuk `mm/dd/yyyy`), dan jam di belakangnya diabaikan. Bacaan dalam satu hari dirata-ratakan, sehingga TMA per jam menjadi rerata harian. Baris tanpa tanggal, nilai yang tidak terbaca, dan nilai hilang (`missing`, misalnya -9999) tidak dipakai, dan jumlahnya diberitahukan per jenis. Tanpa `path`, perintah ini menampilkan daftar deret yang sudah dimuat |
+| `swat.metrics` | Memasangkan deret harian satu objek dalam sebuah run (bawaan `channel_sd_day` kolom `flo_out`; objeknya dipilih dengan `match` atau `unit`) dengan deret pengamatan menurut tanggal, lalu menghitung NSE, KGE (r, α, β), PBIAS, RSR, dan Spearman. Dengan `step: month`, perhitungan memakai rerata bulanan hari-hari yang berpasangan, dan untuk debit bulanan ditambahkan penilaian Moriasi dkk. (2007): memuaskan bila NSE > 0,50, RSR ≤ 0,70, dan \|PBIAS\| ≤ 25 %. Untuk TMA, debit run diubah menjadi TMA lewat lengkung debit yang diberikan (`rating`) atau yang disesuaikan pada run itu, dan Spearman debit terhadap TMA dilaporkan juga. Perintah ditolak dengan alasannya bila baris yang terpilih mencakup lebih dari satu objek, atau bila kurang dari tiga hari berpasangan |
+
+`swat.metrics` dikerjakan di latar seperti `swat.output.read`, karena membaca tabel harian yang panjang. Untuk proyek rahasia, nama objek tidak disebut dalam jawaban.
+
+**Catatan penafsiran.** Jawaban untuk TMA dengan lengkung yang disesuaikan menyertakan catatan ini: lengkung yang disesuaikan pada setiap run menilai waktu dan bentuk aliran, bukan volumenya. Run yang kehilangan air ke akuifer dalam tetap cocok dengan TMA, karena a pada lengkungnya mengecil. Inilah masalah pokok penelitian M3: volume hanya terlihat dari pengukuran debit atau neraca air (`swat.balance`). Uji `a_run_s_flow_is_judged_against_stage_through_a_rating_curve` menunjukkannya: debit dua kali lipat (cha02) cocok dengan TMA sama baiknya dengan debit sebenarnya (cha01).
+
+**Uji.**
+- `metrics`: nilai `swatcal` untuk NSE, KGE, PBIAS, RSR, dan Spearman, termasuk nilai kembar dan NaN; lengkung debit dua arah; `fit_rating` menemukan kembali lengkung yang dipakai membuat TMA, menyerap kesalahan volume, dan sama dengan `swatcal` pada TMA yang diberi galat baca.
+- `swat_output`:
+  - Pembacaan CSV dengan titik koma, koma desimal, `dd/mm/yyyy`, bacaan per jam, nilai hilang, tanggal dan nilai yang tidak terbaca.
+  - Pemberitahuan: berkas bersih tidak memicu pemberitahuan, berkas cacat memicunya sekali dengan jumlahnya.
+  - Statistik debit: NSE 1 untuk deret yang sama; PBIAS −9,09 % untuk pengamatan 10 % lebih tinggi; tiga bulan dengan penilaian Moriasi.
+  - Penolakan untuk dua objek, untuk hari yang tidak berpasangan, dan untuk lengkung pada deret debit.
+  - TMA lewat lengkung yang disesuaikan dan yang diberikan.
+  - Pengerjaan di latar yang mendarat dan berhenti saat Batal.
+
 #### Langkah berikutnya
 
 | Langkah | Isi |
 | --- | --- |
-| A1.2 pengamatan | `swat.observed`, `swat.metrics` (NSE, KGE, PBIAS), juga untuk TMA lewat lengkung debit `swatcal` |
 | A1.2 peta dan grafik | `swat.map`, `swat.chart` |
 | A1.3 skill | `swat-run-results`, `swat-diagnose`; dokumentasi swatplus-rust untuk pencarian asisten |
 | A1.1 tahap ketiga | Modul WASM engine untuk browser |
@@ -12438,4 +12476,5 @@ Teks dan Parquet dicocokkan pada 18 tabel Osu_1hru: kolom dan setiap nilai sama.
 | 24 November 2026 | A1.1 tahap pertama: crate `rustgis-swat-run` (mencari, memasang, dan menjalankan `swatplus-rust`), perintah `swat.engine`, `swat.setEngine`, `swat.installEngine`, `swat.run`, `swat.runs` (C.5) | rustgis-swatplus PR #11 |
 | 24 November 2026 | A1.1 tahap kedua: `swat.run` di thread sendiri lewat `reads::IN_BACKGROUND`, dengan hari engine sebagai kemajuan dan tombol Batal yang menghentikan engine; `run.json` juga ditulis untuk run yang dihentikan; agen MCP ikut lewat jalur latar (C.5) | rustgis-swatplus PR #12 |
 | 25 November 2026 | A1.2 keluaran: pembaca tabel teks dan Parquet baris demi baris (`rustgis_swat_run::output`), perintah `swat.output.list`, `swat.output.read`, `swat.balance`, `swat.compare` (dua yang membaca tabel panjang dikerjakan di latar); koreksi A1.1: `input` run yang disunting kini berisi seluruh berkas proyek (C.6) | rustgis-swatplus PR #13 |
+| 25 November 2026 | A1.2 pengamatan: statistik NSE, KGE, PBIAS, RSR, Spearman dan lengkung debit (`rustgis_swat_run::metrics`, dicocokkan dengan `swatcal`), perintah `swat.observed` (CSV debit atau TMA, rerata harian) dan `swat.metrics` (di latar; TMA lewat lengkung yang disesuaikan atau diberikan) (C.6) | rustgis-swatplus PR #14 |
 
