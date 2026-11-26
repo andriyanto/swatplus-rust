@@ -194,13 +194,34 @@ Semua statistik hanya memakai hari yang kedua nilainya ada, dan simpangan baku d
   - TMA lewat lengkung yang disesuaikan dan yang diberikan.
   - Pengerjaan di latar yang mendarat dan berhenti saat Batal.
 
+#### Bagian ketiga: peta dan hidrograf (`swat.map`, `swat.chart`)
+
+Bagian ini menampilkan hasil run: sebagai peta, dengan angka run di setiap objek, dan sebagai grafik deret waktu. RustGIS belum punya grafik garis karena layout-nya hanya menggambar diagram batang, dan penggambar SVG-nya tidak menggambar teks. Karena itu, sesuai pilihan pengguna (26 November 2026), hidrograf ditulis sebagai berkas SVG dengan deretnya sebagai CSV. Panel hidrograf di dalam aplikasi bisa menyusul.
+
+| Fungsi | Isi |
+| --- | --- |
+| `series_asked`, `read_series` | Dipakai bersama oleh `swat.metrics` dan `swat.chart`. Membaca deret harian satu objek dari tabel run (bawaan `channel_sd_day`, kolom `flo_out`), dipilih dengan `match` atau `unit`, baris demi baris. Ditolak bila baris yang terpilih mencakup lebih dari satu objek |
+| `judge` | Dipisahkan dari `swat.metrics`: NSE, KGE, PBIAS, RSR, dan Spearman pada hari yang berpasangan, bulanan bila diminta, dan TMA lewat lengkung debit. Juga mengembalikan lengkung yang dipakai, sehingga hidrograf TMA menggambar seluruh hari run, bukan hanya hari berpasangan |
+| `hydrograph` | SVG 1100 × 440 px. Deret simulasi digambar sebagai garis biru yang terputus di hari (atau bulan) yang hilang. Pengamatan digambar sebagai titik, atau garis tipis bila lebih dari 1.500 titik. Sumbu nilai memakai 1, 2, atau 5 kali pangkat sepuluh; sumbu tanggal memakai tahun, atau bulan bila rentangnya tiga tahun atau kurang. Judul berisi besaran dan objek; subjudul berisi run, tabel, NSE, KGE, PBIAS, dan jumlah hari berpasangan; legenda ada di pojok kanan atas plot. Teks di-escape sebagai XML |
+| `ChartJob::go` | Menulis SVG dan CSV (`date,simulated[,observed]`) di folder `charts` run itu, atau di `path`. Untuk sumber berupa folder biasa, berkas ditulis di `swat-charts` dalam folder data aplikasi. Untuk proyek rahasia, objek disebut dengan nomor unitnya, bukan namanya |
+| `MapJob::go` | Menghitung satu angka per objek: `mean`, `sum`, `min`, atau `max` dari `column` atas baris yang terpilih (`from`, `to`). Objek dibedakan menurut `gis_id` (bawaan), `unit`, atau `name` (`pick` kini bisa mengelompokkan menurut kolom mana pun, tanpa batas jumlah objek untuk peta) |
+| `swat.map` (saat mendarat) | Menyalin lapisan, menambahkan kolom `<kolom>_<stat>` berisi angka setiap fitur yang `field`-nya cocok, lalu menambahkannya sebagai lapisan baru, seperti keluaran tool, dengan simbologi bergradasi. Lapisan asli tidak berubah, dan Undo menghapus lapisan baru. Fitur tanpa angka dan objek tanpa fitur diberitahukan beserta jumlahnya. Ditolak bila tidak satu pun fitur cocok, atau bila lapisan hanya terbaca sebagian (`layer.loadAll` dulu) |
+
+Kedua perintah dikerjakan di latar, seperti pembacaan tabel lainnya. Salinan lapisan memang menggandakan lapisan sumber, sama seperti setiap keluaran tool. Untuk lapisan subDAS atau sungai (ratusan sampai beberapa ribu fitur) ukurannya kecil.
+
+**Uji.**
+- Hidrograf SVG dan CSV: 60 hari berpasangan, NSE 1, isi legenda, sumbu, dan baris CSV; bulanan tanpa pengamatan; TMA lewat lengkung; penolakan `path` yang bukan `.svg`.
+- Peta: dua fitur cocok dan satu tidak (dengan pemberitahuannya); nilai rerata sama dengan rerata deret; lapisan asli tetap; Undo; `sum` dengan rentang tanggal; kunci yang tidak cocok; kolom yang tidak ada.
+- Pengerjaan di latar yang mendarat dan berhenti saat Batal.
+- Hidrograf contoh tiga tahun dirender dengan Chromium dan diperiksa secara visual. Pemeriksaan itu menemukan subjudul yang menabrak legenda; sudah diperbaiki.
+
 #### Langkah berikutnya
 
 | Langkah | Isi |
 | --- | --- |
-| A1.2 peta dan grafik | `swat.map`, `swat.chart` |
 | A1.3 skill | `swat-run-results`, `swat-diagnose`; dokumentasi swatplus-rust untuk pencarian asisten |
 | A1.1 tahap ketiga | Modul WASM engine untuk browser |
+| Panel hidrograf | Grafik garis di dalam aplikasi (zoom, nilai saat kursor di atasnya), bila berkas SVG tidak lagi cukup |
 
 ### C.7  Catatan langkah kerja
 
@@ -213,3 +234,4 @@ Semua statistik hanya memakai hari yang kedua nilainya ada, dan simpangan baku d
 | 24 November 2026 | A1.1 tahap kedua: `swat.run` di thread sendiri lewat `reads::IN_BACKGROUND`, dengan hari engine sebagai kemajuan dan tombol Batal yang menghentikan engine; `run.json` juga ditulis untuk run yang dihentikan; agen MCP ikut lewat jalur latar (C.5) | rustgis-swatplus PR #12 |
 | 25 November 2026 | A1.2 keluaran: pembaca tabel teks dan Parquet baris demi baris (`rustgis_swat_run::output`), perintah `swat.output.list`, `swat.output.read`, `swat.balance`, `swat.compare` (dua yang membaca tabel panjang dikerjakan di latar); koreksi A1.1: `input` run yang disunting kini berisi seluruh berkas proyek (C.6) | rustgis-swatplus PR #13 |
 | 25 November 2026 | A1.2 pengamatan: statistik NSE, KGE, PBIAS, RSR, Spearman dan lengkung debit (`rustgis_swat_run::metrics`, dicocokkan dengan `swatcal`), perintah `swat.observed` (CSV debit atau TMA, rerata harian) dan `swat.metrics` (di latar; TMA lewat lengkung yang disesuaikan atau diberikan) (C.6) | rustgis-swatplus PR #14 |
+| 26 November 2026 | A1.2 peta dan grafik: `swat.map` (lapisan baru berisi angka run per objek, simbologi bergradasi) dan `swat.chart` (hidrograf SVG dan deret CSV, dengan pengamatan dan statistiknya); `swat.metrics` dipecah menjadi `read_series` dan `judge` yang dipakai bersama (C.6) | rustgis-swatplus PR #15 |
